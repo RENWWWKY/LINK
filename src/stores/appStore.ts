@@ -839,9 +839,6 @@ export const useAppStore = defineStore('app', () => {
     const now = Date.now();
     const relatedMessages = conversationId ? messages.value.filter((message) => message.conversationId === conversationId) : [];
     const relatedMemories = conversationId ? conversationMemories.value.filter((memory) => memory.conversationId === conversationId) : [];
-    const relatedSettings = conversationId ? conversationSettings.value.find((entry) => entry.conversationId === conversationId) : undefined;
-    const relatedLocalWorldBooks = worldBooks.value.filter((book) => book.scope === 'local' && character.localWorldBookIds.includes(book.id));
-    const relatedLocalWorldBookIds = new Set(relatedLocalWorldBooks.map((book) => book.id));
     const characterNameKeys = new Set([character.id, character.nickname, character.name, character.userNote, getCharacterVoomAuthorName(character)]
       .map((name) => name.trim().toLocaleLowerCase())
       .filter(Boolean));
@@ -878,6 +875,7 @@ export const useAppStore = defineStore('app', () => {
       const nextComments = removedCommentIds.size ? post.comments.filter((comment) => !removedCommentIds.has(comment.id)) : post.comments;
       const nextLikes = post.likes.filter((like) => !characterNameKeys.has(like.trim().toLocaleLowerCase()));
       const nextConversationId = post.conversationId === conversationId ? nextConversationIds[0] : post.conversationId;
+      const removedFromPostAudience = post.conversationId === conversationId || postConversationIds.includes(conversationId) || post.visibleCharacterIds?.includes(characterId);
       const touchedPost = post.conversationId === conversationId
         || postConversationIds.includes(conversationId)
         || post.visibleCharacterIds?.includes(characterId)
@@ -885,6 +883,11 @@ export const useAppStore = defineStore('app', () => {
         || nextLikes.length !== post.likes.length;
 
       if (!touchedPost) continue;
+
+      if (post.authorType === 'user' && removedFromPostAudience && !nextConversationIds.length && (!nextVisibleCharacterIds || !nextVisibleCharacterIds.length)) {
+        postsToDelete.push(post);
+        continue;
+      }
 
       postsToUpdate.push(createPersistableVoomPost({
         ...post,
@@ -900,32 +903,14 @@ export const useAppStore = defineStore('app', () => {
     const postUpdateMap = new Map(postsToUpdate.map((post) => [post.id, post]));
     messages.value = messages.value.filter((message) => message.conversationId !== conversationId);
     conversationMemories.value = conversationMemories.value.filter((memory) => memory.conversationId !== conversationId);
-    if (relatedSettings) conversationSettings.value = conversationSettings.value.filter((entry) => entry.conversationId !== conversationId);
     voomPosts.value = voomPosts.value
       .filter((post) => !postDeleteIds.has(post.id))
       .map((post) => postUpdateMap.get(post.id) ?? post);
-    worldBooks.value = worldBooks.value.filter((book) => !relatedLocalWorldBookIds.has(book.id));
-
-    if (relatedLocalWorldBookIds.size) {
-      const affectedCharacters = characters.value.filter((entry) => entry.id !== characterId && entry.localWorldBookIds.some((id) => relatedLocalWorldBookIds.has(id)));
-      await Promise.all(
-        affectedCharacters.map((entry) => {
-          const nextCharacter = {
-            ...entry,
-            localWorldBookIds: entry.localWorldBookIds.filter((id) => !relatedLocalWorldBookIds.has(id))
-          };
-          const characterIndex = characters.value.findIndex((item) => item.id === nextCharacter.id);
-          if (characterIndex >= 0) characters.value[characterIndex] = nextCharacter;
-          return putEntity('characters', nextCharacter);
-        })
-      );
-    }
 
     const nextCharacter = normalizeCharacterProfile({
       ...character,
       subtitle: '刚刚成为好友',
       lastSeen: '现在',
-      localWorldBookIds: [],
       voomFrequency: 'medium',
       mindState: undefined,
       profile: undefined
@@ -950,10 +935,8 @@ export const useAppStore = defineStore('app', () => {
       ...(nextConversation ? [putEntity('conversations', nextConversation)] : []),
       ...relatedMessages.map((message) => deleteEntity('messages', message.id)),
       ...relatedMemories.map((memory) => deleteEntity('conversationMemories', memory.id)),
-      ...(relatedSettings ? [deleteEntity('conversationSettings', relatedSettings.conversationId)] : []),
       ...postsToDelete.map((post) => deleteEntity('voomPosts', post.id)),
-      ...postsToUpdate.map((post) => putEntity('voomPosts', post)),
-      ...relatedLocalWorldBooks.map((book) => deleteEntity('worldBooks', book.id))
+      ...postsToUpdate.map((post) => putEntity('voomPosts', post))
     ]);
 
     return true;

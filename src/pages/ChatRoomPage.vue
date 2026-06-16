@@ -156,7 +156,7 @@
     <AppModal v-model="showClearHistoryConfirm" title="确认清空" :show-header="false" variant="ins">
       <section class="delete-confirm-sheet">
         <h3>清空 {{ characterDisplayName }} 的记忆？</h3>
-        <p>会删除该角色的线上聊天、线下 RP、VOOM 关联、记忆手册、主页展示资料、心境状态和当前绑定的局部世界书，好友会保留并回到刚添加时的初始状态。</p>
+        <p>会删除该角色的线上聊天、线下 RP、VOOM 关联、记忆手册、主页展示资料和心境状态；好友、聊天设置、角色基础资料和绑定局部世界书都会保留。</p>
         <div class="delete-confirm-actions">
           <button class="secondary-action" type="button" :disabled="clearingHistory" @click="showClearHistoryConfirm = false">取消</button>
           <button class="danger-action" type="button" :disabled="clearingHistory" @click="confirmClearHistory">{{ clearingHistory ? '清空中' : '确认清空' }}</button>
