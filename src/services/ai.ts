@@ -1,9 +1,11 @@
 import { unzipSync } from 'fflate';
-import type { ApiVendor, AppSettings, CharacterProfile, GenerateReplyInput, ImageProviderType, PromptContext, UserProfile, VoomComment, VoomFrequency, VoomPost } from '@/types/domain';
+import type { ApiVendor, AppSettings, CharacterProfile, ConversationTimeAwarenessSettings, GenerateReplyInput, ImageProviderType, PromptContext, UserProfile, VoomComment, VoomFrequency, VoomPost } from '@/types/domain';
 import { createId } from '@/utils/id';
 import { getCharacterVoomAuthorName } from '@/utils/character';
 import { getPreferredVoomImageProvider, getResolvedApiConfig, getResolvedOpenAiImageConfig } from '@/utils/settings';
-import { normalizeTranslationText } from '@/utils/translation';
+import { estimateTokenCount } from '@/utils/memory';
+import { renderTimeAwarenessPrompt } from '@/utils/timeAwareness';
+import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
 import { getVoomFrequencyChance } from '@/utils/voom';
 import { buildMomentPrompt, buildPrompt } from './prompt';
 
@@ -446,12 +448,56 @@ function getStickerImageParts(input: GenerateReplyInput): TextApiContentPart[] {
     ]);
 }
 
+export function estimateRoleplayReplyInputTokens(input: GenerateReplyInput) {
+  const prompt = buildPrompt(input);
+  const imageParts = getStickerImageParts(input);
+  const imageText = imageParts
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text ?? '')
+    .join('\n');
+  const imageCount = imageParts.filter((part) => part.type === 'image_url').length;
+  return estimateTokenCount([prompt, imageText].filter(Boolean).join('\n')) + imageCount * 85;
+}
+
 interface VoomMomentPayload {
   content: string;
   contentTranslation?: string;
   imageDescription: string;
   likes: string[];
   comments: Array<Pick<VoomComment, 'authorName' | 'content' | 'contentTranslation' | 'parentId'>>;
+}
+
+const voomDateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23'
+});
+
+function shouldIncludeVoomTimeContext(timeAwareness: ConversationTimeAwarenessSettings | null | undefined) {
+  return Boolean(timeAwareness?.enabled);
+}
+
+function formatVoomContextTime(timestamp?: number) {
+  const normalizedTimestamp = Number(timestamp);
+  if (!Number.isFinite(normalizedTimestamp) || normalizedTimestamp <= 0) return '未知';
+  return voomDateTimeFormatter.format(normalizedTimestamp);
+}
+
+function formatVoomPostPromptContent(post: VoomPost, includeTimeContext: boolean) {
+  return [
+    includeTimeContext ? `发布时间：${formatVoomContextTime(post.createdAt)}` : '',
+    formatContentWithChineseTranslation(post.content, post.contentTranslation),
+    post.imageDescription ? `配图描述：${post.imageDescription}` : ''
+  ].filter(Boolean).join('\n');
+}
+
+function formatVoomCommentPromptLine(comment: VoomComment, includeTimeContext: boolean) {
+  const timeText = includeTimeContext ? `（${formatVoomContextTime(comment.createdAt)}）` : '';
+  return `${comment.id}｜${comment.authorName}${timeText}: ${formatContentWithChineseTranslation(comment.content, comment.contentTranslation)}`;
 }
 
 function createFallbackVoomImageDescription(context: PromptContext, content: string) {
@@ -1009,17 +1055,24 @@ export async function generateUserVoomComments(input: {
   author: UserProfile;
   content: string;
   imageDescription?: string;
+  createdAt?: number;
   targetCharacters: CharacterProfile[];
+  timeAwareness?: ConversationTimeAwarenessSettings;
   settings?: AppSettings;
   modelOverride?: string;
 }): Promise<UserVoomCommentResult[]> {
   if (!input.targetCharacters.length) return [];
   requireTextGenerationConfig(input.settings, input.modelOverride, '用户 VOOM 评论生成');
 
+  const timeAwarenessPrompt = renderTimeAwarenessPrompt(input.timeAwareness, {
+    userName: input.author.name || input.author.nickname || '用户'
+  });
+  const includeTimeContext = shouldIncludeVoomTimeContext(input.timeAwareness);
+
   const targetCharacterText = input.targetCharacters
     .map((character) => [
       `id: ${character.id}`,
-      `VOOM 昵称: ${getCharacterVoomAuthorName(character)}`,
+      `VOOM 网名: ${getCharacterVoomAuthorName(character)}`,
       `角色名: ${character.name}`,
       `主页签名: ${character.signature || '无'}`,
       `角色设定: ${character.description || '无'}`
@@ -1027,8 +1080,10 @@ export async function generateUserVoomComments(input: {
     .join('\n');
   const prompt = [
     '你要模拟 LINK VOOM 里，角色们看到用户发出的动态后留下的自然评论。只输出 JSON，不要输出 JSON 以外的文字。',
+    timeAwarenessPrompt,
     `用户昵称：${input.author.nickname || input.author.name}`,
     `用户设定：${input.author.description || '无'}`,
+    includeTimeContext && input.createdAt ? `用户动态发布时间：${formatVoomContextTime(input.createdAt)}` : '',
     `用户动态正文：\n${input.content}`,
     input.imageDescription ? `配图描述：${input.imageDescription}` : '',
     `可评论角色：\n${targetCharacterText}`,
@@ -1065,15 +1120,16 @@ export async function generateVoomCommentReplies(input: {
   requireTextGenerationConfig(input.settings, input.modelOverride, 'VOOM 评论回复');
   const fallbackAuthorName = input.context.character.nickname;
   const targetComments = input.userComments.length ? input.userComments : input.post.comments.slice(-2);
+  const includeTimeContext = shouldIncludeVoomTimeContext(input.context.timeAwareness);
   const blockedAuthorNames = [input.context.boundUser.nickname, input.context.boundUser.name, input.context.user.nickname, input.context.user.name]
     .map((name) => name.trim())
     .filter(Boolean);
   const prompt = [
     buildPrompt(input.context),
     '现在你要模拟这条 VOOM 的真实评论区继续发展。只输出 JSON，不要输出 JSON 以外的任何文字。',
-    `VOOM 正文：\n${input.post.content}`,
-    `评论区：\n${input.post.comments.map((comment) => `${comment.id}｜${comment.authorName}: ${comment.content}`).join('\n') || '暂无评论。'}`,
-    `优先关注这些评论：\n${targetComments.map((comment) => `${comment.id}｜${comment.authorName}: ${comment.content}`).join('\n') || '没有指定评论，可根据正文补一条自然评论。'}`,
+    `VOOM 正文：\n${formatVoomPostPromptContent(input.post, includeTimeContext)}`,
+    `评论区：\n${input.post.comments.map((comment) => formatVoomCommentPromptLine(comment, includeTimeContext)).join('\n') || '暂无评论。'}`,
+    `优先关注这些评论：\n${targetComments.map((comment) => formatVoomCommentPromptLine(comment, includeTimeContext)).join('\n') || '没有指定评论，可根据正文补一条自然评论。'}`,
     `不要使用这些作者名发言：${blockedAuthorNames.join('、') || '当前用户'}`,
     `输出格式：
 {
@@ -1111,11 +1167,9 @@ export async function generateConversationSummary(input: {
   settings?: AppSettings;
   modelOverride?: string;
   promptOverride?: string;
-  perspectiveInstruction?: string;
 }) {
   const prompt = [
     input.promptOverride?.trim() || '请把下面聊天楼层总结成可供角色扮演继续读取的记忆手册。要求：保留人物关系变化、承诺、偏好、冲突、时间顺序和未解决事项；不要评价用户；用中文输出。',
-    input.perspectiveInstruction?.trim(),
     input.previousSummary ? `已有长期/短期记忆：\n${input.previousSummary}` : '已有长期/短期记忆：暂无。',
     `待总结聊天：\n${input.messages}`
   ].filter(Boolean).join('\n\n');

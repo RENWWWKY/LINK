@@ -110,21 +110,11 @@ export interface ChatAppearanceSettings {
   hideVoomNarration: boolean;
 }
 
-export type SummaryPerspective =
-  | 'user-first'
-  | 'user-second'
-  | 'user-third'
-  | 'char-first'
-  | 'char-second'
-  | 'char-third'
-  | 'omniscient-third';
-
 export interface ChatMemorySettings {
   enabled: boolean;
   autoSummarize: boolean;
   summarizeEvery: number;
   summaryModel: string;
-  summaryPerspective: SummaryPerspective;
   summaryPrompt: string;
   mergeSummaryPrompt: string;
   vectorMemoryEnabled: boolean;
@@ -227,6 +217,7 @@ export interface ChatMessage {
   voomEventType?: 'post' | 'like' | 'unlike' | 'comment' | 'reply';
   sticker?: ChatStickerAttachment;
   quote?: ChatMessageQuote;
+  replyBatchId?: string;
   status?: 'sending' | 'sent' | 'failed';
   editedAt?: number;
 }

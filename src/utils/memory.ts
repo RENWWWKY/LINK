@@ -1,66 +1,24 @@
-import type { ChatMemorySettings, ChatMessage, ChatMode, ConversationMemoryRecord, ConversationSettings, SummaryPerspective } from '@/types/domain';
+import type { ChatMemorySettings, ChatMessage, ChatMode, ConversationMemoryRecord, ConversationSettings } from '@/types/domain';
 import { createId } from './id';
 import { defaultTimeAwarenessSettings, normalizeTimeAwarenessSettings } from './timeAwareness';
 import { normalizeVoomFrequency } from './voom';
-
-export const summaryPerspectiveOptions: Array<{
-  value: SummaryPerspective;
-  target: '{{user}}' | '{{char}}' | '上帝';
-  label: string;
-  description: string;
-}> = [
-  { value: 'user-first', target: '{{user}}', label: '第一人称', description: '用“我”记录用户经历。' },
-  { value: 'user-second', target: '{{user}}', label: '第二人称', description: '用“你”称呼用户。' },
-  { value: 'user-third', target: '{{user}}', label: '第三人称', description: '用第三人称记录用户。' },
-  { value: 'char-first', target: '{{char}}', label: '第一人称', description: '用“我”记录角色经历。' },
-  { value: 'char-second', target: '{{char}}', label: '第二人称', description: '用“你”称呼角色。' },
-  { value: 'char-third', target: '{{char}}', label: '第三人称', description: '用第三人称记录角色。' },
-  { value: 'omniscient-third', target: '上帝', label: '第三人称', description: '旁观双方并保留全局事实。' }
-];
 
 export const defaultChatMemorySettings: ChatMemorySettings = {
   enabled: true,
   autoSummarize: true,
   summarizeEvery: 100,
   summaryModel: '',
-  summaryPerspective: 'omniscient-third',
-  summaryPrompt: '请把下面聊天楼层总结成可供角色扮演继续读取的记忆手册。保留人物关系变化、承诺、偏好、冲突、时间顺序和未解决事项；不要评价用户；用中文输出，直接开始输出内容。',
-  mergeSummaryPrompt: '请把下面多段已总结记忆合并成一份更高层级的大总结。保留稳定事实、长期关系变化、重要承诺、偏好、冲突和未解决事项；去除重复内容；用中文输出，直接开始输出内容。',
+  summaryPrompt: '请把下面聊天楼层总结成可供角色扮演继续读取的记忆手册，以{{char}}的第三人称视角。保留人物关系变化、承诺、偏好、冲突和未解决事项；不要评价用户；用中文输出，直接开始输出内容。',
+  mergeSummaryPrompt: '请把下面多段已总结记忆合并成一份更高层级的大总结，以{{char}}的第三人称视角。保留稳定事实、长期关系变化、重要承诺、偏好、冲突和未解决事项；去除重复内容；用中文输出，直接开始输出内容。',
   vectorMemoryEnabled: true,
   hideSummarizedMessages: true
 };
 
-export function normalizeSummaryPerspective(value: unknown): SummaryPerspective {
-  const perspective = String(value ?? '').trim();
-  return summaryPerspectiveOptions.some((option) => option.value === perspective)
-    ? perspective as SummaryPerspective
-    : defaultChatMemorySettings.summaryPerspective;
-}
-
-export function renderSummaryPerspectiveInstruction(perspective: SummaryPerspective, context: { userName: string; characterName: string }) {
-  const userName = context.userName.trim() || '{{user}}';
-  const characterName = context.characterName.trim() || '{{char}}';
-  const subjectMap: Record<Exclude<SummaryPerspective, 'omniscient-third'>, { targetName: string; token: '{{user}}' | '{{char}}'; counterpartName: string; viewpoint: string }> = {
-    'user-first': { targetName: userName, token: '{{user}}', counterpartName: characterName, viewpoint: '第一人称' },
-    'user-second': { targetName: userName, token: '{{user}}', counterpartName: characterName, viewpoint: '第二人称' },
-    'user-third': { targetName: userName, token: '{{user}}', counterpartName: characterName, viewpoint: '第三人称' },
-    'char-first': { targetName: characterName, token: '{{char}}', counterpartName: userName, viewpoint: '第一人称' },
-    'char-second': { targetName: characterName, token: '{{char}}', counterpartName: userName, viewpoint: '第二人称' },
-    'char-third': { targetName: characterName, token: '{{char}}', counterpartName: userName, viewpoint: '第三人称' }
-  };
-
-  if (perspective === 'omniscient-third') {
-    return `总结视角：使用上帝第三人称视角，不代入{{user}}或{{char}}任一方；把${userName}和${characterName}都作为叙事对象记录。`;
-  }
-
-  const subject = subjectMap[perspective];
-  if (subject.viewpoint === '第一人称') {
-    return `总结视角：以${subject.token}（${subject.targetName}）的第一人称记录，使用“我”指代${subject.targetName}，用姓名或“对方”指代${subject.counterpartName}。`;
-  }
-  if (subject.viewpoint === '第二人称') {
-    return `总结视角：以面向${subject.token}（${subject.targetName}）的第二人称记录，使用“你”称呼${subject.targetName}，用姓名或“对方”指代${subject.counterpartName}。`;
-  }
-  return `总结视角：以${subject.token}（${subject.targetName}）为叙事中心的第三人称记录，使用姓名或第三人称称呼${subject.targetName}，不要写成第一人称。`;
+export function renderCharacterMemoryPrompt(prompt: string, characterName: string) {
+  const resolvedCharacterName = characterName.trim() || '角色';
+  return prompt
+    .split('{{char}}').join(resolvedCharacterName)
+    .replace(/以角色的第三人称视角/g, `以${resolvedCharacterName}的第三人称视角`);
 }
 
 export const defaultCharacterStickerGroupIds = ['sticker_group_default'];
@@ -117,7 +75,6 @@ export function normalizeConversationSettings(settings: Partial<ConversationSett
       autoSummarize: memory.autoSummarize ?? defaultChatMemorySettings.autoSummarize,
       summarizeEvery: Math.max(10, Math.round(Number(memory.summarizeEvery) || defaultChatMemorySettings.summarizeEvery)),
       summaryModel: String(memory.summaryModel ?? '').trim(),
-      summaryPerspective: normalizeSummaryPerspective(memory.summaryPerspective),
       summaryPrompt: String(memory.summaryPrompt ?? defaultChatMemorySettings.summaryPrompt).trim() || defaultChatMemorySettings.summaryPrompt,
       mergeSummaryPrompt: String(memory.mergeSummaryPrompt ?? defaultChatMemorySettings.mergeSummaryPrompt).trim() || defaultChatMemorySettings.mergeSummaryPrompt,
       vectorMemoryEnabled: memory.vectorMemoryEnabled ?? defaultChatMemorySettings.vectorMemoryEnabled,
@@ -171,7 +128,46 @@ export function vectorizeText(text: string, dimensions = 16) {
 }
 
 export function getMessageFloorMap(messages: ChatMessage[]) {
-  return new Map(messages.map((message, index) => [message.id, index + 1]));
+  const floorMap = new Map<string, number>();
+  getConversationFloors(messages).forEach((floorMessages, index) => {
+    floorMessages.forEach((message) => floorMap.set(message.id, index + 1));
+  });
+  return floorMap;
+}
+
+function getMessageFloorGroupKey(message: ChatMessage) {
+  if (message.sender === 'user') return 'user';
+  if (message.replyBatchId) return `reply:${message.replyBatchId}`;
+  return 'assistant';
+}
+
+export function getConversationFloors(messages: ChatMessage[]) {
+  const floors: ChatMessage[][] = [];
+  let currentKey = '';
+  let currentMessages: ChatMessage[] = [];
+
+  for (const message of messages) {
+    const nextKey = getMessageFloorGroupKey(message);
+    if (currentMessages.length && nextKey !== currentKey) {
+      floors.push(currentMessages);
+      currentMessages = [];
+    }
+    currentKey = nextKey;
+    currentMessages.push(message);
+  }
+
+  if (currentMessages.length) floors.push(currentMessages);
+  return floors;
+}
+
+export function getConversationFloorCount(messages: ChatMessage[]) {
+  return getConversationFloors(messages).length;
+}
+
+export function getMessagesInFloorRange(messages: ChatMessage[], startFloor: number, endFloor: number) {
+  return getConversationFloors(messages)
+    .slice(Math.max(0, startFloor - 1), Math.max(0, endFloor))
+    .flat();
 }
 
 export function getHiddenMessageIds(messages: ChatMessage[], memories: ConversationMemoryRecord[], settings: ConversationSettings) {
@@ -180,8 +176,12 @@ export function getHiddenMessageIds(messages: ChatMessage[], memories: Conversat
     .filter((memory) => memory.hiddenStartFloor > 0 && memory.hiddenEndFloor >= memory.hiddenStartFloor)
     .map((memory) => ({ start: memory.hiddenStartFloor, end: memory.hiddenEndFloor }));
 
+  const floorMap = getMessageFloorMap(messages);
   return new Set(messages
-    .filter((message, index) => hiddenRanges.some((range) => index + 1 >= range.start && index + 1 <= range.end))
+    .filter((message) => {
+      const floor = floorMap.get(message.id) ?? 0;
+      return hiddenRanges.some((range) => floor >= range.start && floor <= range.end);
+    })
     .map((message) => message.id));
 }
 
@@ -202,12 +202,13 @@ export function getMemoryContext(memories: ConversationMemoryRecord[]) {
 export function getNextSummaryRange(messages: ChatMessage[], memories: ConversationMemoryRecord[], settings: ConversationSettings, mode: ChatMode) {
   if (!settings.memory.autoSummarize) return null;
   const step = settings.memory.summarizeEvery;
+  const floorCount = getConversationFloorCount(messages);
   const completedEndFloor = memories
     .reduce((max, memory) => Math.max(max, memory.endFloor), 0);
   const startFloor = completedEndFloor + 1;
   const endFloor = completedEndFloor + step;
-  if (messages.length < endFloor) return null;
-  const sourceMessages = messages.slice(startFloor - 1, endFloor);
+  if (floorCount < endFloor) return null;
+  const sourceMessages = getMessagesInFloorRange(messages, startFloor, endFloor);
   const keepTail = Math.min(10, Math.max(1, Math.ceil(step * 0.1)));
   return {
     startFloor,

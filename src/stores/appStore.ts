@@ -9,9 +9,9 @@ import { normalizeUserProfile, normalizeVisualProfile } from '@/utils/profile';
 import { mergeVendorModels, normalizeAppSettings } from '@/utils/settings';
 import { normalizeWorldBookEntry } from '@/utils/worldBook';
 import { createStickerFromDraft, createStickerGroup, normalizeSticker, normalizeStickerGroup, type StickerImportDraft } from '@/utils/stickers';
-import { ageMemoryKind, createMemoryRecord, defaultChatMemorySettings, getHiddenMessageIds, getMemoryContext, getNextSummaryRange, getVisibleMessages, normalizeConversationSettings, renderSummaryPerspectiveInstruction, shouldCompressMemory } from '@/utils/memory';
+import { ageMemoryKind, createMemoryRecord, getConversationFloorCount, getHiddenMessageIds, getMemoryContext, getMessageFloorMap, getMessagesInFloorRange, getNextSummaryRange, getVisibleMessages, normalizeConversationSettings, renderCharacterMemoryPrompt, shouldCompressMemory } from '@/utils/memory';
 import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
-import { fetchVendorModels, generateConversationSummary, generateEmbeddingVector, generateRoleplayReply, generateUserVoomComments, generateVoomCommentReplies, generateVoomPost, hasTextGenerationConfig, shouldAutoGenerateMoment, type RoleplayReplyResult } from '@/services/ai';
+import { estimateRoleplayReplyInputTokens, fetchVendorModels, generateConversationSummary, generateEmbeddingVector, generateRoleplayReply, generateUserVoomComments, generateVoomCommentReplies, generateVoomPost, hasTextGenerationConfig, shouldAutoGenerateMoment, type RoleplayReplyResult } from '@/services/ai';
 
 interface CreateUserVoomPostPayload {
   userId: string;
@@ -220,6 +220,44 @@ export const useAppStore = defineStore('app', () => {
     return getMemoryContext(memoriesForConversation(id));
   }
 
+  function nextReplyTokenCountForConversation(id: string) {
+    const conversation = conversationById(id);
+    if (!conversation) return 0;
+    const character = characterById(conversation.charId);
+    if (!character) return 0;
+    const boundUser = userById(character.boundUserId) ?? user.value;
+    if (!boundUser) return 0;
+    const chatSettings = settingsForConversation(id);
+    const availableCharacterStickers = stickersForGroups(chatSettings.characterStickerGroupIds);
+    const conversationMessages = messagesForConversation(id);
+    const lastUserMessages = [...conversationMessages].reverse().filter((message, index, reversedMessages) => {
+      const previousMessages = reversedMessages.slice(0, index);
+      return message.sender === 'user' && !previousMessages.some((previous) => previous.sender === 'char');
+    }).reverse();
+    const userMessageText = lastUserMessages.map((message) => message.sticker ? `[Sticker] ${message.sticker.description}` : message.content).join('\n');
+    return estimateRoleplayReplyInputTokens({
+      user: boundUser,
+      character,
+      boundUser,
+      mode: conversation.activeMode,
+      messages: visibleMessagesForConversation(id),
+      worldBooks: worldBooks.value,
+      conversationSummary: conversation.summary,
+      memorySummary: memoryContextForConversation(id),
+      stickerVisionEnabled: chatSettings.stickerVisionEnabled,
+      narrationModeEnabled: chatSettings.narrationModeEnabled,
+      timeAwareness: chatSettings.timeAwareness,
+      availableStickers: availableCharacterStickers.map((sticker) => ({
+        stickerId: sticker.id,
+        description: sticker.description,
+        imageUrl: sticker.imageUrl
+      })),
+      userMessage: userMessageText,
+      settings: settings.value ?? undefined,
+      modelOverride: chatSettings.modelOverrides[conversation.activeMode]
+    });
+  }
+
   function lastMessageForConversation(id: string) {
     const conversationMessages = messagesForConversation(id);
     return conversationMessages[conversationMessages.length - 1];
@@ -288,7 +326,7 @@ export const useAppStore = defineStore('app', () => {
     };
   }
 
-  async function appendConversationEvent(conversationId: string, content: string, options: Partial<Pick<ChatMessage, 'mode' | 'voomPostId' | 'voomCommentId' | 'voomEventType' | 'createdAt'>> = {}) {
+  async function appendConversationEvent(conversationId: string, content: string, options: Partial<Pick<ChatMessage, 'mode' | 'voomPostId' | 'voomCommentId' | 'voomEventType' | 'replyBatchId' | 'createdAt'>> = {}) {
     const conversation = conversationById(conversationId);
     if (!conversation || !content.trim()) return null;
     const message: ChatMessage = {
@@ -302,7 +340,8 @@ export const useAppStore = defineStore('app', () => {
       status: 'sent',
       voomPostId: options.voomPostId,
       voomCommentId: options.voomCommentId,
-      voomEventType: options.voomEventType
+      voomEventType: options.voomEventType,
+      replyBatchId: options.replyBatchId
     };
     messages.value.push(message);
     await putEntity('messages', message);
@@ -316,6 +355,14 @@ export const useAppStore = defineStore('app', () => {
   function expandMessageIds(messageIds: string | string[]) {
     const ids = Array.isArray(messageIds) ? messageIds : [messageIds];
     return [...new Set(ids.flatMap((id) => String(id).split('__')).map((id) => id.trim()).filter(Boolean))];
+  }
+
+  function isRoleplayNarrationMessage(message: ChatMessage) {
+    return message.sender === 'system'
+      && message.displayStyle === 'narration'
+      && !message.voomPostId
+      && !message.voomCommentId
+      && !message.voomEventType;
   }
 
   function cloneMessageQuote(quote?: ChatMessageQuote | null): ChatMessageQuote | undefined {
@@ -345,15 +392,6 @@ export const useAppStore = defineStore('app', () => {
       return boundUser?.nickname || boundUser?.name || user.value?.nickname || user.value?.name || '我';
     }
     return '系统';
-  }
-
-  function summaryPerspectiveInstructionFor(conversation: Conversation, chatSettings: ConversationSettings) {
-    const character = characterById(conversation.charId);
-    const boundUser = character ? userById(character.boundUserId) ?? user.value : user.value;
-    return renderSummaryPerspectiveInstruction(chatSettings.memory.summaryPerspective, {
-      userName: boundUser?.name || boundUser?.nickname || '{{user}}',
-      characterName: character?.name || character?.nickname || '{{char}}'
-    });
   }
 
   function createMessageQuoteSnapshot(message: ChatMessage): ChatMessageQuote | null {
@@ -426,7 +464,7 @@ export const useAppStore = defineStore('app', () => {
     return nextMessage;
   }
 
-  async function recallMessage(messageId: string, options: { actor?: 'user' | 'char' } = {}) {
+  async function recallMessage(messageId: string, options: { actor?: 'user' | 'char'; replyBatchId?: string } = {}) {
     const [id] = expandMessageIds(messageId);
     if (!id) return null;
     const targetMessage = messages.value.find((message) => message.id === id);
@@ -440,7 +478,7 @@ export const useAppStore = defineStore('app', () => {
     return appendConversationEvent(
       targetMessage.conversationId,
       `${actorName}撤回了一条消息：${recalledContent}`,
-      { mode: targetMessage.mode }
+      { mode: targetMessage.mode, replyBatchId: options.replyBatchId }
     );
   }
 
@@ -1098,11 +1136,12 @@ export const useAppStore = defineStore('app', () => {
     if (!conversation) return null;
     const chatSettings = settingsForConversation(conversationId);
     const conversationMessages = messagesForConversation(conversationId);
+    const conversationFloorCount = getConversationFloorCount(conversationMessages);
     const memories = memoriesForConversation(conversationId);
     const nextRange = getNextSummaryRange(conversationMessages, memories, chatSettings, conversation.activeMode);
     const completedEndFloor = memories.reduce((max, memory) => Math.max(max, memory.endFloor), 0);
     const partialStartFloor = completedEndFloor + 1;
-    const partialEndFloor = conversationMessages.length;
+    const partialEndFloor = conversationFloorCount;
     const partialLength = partialEndFloor - partialStartFloor + 1;
     const partialKeepTail = Math.min(10, Math.max(1, Math.ceil(partialLength * 0.1)));
     const range = options.forceStartFloor && options.forceEndFloor
@@ -1111,7 +1150,7 @@ export const useAppStore = defineStore('app', () => {
           endFloor: options.forceEndFloor,
           hiddenStartFloor: options.hiddenStartFloor ?? options.forceStartFloor,
           hiddenEndFloor: options.hiddenEndFloor ?? Math.max(options.forceStartFloor - 1, options.forceEndFloor - Math.min(10, Math.max(1, Math.ceil((options.forceEndFloor - options.forceStartFloor + 1) * 0.1)))),
-          sourceMessages: conversationMessages.slice(options.forceStartFloor - 1, options.forceEndFloor)
+          sourceMessages: getMessagesInFloorRange(conversationMessages, options.forceStartFloor, options.forceEndFloor)
         }
       : nextRange ?? (options.allowPartial && partialLength > 0
         ? {
@@ -1119,26 +1158,28 @@ export const useAppStore = defineStore('app', () => {
             endFloor: partialEndFloor,
             hiddenStartFloor: partialStartFloor,
             hiddenEndFloor: Math.max(partialStartFloor - 1, partialEndFloor - partialKeepTail),
-            sourceMessages: conversationMessages.slice(partialStartFloor - 1, partialEndFloor)
+            sourceMessages: getMessagesInFloorRange(conversationMessages, partialStartFloor, partialEndFloor)
           }
         : null);
 
     if (!range || !range.sourceMessages.length) return null;
 
     const character = characterById(conversation.charId);
+    const characterName = character?.nickname || character?.name || '角色';
+    const boundUser = character ? userById(character.boundUserId) ?? user.value : user.value;
+    const userSenderName = boundUser?.name || boundUser?.nickname || '我';
     const modelOverride = chatSettings.memory.summaryModel || chatSettings.modelOverrides[conversation.activeMode];
-    const perspectiveInstruction = summaryPerspectiveInstructionFor(conversation, chatSettings);
+    const floorMap = getMessageFloorMap(conversationMessages);
     const summary = await generateConversationSummary({
-      messages: range.sourceMessages.map((message, index) => {
-        const floor = range.startFloor + index;
-        const sender = message.sender === 'user' ? '用户' : message.sender === 'char' ? character?.nickname || '角色' : '系统';
+      messages: range.sourceMessages.map((message) => {
+        const floor = floorMap.get(message.id) ?? range.startFloor;
+        const sender = message.sender === 'user' ? userSenderName : message.sender === 'char' ? character?.nickname || '角色' : '系统';
         return `${floor}楼 ${sender}: ${message.content}`;
       }).join('\n'),
       previousSummary: getMemoryContext(memories),
       settings: settings.value ?? undefined,
       modelOverride,
-      promptOverride: defaultChatMemorySettings.summaryPrompt,
-      perspectiveInstruction
+      promptOverride: renderCharacterMemoryPrompt(chatSettings.memory.summaryPrompt, characterName)
     });
     const hasHiddenRange = chatSettings.memory.hideSummarizedMessages && range.hiddenStartFloor > 0 && range.hiddenEndFloor >= range.hiddenStartFloor;
     const vector = chatSettings.memory.vectorMemoryEnabled
@@ -1230,15 +1271,15 @@ export const useAppStore = defineStore('app', () => {
     if (memories.length <= 1) return null;
 
     const chatSettings = settingsForConversation(conversationId);
+    const character = characterById(conversation.charId);
+    const characterName = character?.nickname || character?.name || '角色';
     const modelOverride = chatSettings.memory.summaryModel || chatSettings.modelOverrides[conversation.activeMode];
-    const perspectiveInstruction = summaryPerspectiveInstructionFor(conversation, chatSettings);
     const summary = await generateConversationSummary({
       messages: memories.map((memory) => `【${memory.startFloor}-${memory.endFloor}楼】\n${memory.summary}`).join('\n\n'),
       previousSummary: '',
       settings: settings.value ?? undefined,
       modelOverride,
-      promptOverride: defaultChatMemorySettings.mergeSummaryPrompt,
-      perspectiveInstruction
+      promptOverride: renderCharacterMemoryPrompt(chatSettings.memory.mergeSummaryPrompt, characterName)
     });
     const vector = chatSettings.memory.vectorMemoryEnabled
       ? await generateEmbeddingVector({
@@ -1304,16 +1345,17 @@ export const useAppStore = defineStore('app', () => {
   async function compressOldMemories(conversationId: string) {
     const oldMemories = memoriesForConversation(conversationId).filter((memory) => shouldCompressMemory(memory));
     if (!oldMemories.length) return;
+    const conversation = conversationById(conversationId);
+    const character = conversation ? characterById(conversation.charId) : null;
+    const characterName = character?.nickname || character?.name || '角色';
     const chatSettings = settingsForConversation(conversationId);
     await Promise.all(oldMemories.map(async (memory) => {
-      const conversation = conversationById(memory.conversationId);
       const summary = await generateConversationSummary({
         messages: memory.summary,
         previousSummary: '',
         settings: settings.value ?? undefined,
         modelOverride: chatSettings.memory.summaryModel || chatSettings.modelOverrides[memory.mode],
-        promptOverride: defaultChatMemorySettings.summaryPrompt,
-        perspectiveInstruction: conversation ? summaryPerspectiveInstructionFor(conversation, chatSettings) : undefined
+        promptOverride: renderCharacterMemoryPrompt(chatSettings.memory.summaryPrompt, characterName)
       });
       await updateMemoryRecord({
         ...memory,
@@ -1371,6 +1413,7 @@ export const useAppStore = defineStore('app', () => {
         modelOverride: chatSettings.modelOverrides[conversation.activeMode]
       });
       const parsedReply = JSON.parse(replyPayload) as RoleplayReplyResult;
+      const replyBatchId = createId('reply');
       const replyTexts = Array.isArray(parsedReply.replies) ? parsedReply.replies : [parsedReply.reply];
       const replyTranslations = Array.isArray(parsedReply.replyTranslations) ? parsedReply.replyTranslations : [];
       const replyMessages = replyTexts
@@ -1416,6 +1459,7 @@ export const useAppStore = defineStore('app', () => {
             content: profileUpdate.narration.trim(),
             createdAt: Date.now(),
             displayStyle: 'narration',
+            replyBatchId,
             status: 'sent'
           };
           messages.value.push(narrationMessage);
@@ -1426,7 +1470,7 @@ export const useAppStore = defineStore('app', () => {
         await updateCharacterMindState(character.id, profileUpdate.innerMonologue, conversationId);
       }
       for (const messageId of validRecallMessageIds) {
-        await recallMessage(messageId, { actor: 'char' });
+        await recallMessage(messageId, { actor: 'char', replyBatchId });
       }
       const createdAt = Date.now();
       const charNarrationMessages = narrationMessages.map((content, index) => ({
@@ -1437,6 +1481,7 @@ export const useAppStore = defineStore('app', () => {
         content,
         createdAt: createdAt + index,
         displayStyle: 'narration' as const,
+        replyBatchId,
         status: 'sent' as const
       } satisfies ChatMessage));
       const charTextMessages = replyMessages.map((reply, index) => ({
@@ -1447,6 +1492,7 @@ export const useAppStore = defineStore('app', () => {
         content: reply.content,
         translation: reply.translation || undefined,
         quote: quoteByReplyIndex.get(index),
+        replyBatchId,
         createdAt: createdAt + charNarrationMessages.length + index,
         status: 'sent' as const
       } satisfies ChatMessage));
@@ -1461,6 +1507,7 @@ export const useAppStore = defineStore('app', () => {
           description: sticker.description,
           imageUrl: sticker.imageUrl
         },
+        replyBatchId,
         createdAt: createdAt + charNarrationMessages.length + charTextMessages.length + index,
         status: 'sent' as const
       } satisfies ChatMessage));
@@ -1529,7 +1576,19 @@ export const useAppStore = defineStore('app', () => {
       firstCharIndex -= 1;
     }
 
-    const messagesToRemove = conversationMessages.slice(firstCharIndex, latestCharIndex + 1);
+    const latestCharMessage = conversationMessages[latestCharIndex];
+    const messagesToRemove = latestCharMessage.replyBatchId
+      ? conversationMessages.filter((message) => message.replyBatchId === latestCharMessage.replyBatchId)
+      : conversationMessages.slice(firstCharIndex, latestCharIndex + 1);
+
+    if (!latestCharMessage.replyBatchId) {
+      for (let messageIndex = firstCharIndex - 1; messageIndex >= 0; messageIndex -= 1) {
+        const previousMessage = conversationMessages[messageIndex];
+        if (!isRoleplayNarrationMessage(previousMessage)) break;
+        messagesToRemove.unshift(previousMessage);
+      }
+    }
+
     await deleteMessages(messagesToRemove.map((message) => message.id));
 
     await requestRoleplayReply(conversationId);
@@ -1567,6 +1626,12 @@ export const useAppStore = defineStore('app', () => {
     return hasConfiguredTextModel('') ? '' : null;
   }
 
+  function resolveUserVoomCommentTimeAwareness(targetConversations: Conversation[]) {
+    return {
+      enabled: targetConversations.some((targetConversation) => settingsForConversation(targetConversation.id).timeAwareness.enabled)
+    };
+  }
+
   async function createInitialUserVoomComments(post: VoomPost, author: UserProfile, targetCharacters: CharacterProfile[], targetConversations: Conversation[]) {
     const modelOverride = resolveUserVoomCommentModelOverride(targetConversations);
     if (modelOverride === null) return [];
@@ -1577,7 +1642,9 @@ export const useAppStore = defineStore('app', () => {
         author,
         content: post.content,
         imageDescription: post.imageDescription,
+        createdAt: post.createdAt,
         targetCharacters,
+        timeAwareness: resolveUserVoomCommentTimeAwareness(targetConversations),
         settings: settings.value ?? undefined,
         modelOverride
       });
@@ -1887,6 +1954,7 @@ export const useAppStore = defineStore('app', () => {
     visibleMessagesForConversation,
     hiddenMessageIdsForConversation,
     memoryContextForConversation,
+    nextReplyTokenCountForConversation,
     lastMessageForConversation,
     createMessageQuoteSnapshot,
     showConfigAlert,

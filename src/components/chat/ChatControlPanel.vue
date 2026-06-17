@@ -97,26 +97,6 @@
           </label>
         </section>
 
-        <section class="settings-block perspective-block">
-          <header class="section-header">
-            <div>
-              <span>Point of view</span>
-              <strong>总结视角</strong>
-            </div>
-          </header>
-          <label class="field perspective-select-field">
-            <span>记忆叙述方式</span>
-            <div class="perspective-select-shell">
-              <select v-model="draft.memory.summaryPerspective" @change="saveDraft">
-                <option v-for="option in summaryPerspectiveOptions" :key="option.value" :value="option.value">
-                  {{ option.target }} / {{ option.label }}
-                </option>
-              </select>
-            </div>
-            <small>{{ selectedSummaryPerspective?.description }}</small>
-          </label>
-        </section>
-
         <section class="memory-records settings-block">
           <header class="section-header record-header">
             <div>
@@ -415,10 +395,11 @@
             <span class="switch-track"></span>
             <div>
               <strong>开启时间感知</strong>
+              <span>覆盖聊天回复、VOOM 生成与评论区回复。</span>
             </div>
           </label>
           <section v-if="draft.timeAwareness.enabled" class="time-awareness-note">
-            每次生成回复时都会重新读取本机实时信息，适合判断作息、日期和日常节奏。
+            每次生成内容时都会重新读取本机实时信息，适合判断作息、日期和日常节奏。
           </section>
         </section>
       </section>
@@ -435,7 +416,7 @@ import AvatarCropperModal from '@/components/image/AvatarCropperModal.vue';
 import { useAppStore } from '@/stores/appStore';
 import type { CharacterProfile, ConversationMemoryRecord, ConversationSettings } from '@/types/domain';
 import { readImageFileFromInput } from '@/utils/imageFile';
-import { estimateTokenCount, normalizeConversationSettings, summaryPerspectiveOptions } from '@/utils/memory';
+import { estimateTokenCount, getConversationFloorCount, normalizeConversationSettings } from '@/utils/memory';
 import { normalizeVoomFrequency, voomFrequencyOptions } from '@/utils/voom';
 
 const props = defineProps<{
@@ -468,8 +449,8 @@ const manualSummary = reactive({
 });
 
 const memories = computed(() => store.memoriesForConversation(props.conversationId));
-const totalMemoryTokens = computed(() => memories.value.reduce((total, memory) => total + memory.tokenCount, 0));
-const messageCount = computed(() => store.messagesForConversation(props.conversationId).length);
+const totalMemoryTokens = computed(() => store.nextReplyTokenCountForConversation(props.conversationId));
+const messageCount = computed(() => getConversationFloorCount(store.messagesForConversation(props.conversationId)));
 const hiddenFloorStatus = computed(() => {
   const hiddenRanges = memories.value
     .filter((memory) => memory.hiddenStartFloor > 0 && memory.hiddenEndFloor >= memory.hiddenStartFloor)
@@ -482,7 +463,6 @@ const mergeDisabled = computed(() => hasMergedSummary.value || memories.value.fi
 const mergeableMemories = computed(() => memories.value.filter((memory) => !memory.isMergedSummary));
 const mergedMemories = computed(() => memories.value.filter((memory) => memory.isMergedSummary));
 const characterDraftNickname = computed(() => characterDraft.nickname || 'new.friend');
-const selectedSummaryPerspective = computed(() => summaryPerspectiveOptions.find((option) => option.value === draft.memory.summaryPerspective) ?? summaryPerspectiveOptions[0]);
 const backgroundImageOptions = computed(() => draft.appearance.backgroundImages);
 const localWorldBooks = computed(() => store.worldBooks.filter((book) => book.scope === 'local'));
 const bubblePreviewStyle = computed(() => ({
@@ -1617,68 +1597,6 @@ function applyEditedAvatar(value: string) {
   background: transparent;
 }
 
-.perspective-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.perspective-option {
-  position: relative;
-  display: grid;
-  gap: 5px;
-  min-height: 88px;
-  padding: 12px;
-  border: 1px solid rgba(20, 24, 22, 0.06);
-  border-radius: 16px;
-  background: #f6f7f7;
-  overflow: hidden;
-}
-
-.perspective-option:last-child {
-  grid-column: 1 / -1;
-}
-
-.perspective-option input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.perspective-option span {
-  width: fit-content;
-  max-width: 100%;
-  padding: 3px 7px;
-  border-radius: 999px;
-  background: #ffffff;
-  color: #4f5559;
-  font-size: 10px;
-  font-weight: 900;
-}
-
-.perspective-option strong {
-  color: #171717;
-  font-size: 14px;
-  font-weight: 900;
-}
-
-.perspective-option small {
-  color: #85898e;
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.perspective-option.active {
-  border-color: rgba(6, 199, 85, 0.46);
-  background: linear-gradient(145deg, #ffffff, #eef9f2);
-  box-shadow: 0 10px 24px rgba(6, 199, 85, 0.1);
-}
-
-.perspective-option.active span {
-  background: #171717;
-  color: #ffffff;
-}
-
 .record-header em {
   align-self: center;
   color: #898e93;
@@ -1876,51 +1794,6 @@ function applyEditedAvatar(value: string) {
   color: #aaa5a0;
   box-shadow: none;
   cursor: default;
-}
-
-.perspective-select-field {
-  gap: 8px;
-}
-
-.perspective-select-field > small {
-  color: #7c8287;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.perspective-select-shell {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  min-height: 50px;
-  padding: 6px;
-  border: 1px solid rgba(20, 24, 22, 0.06);
-  border-radius: 16px;
-  background: #f6f8f7;
-}
-
-.perspective-select-shell strong {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 54px;
-  min-height: 34px;
-  padding: 0 10px;
-  border-radius: 12px;
-  background: #171717;
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.perspective-select-shell select {
-  min-height: 38px;
-  padding: 0 8px;
-  border-radius: 12px;
-  background: transparent;
-  color: #171717;
-  font-weight: 900;
 }
 
 .memory-records {
@@ -2447,7 +2320,6 @@ function applyEditedAvatar(value: string) {
 .field textarea,
 .field select,
 .model-select-shell,
-.perspective-select-shell,
 .sticker-bind-trigger,
 .switch-card,
 .compact-field,
@@ -2497,8 +2369,7 @@ function applyEditedAvatar(value: string) {
 .field:focus-within input,
 .field:focus-within textarea,
 .field:focus-within select,
-.model-select-shell:focus-within,
-.perspective-select-shell:focus-within {
+.model-select-shell:focus-within {
   box-shadow: inset 0 0 0 1px rgba(6, 199, 85, 0.35), 0 0 0 3px rgba(6, 199, 85, 0.1);
 }
 
@@ -2660,8 +2531,7 @@ function applyEditedAvatar(value: string) {
 
 .manual-summary-card p,
 .time-awareness-note,
-.empty-note,
-.perspective-select-field > small {
+.empty-note {
   margin: 0;
   color: #747b80;
   font-size: 12px;
@@ -2669,8 +2539,7 @@ function applyEditedAvatar(value: string) {
   line-height: 1.55;
 }
 
-.model-select-shell,
-.perspective-select-shell {
+.model-select-shell {
   display: grid;
   align-items: center;
   gap: 8px;
@@ -2705,32 +2574,10 @@ function applyEditedAvatar(value: string) {
 }
 
 .model-select-field select,
-.perspective-select-shell select,
 .frequency-field select {
   min-width: 0;
   overflow: hidden;
   background: transparent;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.perspective-select-shell {
-  grid-template-columns: auto minmax(0, 1fr);
-}
-
-.perspective-select-shell strong {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 54px;
-  min-height: 36px;
-  padding: 0 10px;
-  overflow: hidden;
-  border-radius: 13px;
-  background: #171717;
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3037,7 +2884,6 @@ function applyEditedAvatar(value: string) {
 
 @media (max-width: 340px) {
   .memory-hero,
-  .perspective-select-shell,
   .inline-input-action,
   .profile-preview {
     grid-template-columns: 1fr;
@@ -3107,14 +2953,9 @@ function applyEditedAvatar(value: string) {
   box-shadow: 0 10px 22px rgba(28, 55, 44, 0.035), inset 0 1px 0 rgba(255, 255, 255, 0.92);
 }
 
-.model-select-shell,
-.perspective-select-shell {
+.model-select-shell {
   border-color: transparent;
   background: rgba(255, 255, 255, 0.95);
-}
-
-.perspective-select-shell {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 .manual-summary-button,
