@@ -445,7 +445,7 @@ const socialStatusBadge = computed(() => {
 });
 const socialStepFooterCopy = computed(() => {
   if (githubLinkBusy.value) return 'GitHub 登录处理中，返回后会自动恢复或绑定备份。';
-  if (canFinishSocialStep.value) return '其实没有客服，但是能让你直接进入网站';
+  if (canFinishSocialStep.value) return '给你开后门，跳过登录直接进入网站';
   return '完成登录账号或第三方登录后，即可进入网站。';
 });
 const footerPrimaryLabel = computed(() => {
@@ -526,7 +526,7 @@ function submitLogin() {
     return;
   }
 
-  setSocialFeedback('该用户已被封禁。', 'error');
+  setSocialFeedback('该用户已被封禁，请使用第三方登录或点击“联系LINK客服反馈”按钮。', 'error');
 }
 
 function isGitHubOAuthMessage(value: unknown): value is GitHubOAuthMessage {
