@@ -12,8 +12,8 @@ import { createStickerFromDraft, createStickerGroup, normalizeSticker, normalize
 import { ageMemoryKind, createMemoryRecord, getConversationFloorCount, getHiddenMessageIds, getMemoryContext, getMessageFloorMap, getMessagesInFloorRange, getNextSummaryRange, getVisibleMessages, normalizeConversationSettings, renderCharacterMemoryPrompt, shouldCompressMemory } from '@/utils/memory';
 import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
 import { estimateRoleplayReplyInputTokens, fetchVendorModels, generateConversationSummary, generateEmbeddingVector, generateRoleplayReply, generateUserVoomComments, generateVoomCommentReplies, generateVoomPost, hasTextGenerationConfig, shouldAutoGenerateMoment, type RoleplayReplyResult } from '@/services/ai';
-import { formatGitHubBackupError, uploadGitHubBackup } from '@/services/githubBackup';
-import { createLinkBackupFile } from '@/utils/backup';
+import { downloadGitHubBackup, downloadGitHubBackupVersion, formatGitHubBackupError, listGitHubBackupHistory, uploadGitHubBackup } from '@/services/githubBackup';
+import { createLinkBackupFile, parseLinkBackupFileText, parseLinkBackupText } from '@/utils/backup';
 
 interface CreateUserVoomPostPayload {
   userId: string;
@@ -1095,6 +1095,63 @@ export const useAppStore = defineStore('app', () => {
     await putEntity('settings', normalizedSettings, 'main');
   }
 
+  async function saveGitHubBackupProgress(phase: AppSettings['githubBackup']['progress']['phase'], label: string, percent: number) {
+    await saveGitHubBackupState({
+      progress: {
+        phase,
+        label,
+        percent: Math.min(100, Math.max(0, Math.round(percent))),
+        updatedAt: Date.now()
+      }
+    });
+  }
+
+  async function loadGitHubBackupHistory(limit = 3) {
+    if (!settings.value) throw new Error('设置尚未载入。');
+
+    const config = settings.value.githubBackup;
+    if (!config.token || !config.owner || !config.repo) throw new Error('请先连接 GitHub 并创建备份仓库。');
+
+    const historyItems = await listGitHubBackupHistory({
+      token: config.token,
+      owner: config.owner,
+      repo: config.repo,
+      branch: config.branch,
+      path: config.path
+    }, limit);
+
+    return historyItems.map((item) => ({
+      sha: item.sha,
+      committedAt: Date.parse(item.committedAt) || 0,
+      exportedAt: 0,
+      message: item.message.trim()
+    }));
+  }
+
+  async function syncGitHubBackupHistory(limit = 3) {
+    await saveGitHubBackupProgress('checking', '正在检查 GitHub 备份记录', 15);
+
+    try {
+      const history = await loadGitHubBackupHistory(limit);
+      const latest = history[0];
+      await saveGitHubBackupState({
+        history,
+        latestRemoteBackupSha: latest?.sha ?? '',
+        latestRemoteBackupAt: latest?.committedAt ?? 0,
+        progress: {
+          phase: history.length ? 'completed' : 'idle',
+          label: history.length ? '已同步 GitHub 备份记录' : '',
+          percent: history.length ? 100 : 0,
+          updatedAt: Date.now()
+        }
+      });
+      return history;
+    } catch (error) {
+      await saveGitHubBackupProgress('failed', formatGitHubBackupError(error), 100);
+      throw error;
+    }
+  }
+
   async function runGitHubBackup(reason: 'manual' | 'auto' = 'manual') {
     if (githubBackupRunning) return false;
     if (!settings.value) throw new Error('设置尚未载入。');
@@ -1104,10 +1161,12 @@ export const useAppStore = defineStore('app', () => {
 
     githubBackupRunning = true;
     await saveGitHubBackupState({ lastBackupStatus: 'running', lastBackupError: '' });
+    await saveGitHubBackupProgress('checking', reason === 'auto' ? '正在准备自动备份' : '正在准备手动备份', 10);
 
     try {
       const backup = await createBackupFile();
       const activeConfig = settings.value?.githubBackup ?? config;
+      await saveGitHubBackupProgress('uploading', reason === 'auto' ? '正在上传自动备份' : '正在上传手动备份', 65);
       await uploadGitHubBackup(
         {
           token: activeConfig.token,
@@ -1119,14 +1178,105 @@ export const useAppStore = defineStore('app', () => {
         JSON.stringify(backup, null, 2),
         `${reason === 'auto' ? 'Auto' : 'Manual'} LINK backup ${new Date().toISOString()}`
       );
-      await saveGitHubBackupState({ lastBackupAt: Date.now(), lastBackupStatus: 'success', lastBackupError: '' });
+      const history = await loadGitHubBackupHistory(3).catch(() => activeConfig.history ?? []);
+      const latest = history[0];
+      await saveGitHubBackupState({
+        lastBackupAt: Date.now(),
+        lastBackupStatus: 'success',
+        lastBackupError: '',
+        latestRemoteBackupSha: latest?.sha ?? '',
+        latestRemoteBackupAt: latest?.committedAt ?? Date.now(),
+        pendingRestoreSha: '',
+        pendingRestoreAt: 0,
+        history,
+        progress: {
+          phase: 'completed',
+          label: reason === 'auto' ? '自动备份已完成' : '手动备份已完成',
+          percent: 100,
+          updatedAt: Date.now()
+        }
+      });
       return true;
     } catch (error) {
       await saveGitHubBackupState({ lastBackupStatus: 'failed', lastBackupError: formatGitHubBackupError(error) });
+      await saveGitHubBackupProgress('failed', formatGitHubBackupError(error), 100);
       throw error;
     } finally {
       githubBackupRunning = false;
     }
+  }
+
+  async function importGitHubBackup(ref = '') {
+    if (githubBackupRunning) return false;
+    if (!settings.value) throw new Error('设置尚未载入。');
+
+    const config = settings.value.githubBackup;
+    if (!config.token || !config.owner || !config.repo) throw new Error('请先连接 GitHub 并创建备份仓库。');
+
+    githubBackupRunning = true;
+    await saveGitHubBackupState({ lastBackupStatus: 'running', lastBackupError: '' });
+    await saveGitHubBackupProgress('downloading', '正在下载 GitHub 备份', 25);
+
+    try {
+      const backupText = ref
+        ? await downloadGitHubBackupVersion({
+            token: config.token,
+            owner: config.owner,
+            repo: config.repo,
+            branch: config.branch,
+            path: config.path
+          }, ref)
+        : await downloadGitHubBackup({
+            token: config.token,
+            owner: config.owner,
+            repo: config.repo,
+            branch: config.branch,
+            path: config.path
+          });
+      const backupFile = parseLinkBackupFileText(backupText);
+      const currentBackupConfig = settings.value.githubBackup;
+      const restoredSnapshot: AppSnapshot = {
+        ...backupFile.snapshot,
+        settings: {
+          ...backupFile.snapshot.settings,
+          githubBackup: {
+            ...currentBackupConfig
+          }
+        }
+      };
+      await saveGitHubBackupProgress('restoring', '正在恢复 GitHub 备份到本地', 75);
+      await importBackupSnapshot(restoredSnapshot);
+      const history = await loadGitHubBackupHistory(3).catch(() => currentBackupConfig.history ?? []);
+      const latest = history[0];
+      await saveGitHubBackupState({
+        lastBackupAt: Date.now(),
+        lastBackupStatus: 'success',
+        lastBackupError: '',
+        latestRemoteBackupSha: latest?.sha ?? ref,
+        latestRemoteBackupAt: latest?.committedAt ?? currentBackupConfig.latestRemoteBackupAt,
+        pendingRestoreSha: '',
+        pendingRestoreAt: 0,
+        history,
+        progress: {
+          phase: 'completed',
+          label: 'GitHub 备份已恢复到本地',
+          percent: 100,
+          updatedAt: Date.now()
+        }
+      });
+      return true;
+    } catch (error) {
+      await saveGitHubBackupState({ lastBackupStatus: 'failed', lastBackupError: formatGitHubBackupError(error) });
+      await saveGitHubBackupProgress('failed', formatGitHubBackupError(error), 100);
+      throw error;
+    } finally {
+      githubBackupRunning = false;
+    }
+  }
+
+  async function hasGitHubBackup() {
+    const history = await syncGitHubBackupHistory(3);
+    return history.length > 0;
   }
 
   async function saveSettings(nextSettings: AppSettings) {
@@ -2130,6 +2280,9 @@ export const useAppStore = defineStore('app', () => {
     createBackupFile,
     importBackupSnapshot,
     runGitHubBackup,
+    importGitHubBackup,
+    hasGitHubBackup,
+    syncGitHubBackupHistory,
     saveSettings,
     refreshEnabledVendorModels,
     bindWorldBook,

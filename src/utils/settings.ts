@@ -91,7 +91,18 @@ export const defaultAppSettings: AppSettings = {
     intervalMinutes: 30,
     lastBackupAt: 0,
     lastBackupStatus: 'idle',
-    lastBackupError: ''
+    lastBackupError: '',
+    latestRemoteBackupAt: 0,
+    latestRemoteBackupSha: '',
+    pendingRestoreSha: '',
+    pendingRestoreAt: 0,
+    history: [],
+    progress: {
+      phase: 'idle',
+      label: '',
+      percent: 0,
+      updatedAt: 0
+    }
   }
 };
 
@@ -171,7 +182,30 @@ function normalizeGitHubBackupSettings(settings: Partial<GitHubBackupSettings> |
     intervalMinutes,
     lastBackupAt: Math.max(0, Number(settings?.lastBackupAt ?? 0) || 0),
     lastBackupStatus: status,
-    lastBackupError: String(settings?.lastBackupError ?? '').trim()
+    lastBackupError: String(settings?.lastBackupError ?? '').trim(),
+    latestRemoteBackupAt: Math.max(0, Number(settings?.latestRemoteBackupAt ?? 0) || 0),
+    latestRemoteBackupSha: String(settings?.latestRemoteBackupSha ?? '').trim(),
+    pendingRestoreSha: String(settings?.pendingRestoreSha ?? '').trim(),
+    pendingRestoreAt: Math.max(0, Number(settings?.pendingRestoreAt ?? 0) || 0),
+    history: Array.isArray(settings?.history)
+      ? settings.history
+          .map((entry) => ({
+            sha: String(entry?.sha ?? '').trim(),
+            committedAt: Math.max(0, Number(entry?.committedAt ?? 0) || 0),
+            exportedAt: Math.max(0, Number(entry?.exportedAt ?? 0) || 0),
+            message: String(entry?.message ?? '').trim()
+          }))
+          .filter((entry) => entry.sha)
+          .slice(0, 3)
+      : [],
+    progress: {
+      phase: ['idle', 'checking', 'uploading', 'downloading', 'restoring', 'completed', 'failed'].includes(String(settings?.progress?.phase))
+        ? String(settings?.progress?.phase) as GitHubBackupSettings['progress']['phase']
+        : 'idle',
+      label: String(settings?.progress?.label ?? '').trim(),
+      percent: Math.min(100, Math.max(0, Number(settings?.progress?.percent ?? 0) || 0)),
+      updatedAt: Math.max(0, Number(settings?.progress?.updatedAt ?? 0) || 0)
+    }
   };
 }
 

@@ -1,0 +1,7 @@
+name = "link-github-oauth"
+main = "src/index.ts"
+compatibility_date = "2026-06-18"
+
+[vars]
+APP_ORIGIN = "http://localhost:5173"
+DEFAULT_REPO_NAME = "link-private-backups"

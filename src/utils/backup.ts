@@ -50,6 +50,26 @@ function assertSnapshot(value: unknown): asserts value is AppSnapshot {
   if (!isRecord(value.settings)) throw new Error('备份文件缺少 settings 数据。');
 }
 
+function toLinkBackupFile(value: unknown): LinkBackupFile {
+  if (isRecord(value) && isRecord(value.snapshot)) {
+    assertSnapshot(value.snapshot);
+    return {
+      app: value.app === 'LINK' ? 'LINK' : 'LINK',
+      backupVersion: value.backupVersion === 1 ? 1 : 1,
+      exportedAt: Math.max(0, Number(value.exportedAt ?? 0) || 0),
+      snapshot: value.snapshot
+    };
+  }
+
+  assertSnapshot(value);
+  return {
+    app: 'LINK',
+    backupVersion: 1,
+    exportedAt: 0,
+    snapshot: value
+  };
+}
+
 export function createLinkBackupFile(snapshot: AppSnapshot): LinkBackupFile {
   return {
     app: 'LINK',
@@ -59,7 +79,7 @@ export function createLinkBackupFile(snapshot: AppSnapshot): LinkBackupFile {
   };
 }
 
-export function parseLinkBackupText(text: string): AppSnapshot {
+export function parseLinkBackupFileText(text: string): LinkBackupFile {
   let parsed: unknown;
 
   try {
@@ -68,9 +88,11 @@ export function parseLinkBackupText(text: string): AppSnapshot {
     throw new Error('备份文件不是有效 JSON。');
   }
 
-  const snapshot = isRecord(parsed) && isRecord(parsed.snapshot) ? parsed.snapshot : parsed;
-  assertSnapshot(snapshot);
-  return snapshot;
+  return toLinkBackupFile(parsed);
+}
+
+export function parseLinkBackupText(text: string): AppSnapshot {
+  return parseLinkBackupFileText(text).snapshot;
 }
 
 export function createBackupFilename(userId: string) {

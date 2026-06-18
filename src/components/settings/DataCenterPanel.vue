@@ -33,7 +33,7 @@
         <span class="status-badge" :class="statusClass">{{ statusLabel }}</span>
       </header>
 
-      <button class="secondary-action wide-action" type="button" @click="openGitHubLogin">
+      <button class="secondary-action wide-action" type="button" :disabled="Boolean(githubBusy)" @click="openGitHubLogin">
         <Github :size="16" />
         <span>GitHub 登录</span>
       </button>
@@ -78,10 +78,59 @@
         </div>
       </label>
 
+      <section v-if="showRestorePrompt" class="status-panel restore-panel">
+        <strong>检测到 GitHub 上有较新的备份</strong>
+        <p>检测时间 {{ formatHistoryTime(settings.githubBackup.latestRemoteBackupAt) }}，可以立即恢复到当前设备。</p>
+        <div class="action-row compact-row">
+          <button class="secondary-action" type="button" :disabled="Boolean(githubBusy)" @click="dismissRestorePrompt">
+            <span>稍后再说</span>
+          </button>
+          <button class="primary-action" type="button" :disabled="Boolean(githubBusy)" @click="restoreLatestGitHubBackup">
+            <span>立即恢复</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="status-panel progress-panel" v-if="showProgressPanel">
+        <div class="progress-head">
+          <strong>{{ progressTitle }}</strong>
+          <span>{{ progressPercentLabel }}</span>
+        </div>
+        <p>{{ progressLabel }}</p>
+        <div class="progress-track" aria-hidden="true">
+          <span class="progress-fill" :style="{ width: `${progressPercent}%` }" />
+        </div>
+      </section>
+
+      <section class="status-panel history-panel" v-if="historyList.length">
+        <div class="history-head">
+          <strong>最近三次 GitHub 备份</strong>
+          <button class="text-action" type="button" :disabled="Boolean(githubBusy) || !isGitHubReady" @click="refreshGitHubHistory">刷新</button>
+        </div>
+        <button
+          v-for="item in historyList"
+          :key="item.sha"
+          class="history-item"
+          type="button"
+          :disabled="Boolean(githubBusy)"
+          @click="restoreHistoryItem(item.sha)"
+        >
+          <div>
+            <strong>{{ formatHistoryTime(item.exportedAt || item.committedAt) }}</strong>
+            <span>{{ historyItemLabel(item.message) }}</span>
+          </div>
+          <span>恢复</span>
+        </button>
+      </section>
+
       <div class="action-row">
         <button class="secondary-action" type="button" :disabled="Boolean(githubBusy) || !githubToken.trim()" @click="createPrivateRepository">
           <Lock :size="16" />
           <span>创建私有仓库</span>
+        </button>
+        <button class="secondary-action" type="button" :disabled="Boolean(githubBusy) || !isGitHubReady" @click="runGitHubImport">
+          <Download :size="16" />
+          <span>导入 GitHub 备份</span>
         </button>
         <button class="primary-action" type="button" :disabled="Boolean(githubBusy) || !isGitHubReady" @click="runManualGitHubBackup">
           <CloudUpload :size="16" />
@@ -96,11 +145,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { CloudUpload, Download, Github, Lock, Upload } from 'lucide-vue-next';
-import { buildGitHubLoginUrl, ensureGitHubBackupRepository, fetchGitHubViewer, formatGitHubBackupError } from '@/services/githubBackup';
+import { buildGitHubLoginUrl, ensureGitHubBackupRepository, fetchGitHubViewer, formatGitHubBackupError, getGitHubOAuthWorkerOrigin } from '@/services/githubBackup';
 import { useAppStore } from '@/stores/appStore';
-import type { AppSettings, GitHubBackupSettings } from '@/types/domain';
+import type { AppSettings, GitHubBackupHistoryRecord, GitHubBackupSettings } from '@/types/domain';
 import { createBackupFilename, downloadLinkBackupFile, parseLinkBackupText } from '@/utils/backup';
 
 const props = defineProps<{
@@ -122,9 +171,27 @@ const branchDraft = ref('main');
 const pathDraft = ref('link-backup.json');
 const intervalDraft = ref(30);
 const enabledDraft = ref(false);
+let githubLoginWindow: Window | null = null;
+
+interface GitHubOAuthMessage {
+  type: 'link:github-oauth';
+  token?: string;
+  owner?: string;
+  repo?: string;
+  branch?: string;
+  error?: string;
+}
 
 const githubSettings = computed(() => props.settings.githubBackup);
 const isGitHubReady = computed(() => Boolean(githubToken.value.trim() && ownerDraft.value.trim() && repoDraft.value.trim()));
+const historyList = computed(() => githubSettings.value.history ?? []);
+const progress = computed(() => githubSettings.value.progress);
+const progressPercent = computed(() => Math.min(100, Math.max(0, progress.value.percent || 0)));
+const progressPercentLabel = computed(() => `${progressPercent.value}%`);
+const progressLabel = computed(() => progress.value.label || '');
+const progressTitle = computed(() => progress.value.phase === 'completed' ? '备份状态' : progress.value.phase === 'failed' ? '备份失败' : '进行中');
+const showProgressPanel = computed(() => progress.value.phase !== 'idle' && Boolean(progress.value.label));
+const showRestorePrompt = computed(() => Boolean(githubSettings.value.pendingRestoreSha && githubSettings.value.latestRemoteBackupAt));
 const statusClass = computed(() => {
   if (githubSettings.value.lastBackupStatus === 'running') return 'running';
   if (githubSettings.value.lastBackupStatus === 'failed') return 'failed';
@@ -137,7 +204,7 @@ const statusLabel = computed(() => {
   if (githubSettings.value.lastBackupAt) return formatBackupTime(githubSettings.value.lastBackupAt);
   return githubSettings.value.enabled ? '已开启' : '未开启';
 });
-const autoBackupLabel = computed(() => enabledDraft.value ? `每 ${normalizedInterval()} 分钟` : '未开启');
+const autoBackupLabel = computed(() => enabledDraft.value ? `每 ${normalizedInterval()} 分钟` : '');
 
 watch(
   () => [
@@ -152,6 +219,22 @@ watch(
   () => syncGitHubDraft(),
   { immediate: true }
 );
+
+const githubOAuthMessageListener = (event: MessageEvent) => {
+  void handleGitHubOAuthMessage(event);
+};
+
+onMounted(() => {
+  window.addEventListener('message', githubOAuthMessageListener);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('message', githubOAuthMessageListener);
+});
+
+function isGitHubOAuthMessage(value: unknown): value is GitHubOAuthMessage {
+  return Boolean(value && typeof value === 'object' && (value as { type?: string }).type === 'link:github-oauth');
+}
 
 function syncGitHubDraft() {
   githubToken.value = githubSettings.value.token;
@@ -208,6 +291,21 @@ function formatBackupTime(timestamp: number) {
   });
 }
 
+function formatHistoryTime(timestamp: number) {
+  if (!timestamp) return '未知时间';
+  return new Date(timestamp).toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+}
+
+function historyItemLabel(message: string) {
+  return message.replace(/^Auto LINK backup |^Manual LINK backup /, '').trim() || 'GitHub 备份';
+}
+
 async function exportBackup() {
   localBusy.value = 'export';
   localFeedback.value = '';
@@ -250,10 +348,82 @@ async function importBackup(event: Event) {
 
 function openGitHubLogin() {
   const login = buildGitHubLoginUrl();
-  window.open(login.url, '_blank', 'noopener,noreferrer');
-  setGitHubFeedback(login.mode === 'oauth'
-    ? '已打开 GitHub 授权页。静态前端仍需要后端回调来自动换取 token。'
-    : '已打开 GitHub token 页面。创建后把 token 粘贴回来即可继续自动创建私有仓库。');
+  githubLoginWindow = window.open(login.url, 'link-github-oauth', 'width=480,height=720');
+  setGitHubFeedback(login.mode === 'worker'
+    ? '已打开 GitHub 授权页，授权完成后会自动创建私有仓库并完成首次备份。'
+    : login.mode === 'oauth'
+      ? '已打开 GitHub 授权页。静态前端仍需要后端回调来自动换取 token。'
+      : '已打开 GitHub token 页面。创建后把 token 粘贴回来即可继续自动创建私有仓库。');
+}
+
+async function handleGitHubOAuthMessage(event: MessageEvent) {
+  const workerOrigin = getGitHubOAuthWorkerOrigin();
+  if (!workerOrigin || event.origin !== workerOrigin) return;
+  if (!isGitHubOAuthMessage(event.data)) return;
+
+  const message = event.data;
+  if (message.error) {
+    setGitHubFeedback(message.error, 'error');
+    return;
+  }
+  if (!message.token || !message.owner) {
+    setGitHubFeedback('GitHub 登录结果不完整。', 'error');
+    return;
+  }
+
+  await completeGitHubOAuthSetup(message);
+}
+
+async function completeGitHubOAuthSetup(message: GitHubOAuthMessage) {
+  if (!message.token || !message.owner) return;
+  githubBusy.value = 'oauth';
+  githubFeedback.value = '';
+  githubToken.value = message.token;
+  ownerDraft.value = message.owner;
+  repoDraft.value = message.repo?.trim() || repoDraft.value || 'link-private-backups';
+  branchDraft.value = message.branch?.trim() || branchDraft.value || 'main';
+  enabledDraft.value = true;
+
+  try {
+    const repository = await ensureGitHubBackupRepository(buildGitHubDraft({
+      token: message.token,
+      owner: message.owner,
+      repo: repoDraft.value,
+      branch: branchDraft.value,
+      enabled: true,
+      lastBackupStatus: 'idle',
+      lastBackupError: ''
+    }));
+    ownerDraft.value = repository.owner;
+    repoDraft.value = repository.repo;
+    branchDraft.value = repository.branch || branchDraft.value;
+    await saveGitHubDraft({
+      token: message.token,
+      owner: repository.owner,
+      repo: repository.repo,
+      branch: repository.branch || branchDraft.value,
+      enabled: true,
+      lastBackupStatus: 'idle',
+      lastBackupError: ''
+    });
+    const hasRemoteBackup = await store.hasGitHubBackup();
+    githubLoginWindow?.close();
+    if (hasRemoteBackup) {
+      const latestRemote = store.settings?.githubBackup;
+      await saveGitHubDraft({
+        pendingRestoreSha: latestRemote?.latestRemoteBackupSha ?? '',
+        pendingRestoreAt: latestRemote?.latestRemoteBackupAt ?? 0
+      });
+      setGitHubFeedback(`已连接 ${repository.owner}/${repository.repo}，检测到 GitHub 上已有备份，可选择恢复。`);
+      return;
+    }
+    await store.runGitHubBackup('manual');
+    setGitHubFeedback(`已连接 ${repository.owner}/${repository.repo}，并完成首次备份。`);
+  } catch (error) {
+    setGitHubFeedback(formatGitHubBackupError(error), 'error');
+  } finally {
+    githubBusy.value = '';
+  }
 }
 
 async function connectGitHub() {
@@ -264,6 +434,7 @@ async function connectGitHub() {
     const viewer = await fetchGitHubViewer(githubToken.value);
     ownerDraft.value = viewer.login;
     await saveGitHubDraft({ owner: viewer.login, lastBackupStatus: 'idle', lastBackupError: '' });
+    await refreshGitHubHistory();
     setGitHubFeedback(`已连接 ${viewer.login}。`);
   } catch (error) {
     setGitHubFeedback(formatGitHubBackupError(error), 'error');
@@ -288,6 +459,54 @@ async function createPrivateRepository() {
   } finally {
     githubBusy.value = '';
   }
+}
+
+async function refreshGitHubHistory() {
+  githubBusy.value = 'history';
+  githubFeedback.value = '';
+
+  try {
+    await saveGitHubDraft();
+    const history = await store.syncGitHubBackupHistory();
+    const latest = history[0];
+    await saveGitHubDraft({
+      pendingRestoreSha: latest?.sha ?? '',
+      pendingRestoreAt: latest?.committedAt ?? 0
+    });
+    setGitHubFeedback(history.length ? 'GitHub 备份记录已同步。' : 'GitHub 上还没有备份记录。');
+  } catch (error) {
+    setGitHubFeedback(formatGitHubBackupError(error), 'error');
+  } finally {
+    githubBusy.value = '';
+  }
+}
+
+async function restoreHistoryItem(sha: string) {
+  if (!window.confirm('恢复该历史备份会替换当前本地数据，继续吗？')) return;
+
+  githubBusy.value = 'history-restore';
+  githubFeedback.value = '';
+
+  try {
+    await saveGitHubDraft();
+    await store.importGitHubBackup(sha);
+    setGitHubFeedback('已恢复所选 GitHub 历史备份。');
+  } catch (error) {
+    setGitHubFeedback(formatGitHubBackupError(error), 'error');
+  } finally {
+    githubBusy.value = '';
+  }
+}
+
+async function restoreLatestGitHubBackup() {
+  const sha = githubSettings.value.pendingRestoreSha || githubSettings.value.latestRemoteBackupSha;
+  if (!sha) return;
+  await restoreHistoryItem(sha);
+}
+
+async function dismissRestorePrompt() {
+  await saveGitHubDraft({ pendingRestoreSha: '', pendingRestoreAt: 0 });
+  setGitHubFeedback('已保留当前本地数据，可稍后手动恢复 GitHub 备份。');
 }
 
 async function toggleAutoBackup(event: Event) {
@@ -320,6 +539,23 @@ async function runManualGitHubBackup() {
     githubBusy.value = '';
   }
 }
+
+async function runGitHubImport() {
+  if (!window.confirm('从 GitHub 导入会替换当前本地数据，继续吗？')) return;
+
+  githubBusy.value = 'import';
+  githubFeedback.value = '';
+
+  try {
+    await saveGitHubDraft();
+    await store.importGitHubBackup();
+    setGitHubFeedback(`已从 ${ownerDraft.value}/${repoDraft.value} 导入备份。`);
+  } catch (error) {
+    setGitHubFeedback(formatGitHubBackupError(error), 'error');
+  } finally {
+    githubBusy.value = '';
+  }
+}
 </script>
 
 <style scoped>
@@ -339,7 +575,9 @@ async function runManualGitHubBackup() {
 .card-head,
 .action-row,
 .field-with-action,
-.toggle-card {
+.toggle-card,
+.progress-head,
+.history-head {
   display: flex;
   align-items: center;
 }
@@ -367,6 +605,11 @@ async function runManualGitHubBackup() {
 
 .action-row {
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.compact-row {
+  flex-wrap: nowrap;
 }
 
 .primary-action,
@@ -391,6 +634,68 @@ async function runManualGitHubBackup() {
 
 .wide-action {
   width: 100%;
+}
+
+.status-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.status-panel p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.progress-head,
+.history-head {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.progress-track {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(17, 17, 17, 0.08);
+}
+
+.progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #111111, #4e8cff);
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(17, 17, 17, 0.04);
+  text-align: left;
+}
+
+.history-item strong,
+.history-item span,
+.text-action {
+  font-size: 12px;
+}
+
+.history-item div {
+  display: grid;
+  gap: 2px;
+}
+
+.text-action {
+  color: #111111;
+  font-weight: 800;
 }
 
 .primary-action {

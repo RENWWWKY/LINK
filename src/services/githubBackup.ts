@@ -18,9 +18,16 @@ export interface GitHubBackupTarget {
   path: string;
 }
 
+export interface GitHubBackupHistoryItem {
+  sha: string;
+  committedAt: string;
+  message: string;
+  downloadPath: string;
+}
+
 export interface GitHubLoginUrl {
   url: string;
-  mode: 'oauth' | 'token';
+  mode: 'worker' | 'oauth' | 'token';
 }
 
 interface GitHubRepositoryResponse {
@@ -34,8 +41,21 @@ interface GitHubRepositoryResponse {
 }
 
 interface GitHubContentResponse {
+  content?: string;
+  encoding?: string;
   sha?: string;
   type?: string;
+  download_url?: string;
+}
+
+interface GitHubCommitHistoryResponse {
+  sha: string;
+  commit: {
+    message: string;
+    committer: {
+      date: string;
+    };
+  };
 }
 
 export class GitHubBackupError extends Error {
@@ -65,11 +85,24 @@ function encodeBase64(text: string) {
   return btoa(binary);
 }
 
+function decodeBase64(text: string) {
+  const normalized = text.replace(/\s+/g, '');
+  const binary = atob(normalized);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
 function createOAuthState() {
   return crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
 }
 
 export function buildGitHubLoginUrl(): GitHubLoginUrl {
+  const workerUrl = String(import.meta.env.VITE_GITHUB_OAUTH_WORKER_URL ?? '').trim().replace(/\/+$/, '');
+  if (workerUrl) {
+    const params = new URLSearchParams({ app_origin: window.location.origin });
+    return { mode: 'worker', url: `${workerUrl}/github/login?${params.toString()}` };
+  }
+
   const clientId = String(import.meta.env.VITE_GITHUB_OAUTH_CLIENT_ID ?? '').trim();
   const redirectUri = String(import.meta.env.VITE_GITHUB_OAUTH_REDIRECT_URI ?? window.location.origin).trim();
 
@@ -88,6 +121,17 @@ export function buildGitHubLoginUrl(): GitHubLoginUrl {
     description: 'LINK private backup'
   });
   return { mode: 'token', url: `https://github.com/settings/tokens/new?${params.toString()}` };
+}
+
+export function getGitHubOAuthWorkerOrigin() {
+  const workerUrl = String(import.meta.env.VITE_GITHUB_OAUTH_WORKER_URL ?? '').trim();
+  if (!workerUrl) return '';
+
+  try {
+    return new URL(workerUrl).origin;
+  } catch {
+    return '';
+  }
 }
 
 async function parseGitHubError(response: Response) {
@@ -188,6 +232,57 @@ export async function uploadGitHubBackup(target: GitHubBackupTarget, content: st
       ...(sha ? { sha } : {})
     })
   });
+}
+
+export async function downloadGitHubBackup(target: GitHubBackupTarget) {
+  const token = target.token.trim();
+  const owner = target.owner.trim();
+  const repo = normalizeRepoName(target.repo);
+  const branch = target.branch.trim() || 'main';
+  const path = target.path.trim().replace(/^\/+/, '') || 'link-backup.json';
+
+  if (!token || !owner || !repo) throw new GitHubBackupError('GitHub 备份配置不完整。');
+
+  const content = await githubApiFetch<GitHubContentResponse>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodePath(path)}?ref=${encodeURIComponent(branch)}`, token);
+  if (content.type && content.type !== 'file') throw new GitHubBackupError('备份路径不是文件。');
+  if (!content.content) throw new GitHubBackupError('未找到 GitHub 备份文件内容。');
+  if (content.encoding && content.encoding !== 'base64') throw new GitHubBackupError(`暂不支持的 GitHub 内容编码：${content.encoding}`);
+
+  return decodeBase64(content.content);
+}
+
+export async function listGitHubBackupHistory(target: GitHubBackupTarget, limit = 3): Promise<GitHubBackupHistoryItem[]> {
+  const token = target.token.trim();
+  const owner = target.owner.trim();
+  const repo = normalizeRepoName(target.repo);
+  const branch = target.branch.trim() || 'main';
+  const path = target.path.trim().replace(/^\/+/, '') || 'link-backup.json';
+
+  if (!token || !owner || !repo) throw new GitHubBackupError('GitHub 备份配置不完整。');
+
+  const commits = await githubApiFetch<GitHubCommitHistoryResponse[]>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?path=${encodePath(path)}&sha=${encodeURIComponent(branch)}&per_page=${Math.min(Math.max(limit, 1), 20)}`, token);
+  return commits.map((commit) => ({
+    sha: commit.sha,
+    committedAt: commit.commit.committer.date,
+    message: commit.commit.message,
+    downloadPath: path
+  }));
+}
+
+export async function downloadGitHubBackupVersion(target: GitHubBackupTarget, ref: string) {
+  const token = target.token.trim();
+  const owner = target.owner.trim();
+  const repo = normalizeRepoName(target.repo);
+  const path = target.path.trim().replace(/^\/+/, '') || 'link-backup.json';
+
+  if (!token || !owner || !repo) throw new GitHubBackupError('GitHub 备份配置不完整。');
+
+  const content = await githubApiFetch<GitHubContentResponse>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodePath(path)}?ref=${encodeURIComponent(ref)}`, token);
+  if (content.type && content.type !== 'file') throw new GitHubBackupError('备份路径不是文件。');
+  if (!content.content) throw new GitHubBackupError('未找到指定版本的 GitHub 备份文件内容。');
+  if (content.encoding && content.encoding !== 'base64') throw new GitHubBackupError(`暂不支持的 GitHub 内容编码：${content.encoding}`);
+
+  return decodeBase64(content.content);
 }
 
 export function formatGitHubBackupError(error: unknown) {

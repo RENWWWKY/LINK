@@ -196,7 +196,18 @@ export const defaultSettings: AppSettings = {
     intervalMinutes: 30,
     lastBackupAt: 0,
     lastBackupStatus: 'idle',
-    lastBackupError: ''
+    lastBackupError: '',
+    latestRemoteBackupAt: 0,
+    latestRemoteBackupSha: '',
+    pendingRestoreSha: '',
+    pendingRestoreAt: 0,
+    history: [],
+    progress: {
+      phase: 'idle',
+      label: '',
+      percent: 0,
+      updatedAt: 0
+    }
   },
   apiVendors: []
 };

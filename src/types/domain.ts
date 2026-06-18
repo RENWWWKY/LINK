@@ -356,6 +356,20 @@ export interface PollinationsImageSettings {
 
 export type GitHubBackupStatus = 'idle' | 'running' | 'success' | 'failed';
 
+export interface GitHubBackupHistoryRecord {
+  sha: string;
+  committedAt: number;
+  exportedAt: number;
+  message: string;
+}
+
+export interface GitHubBackupProgress {
+  phase: 'idle' | 'checking' | 'uploading' | 'downloading' | 'restoring' | 'completed' | 'failed';
+  label: string;
+  percent: number;
+  updatedAt: number;
+}
+
 export interface GitHubBackupSettings {
   enabled: boolean;
   token: string;
@@ -367,6 +381,12 @@ export interface GitHubBackupSettings {
   lastBackupAt: number;
   lastBackupStatus: GitHubBackupStatus;
   lastBackupError: string;
+  latestRemoteBackupAt: number;
+  latestRemoteBackupSha: string;
+  pendingRestoreSha: string;
+  pendingRestoreAt: number;
+  history: GitHubBackupHistoryRecord[];
+  progress: GitHubBackupProgress;
 }
 
 export interface AppSettings {

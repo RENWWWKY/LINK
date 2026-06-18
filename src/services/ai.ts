@@ -1156,7 +1156,7 @@ export async function generateUserVoomComments(input: {
     { "authorId": "从可评论角色 id 中选择", "content": "评论内容", "contentTranslation": "如 content 不是自然标准普通话，则给普通话译文；否则留空" }
   ]
 }`,
-    '要求：1. 输出 0-6 条；2. authorId 必须来自可评论角色；3. 不要代替用户本人评论；4. 评论要短、自然、有社交软件感；5. 不要使用“NPC”“朋友A”“路人”这类占位名；6. contentTranslation 规则：除了自然标准普通话以外都要翻译成自然现代简体普通话，包括外语、粤语、方言、繁体中文、文言/古风表达、网络混写等；不要加“翻译：”前缀。'
+    '要求：1. 输出 0-6 条；2. authorId 必须来自可评论角色；3. 不要代替用户本人评论；4. 评论要短、自然、有社交软件感；5. 不要使用“NPC”“朋友A”“路人”这类占位名；6. contentTranslation 规则：外语、粤语、方言、繁体中文、文言/古风表达都要翻译成自然现代简体普通话；不要加“翻译：”前缀。'
   ].filter(Boolean).join('\n\n');
 
   const apiReply = await callTextApi(input.settings, prompt, input.modelOverride);
