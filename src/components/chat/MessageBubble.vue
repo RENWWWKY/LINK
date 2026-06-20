@@ -793,6 +793,7 @@ onBeforeUnmount(stopVoicePlayback);
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr);
   min-width: 0;
+  height: 70px;
   min-height: 70px;
 }
 
@@ -842,6 +843,7 @@ onBeforeUnmount(stopVoicePlayback);
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr);
   min-width: 0;
+  height: 70px;
   min-height: 70px;
 }
 
