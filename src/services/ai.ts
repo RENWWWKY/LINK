@@ -91,6 +91,15 @@ function toDataUrlFromBase64(base64: string, mimeType = 'image/png') {
   return `data:${mimeType};base64,${base64}`;
 }
 
+function readBlobAsDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('图片转码失败。'));
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.readAsDataURL(blob);
+  });
+}
+
 function uint8ArrayToBase64(bytes: Uint8Array) {
   let binary = '';
   const chunkSize = 0x8000;
@@ -133,6 +142,83 @@ function parseSeed(seed: string) {
 
 function normalizeBaseUrl(url: string) {
   return url.trim().replace(/\/+$/, '');
+}
+
+function createImageDownloadUrl(url: string) {
+  const trimmed = url.trim();
+  if (import.meta.env.DEV && /^https?:\/\//i.test(trimmed)) {
+    return `/__image-download?url=${encodeURIComponent(trimmed)}`;
+  }
+  return trimmed;
+}
+
+function inferImageMimeType(url: string, fallback = 'image/png') {
+  const pathname = (() => {
+    try {
+      return new URL(url).pathname;
+    } catch {
+      return url;
+    }
+  })();
+  if (/\.jpe?g$/i.test(pathname)) return 'image/jpeg';
+  if (/\.gif$/i.test(pathname)) return 'image/gif';
+  if (/\.webp$/i.test(pathname)) return 'image/webp';
+  if (/\.avif$/i.test(pathname)) return 'image/avif';
+  if (/\.bmp$/i.test(pathname)) return 'image/bmp';
+  if (/\.svg$/i.test(pathname)) return 'image/svg+xml';
+  return fallback;
+}
+
+function normalizeImageMimeType(value: unknown, fallback = 'image/png') {
+  const trimmed = String(value ?? '').trim().toLowerCase();
+  if (!trimmed) return fallback;
+  if (trimmed.startsWith('image/')) return trimmed;
+  if (trimmed === 'jpg') return 'image/jpeg';
+  if (trimmed === 'svg') return 'image/svg+xml';
+  if (['png', 'jpeg', 'webp', 'gif', 'avif', 'bmp', 'svg+xml'].includes(trimmed)) {
+    return `image/${trimmed}`;
+  }
+  return fallback;
+}
+
+function unwrapOpenAiImageEndpoint(endpoint: string) {
+  if (!endpoint.startsWith('/__image-proxy')) return endpoint;
+  try {
+    return new URL(endpoint, window.location.origin).searchParams.get('url')?.trim() || endpoint;
+  } catch {
+    return endpoint;
+  }
+}
+
+function isOpenAiResponsesEndpoint(endpoint: string) {
+  const unwrappedEndpoint = unwrapOpenAiImageEndpoint(endpoint);
+  try {
+    return /\/responses\/?$/i.test(new URL(unwrappedEndpoint, window.location.origin).pathname);
+  } catch {
+    return /\/responses(?:\?|$)/i.test(unwrappedEndpoint);
+  }
+}
+
+function buildOpenAiImageRequestBody(endpoint: string, model: string, prompt: string, size: string) {
+  if (isOpenAiResponsesEndpoint(endpoint)) {
+    return {
+      model,
+      input: prompt,
+      tools: [{
+        type: 'image_generation',
+        action: 'generate',
+        ...(size ? { size } : {})
+      }],
+      tool_choice: 'required'
+    };
+  }
+
+  return {
+    model,
+    prompt,
+    ...(size ? { size } : {}),
+    n: 1
+  };
 }
 
 const httpStatusText: Record<number, string> = {
@@ -272,6 +358,67 @@ function createTextRequestEndpoint(endpoint: string) {
   return trimmed;
 }
 
+function createNovelAiRequestEndpoint(endpoint: string) {
+  const trimmed = endpoint.trim();
+  if (import.meta.env.DEV && /^https?:\/\//i.test(trimmed)) {
+    return `/__text-proxy?url=${encodeURIComponent(trimmed)}`;
+  }
+  return trimmed;
+}
+
+function createNovelAiNetworkErrorMessage(error: unknown, endpoint: string) {
+  return createNetworkErrorMessage(
+    error,
+    'NovelAI 生图接口预检网络请求失败',
+    endpoint,
+    'NovelAI 预检请求无法到达后台。请确认连接方式、网络代理和 Token 可用。开发环境会通过同源代理转发官方接口；如果仍失败，通常是本机网络无法访问对应服务或代理节点异常。'
+  );
+}
+
+async function fetchNovelAiEndpoint(endpoint: string, init: RequestInit) {
+  const requestEndpoint = createNovelAiRequestEndpoint(endpoint);
+  try {
+    const response = await fetch(requestEndpoint, init);
+    return { response, requestEndpoint };
+  } catch (error) {
+    throw new Error(createNovelAiNetworkErrorMessage(error, endpoint));
+  }
+}
+
+async function probeNovelAiAuth(settings: AppSettings) {
+  const config = settings.imageNovelAi;
+  const endpointBase = getNovelAiEndpointBase(settings);
+  const endpoints = [
+    `${endpointBase}/user/subscription`,
+    `${endpointBase}/ai/generate-image/models`,
+    `${endpointBase}/ai/models`
+  ];
+
+  let lastFailure: Response | null = null;
+  for (const endpoint of endpoints) {
+    const { response } = await fetchNovelAiEndpoint(endpoint, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${config.apiKey.trim()}`
+      }
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      throw new Error('NovelAI Token 无法通过鉴权。');
+    }
+
+    if (response.ok) {
+      return;
+    }
+
+    lastFailure = response;
+  }
+
+  if (lastFailure) {
+    throw new Error(await createApiErrorMessage(lastFailure, 'NovelAI 鉴权/模型接口探测失败'));
+  }
+}
+
 function getOpenAiImageErrorTitle(response: Response, endpoint: string) {
   if (endpoint.startsWith('/__image-proxy')) {
     return response.headers.get('x-link-proxy-error')
@@ -309,54 +456,117 @@ async function fetchOpenAiImageWithRetry(endpoint: string, init: RequestInit) {
 }
 
 function normalizeImageSource(value: unknown) {
-  const source = String(value ?? '').trim();
-  if (!source) return '';
-  if (/^(?:https?:|data:image\/|blob:)/i.test(source)) return source;
-  if (/^[A-Za-z0-9+/]+={0,2}$/.test(source) && source.length > 80) {
-    return toDataUrlFromBase64(source);
-  }
-  return '';
+  return normalizeImageSourceWithMime(value).imageUrl;
 }
 
-function extractGeneratedImage(payload: unknown): string {
+function normalizeImageSourceWithMime(value: unknown, mimeType = 'image/png') {
+  const source = String(value ?? '').trim();
+  if (!source) {
+    return {
+      imageUrl: '',
+      mimeType
+    };
+  }
+  if (/^(?:data:image\/|blob:)/i.test(source)) {
+    return {
+      imageUrl: source,
+      mimeType
+    };
+  }
+  if (/^https?:/i.test(source)) {
+    return {
+      imageUrl: source,
+      mimeType: inferImageMimeType(source, mimeType)
+    };
+  }
+  if (/^[A-Za-z0-9+/]+={0,2}$/.test(source) && source.length > 80) {
+    return {
+      imageUrl: toDataUrlFromBase64(source, mimeType),
+      mimeType
+    };
+  }
+  return {
+    imageUrl: '',
+    mimeType
+  };
+}
+
+async function localizeGeneratedImageUrl(imageUrl: string, fallbackMimeType = 'image/png') {
+  const trimmed = imageUrl.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return trimmed;
+
+  try {
+    const response = await fetch(createImageDownloadUrl(trimmed), {
+      headers: { Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' }
+    });
+    if (!response.ok) return trimmed;
+
+    const contentType = response.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
+    const downloadedBlob = await response.blob();
+    if (!downloadedBlob.size) return trimmed;
+
+    const mimeType = normalizeImageMimeType(downloadedBlob.type || contentType || inferImageMimeType(trimmed, fallbackMimeType), fallbackMimeType);
+    if (!mimeType.startsWith('image/')) return trimmed;
+
+    return readBlobAsDataUrl(downloadedBlob.type ? downloadedBlob : new Blob([downloadedBlob], { type: mimeType }));
+  } catch {
+    return trimmed;
+  }
+}
+
+function extractGeneratedImage(payload: unknown, fallbackMimeType = 'image/png'): { imageUrl: string; mimeType: string } {
   if (Array.isArray(payload)) {
     for (const item of payload) {
-      const image = extractGeneratedImage(item);
-      if (image) return image;
+      const image = extractGeneratedImage(item, fallbackMimeType);
+      if (image.imageUrl) return image;
     }
-    return '';
+    return { imageUrl: '', mimeType: fallbackMimeType };
   }
 
   if (!payload || typeof payload !== 'object') {
-    return normalizeImageSource(payload);
+    return normalizeImageSourceWithMime(payload, fallbackMimeType);
   }
 
   const record = payload as Record<string, unknown>;
+  const candidateMimeType = normalizeImageMimeType(
+    record.output_format
+      ?? record.outputFormat
+      ?? record.mime_type
+      ?? record.mimeType
+      ?? record.content_type
+      ?? record.contentType
+      ?? record.format,
+    fallbackMimeType
+  );
   const directCandidates = [
     record.url,
     record.imageUrl,
     record.image_url,
     record.outputUrl,
     record.output_url,
+    record.resultUrl,
+    record.result_url,
     record.b64_json,
     record.b64Json,
     record.base64,
     record.image_base64,
-    record.imageBase64
+    record.imageBase64,
+    record.result_base64,
+    record.resultBase64
   ];
 
   for (const candidate of directCandidates) {
-    const image = normalizeImageSource(candidate);
-    if (image) return image;
+    const image = normalizeImageSourceWithMime(candidate, candidateMimeType);
+    if (image.imageUrl) return image;
   }
 
   const nestedCandidates = [record.data, record.images, record.image, record.imageUrl, record.image_url, record.output, record.result, record.results, record.artifacts];
   for (const candidate of nestedCandidates) {
-    const image = extractGeneratedImage(candidate);
-    if (image) return image;
+    const image = extractGeneratedImage(candidate, candidateMimeType);
+    if (image.imageUrl) return image;
   }
 
-  return '';
+  return { imageUrl: '', mimeType: fallbackMimeType };
 }
 
 function splitModelSelection(selection = '') {
@@ -1121,12 +1331,7 @@ export async function generateOpenAiImage(settings: AppSettings, overrides: Imag
         'Content-Type': 'application/json',
         Authorization: `Bearer ${resolved.apiKey}`
       },
-      body: JSON.stringify({
-        model,
-        prompt,
-        ...(size ? { size } : {}),
-        n: 1
-      })
+      body: JSON.stringify(buildOpenAiImageRequestBody(resolved.endpoint, model, prompt, size))
     });
   } catch (error) {
     throw new Error(createNetworkErrorMessage(error, 'OpenAI 图片网络请求失败', resolved.endpoint));
@@ -1136,8 +1341,26 @@ export async function generateOpenAiImage(settings: AppSettings, overrides: Imag
     throw new Error(await createApiErrorMessage(response, getOpenAiImageErrorTitle(response, resolved.endpoint)));
   }
 
-  const data = await response.json();
-  const imageUrl = extractGeneratedImage(data);
+  const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? '';
+
+  if (contentType.startsWith('image/')) {
+    return {
+      imageUrl: arrayBufferToDataUrl(await response.arrayBuffer(), contentType),
+      provider: 'openai'
+    };
+  }
+
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch (error) {
+    throw new Error(`OpenAI 图片接口返回了无法解析的响应：${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const extractedImage = extractGeneratedImage(data);
+  const imageUrl = extractedImage.imageUrl
+    ? await localizeGeneratedImageUrl(extractedImage.imageUrl, extractedImage.mimeType)
+    : '';
 
   if (!imageUrl) {
     throw new Error('OpenAI 图片接口返回里没有可用图片。');
@@ -1154,6 +1377,7 @@ export async function generateNovelAiImage(settings: AppSettings, overrides: Ima
   const positivePrompt = overrides.positivePrompt ?? config.positivePrompt;
   const negativePrompt = overrides.negativePrompt ?? config.negativePrompt;
   const endpointBase = getNovelAiEndpointBase(settings);
+  const generationEndpoint = `${endpointBase}/ai/generate-image`;
 
   if (!endpointBase) {
     throw new Error('请先选择 NovelAI 的连接方式。');
@@ -1167,7 +1391,7 @@ export async function generateNovelAiImage(settings: AppSettings, overrides: Ima
     throw new Error('请先填写正向提示词。');
   }
 
-  const response = await fetch(`${endpointBase}/ai/generate-image`, {
+  const { response, requestEndpoint } = await fetchNovelAiEndpoint(generationEndpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1201,6 +1425,12 @@ export async function generateNovelAiImage(settings: AppSettings, overrides: Ima
   });
 
   if (!response.ok) {
+    if (requestEndpoint.startsWith('/__text-proxy') && response.status === 502) {
+      throw new Error(await createApiErrorMessage(response, '本地 NovelAI 代理请求失败'));
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new Error('NovelAI Token 无法通过鉴权。');
+    }
     throw new Error(await createApiErrorMessage(response, 'NovelAI 请求失败'));
   }
 
@@ -1230,7 +1460,7 @@ export async function fetchNovelAiModels(settings: AppSettings): Promise<NovelAi
 
   for (const endpoint of modelListEndpoints) {
     try {
-      const response = await fetch(endpoint, {
+      const { response } = await fetchNovelAiEndpoint(endpoint, {
         headers: {
           Accept: 'application/json',
           Authorization: `Bearer ${config.apiKey.trim()}`
@@ -1251,38 +1481,12 @@ export async function fetchNovelAiModels(settings: AppSettings): Promise<NovelAi
 
 export async function checkNovelAiImageAccess(settings: AppSettings): Promise<void> {
   const config = settings.imageNovelAi;
-  const endpointBase = getNovelAiEndpointBase(settings);
 
   if (!config.apiKey.trim()) {
     throw new Error('请先填写 NovelAI Token。');
   }
 
-  const response = await fetch(`${endpointBase}/ai/generate-image`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey.trim()}`
-    },
-    body: JSON.stringify({
-      action: 'generate',
-      input: '',
-      model: config.model,
-      parameters: {
-        width: 64,
-        height: 64,
-        steps: 0,
-        n_samples: 0
-      }
-    })
-  });
-
-  if (response.status === 400 || response.status === 422) return;
-  if (response.status === 401 || response.status === 403) {
-    throw new Error('NovelAI Token 无法通过鉴权。');
-  }
-  if (!response.ok) {
-    throw new Error(await createApiErrorMessage(response, 'NovelAI 生图接口预检失败'));
-  }
+  await probeNovelAiAuth(settings);
 }
 
 export async function generatePollinationsImage(settings: AppSettings, overrides: ImageGenerationOverrides = {}): Promise<ImageGenerationResult> {
