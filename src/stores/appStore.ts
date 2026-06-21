@@ -33,6 +33,33 @@ interface ConversationSummaryResult {
   status: ConversationSummaryResultStatus;
 }
 
+const memoryTimelineTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23'
+});
+
+function formatMemoryTimelineTime(timestamp: number) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '未知时间';
+  return memoryTimelineTimeFormatter.format(timestamp);
+}
+
+function renderMessageTimelineContext(messages: ChatMessage[], floorMap: Map<string, number>, fallbackFloor: number) {
+  return messages
+    .map((message) => `${floorMap.get(message.id) ?? fallbackFloor}楼：${formatMemoryTimelineTime(message.createdAt)}`)
+    .join('\n');
+}
+
+function renderMemoryRangeTimelineContext(memories: ConversationMemoryRecord[]) {
+  return memories
+    .map((memory) => `【${memory.startFloor}-${memory.endFloor}楼】记忆创建：${formatMemoryTimelineTime(memory.createdAt)}；最近更新：${formatMemoryTimelineTime(memory.updatedAt)}`)
+    .join('\n');
+}
+
 export const useAppStore = defineStore('app', () => {
   const ready = ref(false);
   let hydratePromise: Promise<void> | null = null;
@@ -2061,13 +2088,18 @@ export const useAppStore = defineStore('app', () => {
       const userSenderName = boundUser?.name || boundUser?.nickname || '我';
       const modelOverride = getConversationTextModelOverride(chatSettings, 'summary', conversation.activeMode);
       const floorMap = getMessageFloorMap(conversationMessages);
+      const includeTimeline = chatSettings.timeAwareness.enabled;
       const summary = await generateConversationSummary({
         messages: range.sourceMessages.map((message) => {
           const floor = floorMap.get(message.id) ?? range.startFloor;
           const sender = message.sender === 'user' ? userSenderName : message.sender === 'char' ? character?.nickname || '角色' : '系统';
-          return `${floor}楼 ${sender}: ${message.content}`;
+          const sentAtText = includeTimeline ? `（发送时间：${formatMemoryTimelineTime(message.createdAt)}）` : '';
+          return `${floor}楼 ${sender}${sentAtText}: ${message.content}`;
         }).join('\n'),
         previousSummary: getMemoryContext(memoriesForConversation(conversationId)),
+        timeAwareness: chatSettings.timeAwareness,
+        timeAwarenessUserName: boundUser?.name || boundUser?.nickname || '用户',
+        timelineContext: renderMessageTimelineContext(range.sourceMessages, floorMap, range.startFloor),
         settings: settings.value ?? undefined,
         modelOverride,
         promptOverride: renderCharacterMemoryPrompt(chatSettings.memory.summaryPrompt, characterName)
@@ -2209,6 +2241,9 @@ export const useAppStore = defineStore('app', () => {
     const summary = await generateConversationSummary({
       messages: memories.map((memory) => `【${memory.startFloor}-${memory.endFloor}楼】\n${memory.summary}`).join('\n\n'),
       previousSummary: '',
+      timeAwareness: chatSettings.timeAwareness,
+      timeAwarenessUserName: user.value?.name || user.value?.nickname || '用户',
+      timelineContext: renderMemoryRangeTimelineContext(memories),
       settings: settings.value ?? undefined,
       modelOverride,
       promptOverride: renderCharacterMemoryPrompt(chatSettings.memory.mergeSummaryPrompt, characterName)
@@ -2285,6 +2320,9 @@ export const useAppStore = defineStore('app', () => {
       const summary = await generateConversationSummary({
         messages: memory.summary,
         previousSummary: '',
+        timeAwareness: chatSettings.timeAwareness,
+        timeAwarenessUserName: user.value?.name || user.value?.nickname || '用户',
+        timelineContext: renderMemoryRangeTimelineContext([memory]),
         settings: settings.value ?? undefined,
         modelOverride: getConversationTextModelOverride(chatSettings, 'summary', memory.mode),
         promptOverride: renderCharacterMemoryPrompt(chatSettings.memory.summaryPrompt, characterName)

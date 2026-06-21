@@ -2074,13 +2074,23 @@ export async function generateVoomCommentReplies(input: {
 export async function generateConversationSummary(input: {
   messages: string;
   previousSummary: string;
+  timeAwareness?: ConversationTimeAwarenessSettings;
+  timeAwarenessUserName?: string;
+  timelineContext?: string;
   settings?: AppSettings;
   modelOverride?: string;
   promptOverride?: string;
 }) {
+  const includeTimeline = Boolean(input.timeAwareness?.enabled);
+  const timeAwarenessPrompt = includeTimeline
+    ? renderTimeAwarenessPrompt(input.timeAwareness, { userName: input.timeAwarenessUserName || '用户' })
+    : '';
   const prompt = [
     input.promptOverride?.trim() || '请把下面聊天楼层总结成可供角色扮演继续读取的记忆手册。要求：保留人物关系变化、承诺、偏好、冲突、时间顺序和未解决事项；不要评价用户；用中文输出。',
+    timeAwarenessPrompt,
+    includeTimeline ? '时间线写入规则：总结内容本身必须带有事件发生时间线。请把关键事件、关系变化、承诺、冲突、未解决事项与其对应日期/时间写在一起；不要只写“之前”“后来”等模糊顺序；无法确认精确时间时，保留可见楼层范围和已知时间范围。' : '',
     input.previousSummary ? `已有长期/短期记忆：\n${input.previousSummary}` : '已有长期/短期记忆：暂无。',
+    includeTimeline && input.timelineContext ? `待总结事件时间线：\n${input.timelineContext}` : '',
     `待总结聊天：\n${input.messages}`
   ].filter(Boolean).join('\n\n');
   const apiReply = await callTextApi(input.settings, prompt, input.modelOverride);
