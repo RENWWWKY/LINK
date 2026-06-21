@@ -194,9 +194,24 @@ function registerImageDownloadMiddleware(middlewares: LinkProxyMiddlewares) {
     }
 
     try {
-      const upstreamResponse = await fetch(targetUrl, { method: 'GET' });
+      const headers = new Headers();
+      const accept = getForwardHeader(request, 'accept');
+      const authorization = getForwardHeader(request, 'authorization');
+      const range = getForwardHeader(request, 'range');
+      headers.set('Accept', accept || 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8');
+      headers.set('User-Agent', 'Mozilla/5.0 AppleWebKit/537.36 Link-PWA-Image-Proxy/1.0');
+      headers.set('Referer', `${targetUrl.protocol}//${targetUrl.host}/`);
+      if (authorization) headers.set('Authorization', authorization);
+      if (range) headers.set('Range', range);
+
+      let upstreamResponse = await fetch(targetUrl, { method: 'GET', headers });
+      if (!upstreamResponse.ok && authorization) {
+        headers.delete('Authorization');
+        upstreamResponse = await fetch(targetUrl, { method: 'GET', headers });
+      }
       response.statusCode = upstreamResponse.status;
       response.statusMessage = upstreamResponse.statusText;
+      response.setHeader('X-Link-Proxy-Target-Host', targetUrl.host);
       const upstreamContentType = upstreamResponse.headers.get('content-type');
       if (upstreamContentType) response.setHeader('Content-Type', upstreamContentType);
       response.end(Buffer.from(await upstreamResponse.arrayBuffer()));

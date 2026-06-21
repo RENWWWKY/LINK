@@ -481,6 +481,15 @@
             <span>API Key</span>
             <input v-model="vendorDraft.apiKey" autocomplete="off" type="password" />
           </label>
+
+          <label class="toggle-card">
+            <input v-model="vendorDraft.preferBase64ImageResponse" class="toggle-input" type="checkbox" />
+            <span class="toggle-indicator" aria-hidden="true"></span>
+            <div>
+              <strong>优先 Base64 图片响应</strong>
+              <small>DALL-E 会请求 b64_json；gpt-image-1 保持官方默认 base64。</small>
+            </div>
+          </label>
         </section>
 
         <section v-else class="composer-section form-grid">
@@ -582,7 +591,8 @@ const vendorDraft = ref<ApiVendor>(createImageApiVendor({
   enabled: true,
   name: 'OpenAI Images',
   apiUrl: 'https://api.openai.com/v1',
-  apiPath: '/images/generations'
+  apiPath: '/images/generations',
+  preferBase64ImageResponse: true
 }));
 const manualModelId = ref('');
 const manualModelNickname = ref('');
@@ -888,7 +898,8 @@ function openVendorCreator() {
     enabled: true,
     name: 'OpenAI Images',
     apiUrl: 'https://api.openai.com/v1',
-    apiPath: '/images/generations'
+    apiPath: '/images/generations',
+    preferBase64ImageResponse: true
   }));
   activeVendorTab.value = 'provider';
   manualModelId.value = '';

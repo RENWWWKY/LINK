@@ -572,8 +572,15 @@ function normalizeVendor(vendor: Partial<ApiVendor> | null | undefined, fallback
     apiPath: String(vendor?.apiPath ?? '/chat/completions').trim() || '/chat/completions',
     apiKey: String(vendor?.apiKey ?? '').trim(),
     avatar: normalizeVendorAvatar(vendor?.avatar),
+    preferBase64ImageResponse: Boolean(vendor?.preferBase64ImageResponse),
     models
   };
+}
+
+function shouldPreferBase64ImageResponse(vendor: Partial<ApiVendor> | null | undefined) {
+  if (typeof vendor?.preferBase64ImageResponse === 'boolean') return vendor.preferBase64ImageResponse;
+  const apiUrl = String(vendor?.apiUrl ?? '').trim().toLowerCase();
+  return apiUrl === 'https://api.openai.com/v1' || apiUrl === 'https://api.openai.com';
 }
 
 function normalizeImageVendor(vendor: Partial<ApiVendor> | null | undefined, fallbackId?: string): ApiVendor {
@@ -581,7 +588,8 @@ function normalizeImageVendor(vendor: Partial<ApiVendor> | null | undefined, fal
   const apiPath = normalizeOpenAiImagePath(vendor?.apiPath);
   return {
     ...normalizedVendor,
-    apiPath
+    apiPath,
+    preferBase64ImageResponse: shouldPreferBase64ImageResponse(vendor)
   };
 }
 
@@ -727,7 +735,8 @@ export function getResolvedOpenAiImageConfig(settings?: AppSettings | null) {
       endpoint: buildOpenAiImageEndpoint(preferredVendor.apiUrl, preferredVendor.apiPath || openAiImageGenerationPath),
       apiKey: preferredVendor.apiKey,
       model: preferredModel?.id ?? settings?.imageModel?.trim() ?? defaultAppSettings.imageModel,
-      size: imageSettings.size
+      size: imageSettings.size,
+      preferBase64ImageResponse: preferredVendor.preferBase64ImageResponse
     };
   }
 
@@ -735,7 +744,8 @@ export function getResolvedOpenAiImageConfig(settings?: AppSettings | null) {
     endpoint: '',
     apiKey: '',
     model: settings?.imageModel?.trim() ?? defaultAppSettings.imageModel,
-    size: imageSettings.size
+    size: imageSettings.size,
+    preferBase64ImageResponse: false
   };
 }
 

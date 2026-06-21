@@ -416,6 +416,7 @@ export interface ApiVendor {
   apiPath: string;
   apiKey: string;
   avatar: string;
+  preferBase64ImageResponse: boolean;
   models: ApiVendorModel[];
 }
 

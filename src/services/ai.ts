@@ -156,6 +156,15 @@ function createImageDownloadUrl(url: string) {
   return trimmed;
 }
 
+const imageDownloadAcceptHeader = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8';
+
+function createImageDownloadHeaders(apiKey = '') {
+  const headers: HeadersInit = { Accept: imageDownloadAcceptHeader };
+  const normalizedApiKey = apiKey.trim();
+  if (normalizedApiKey) headers.Authorization = `Bearer ${normalizedApiKey}`;
+  return headers;
+}
+
 function inferImageMimeType(url: string, fallback = 'image/png') {
   const pathname = (() => {
     try {
@@ -185,6 +194,64 @@ function normalizeImageMimeType(value: unknown, fallback = 'image/png') {
   return fallback;
 }
 
+function getDownloadedImageMimeType(blob: Blob, contentType: string, imageUrl: string, fallbackMimeType: string) {
+  const normalizedContentType = contentType.trim().toLowerCase();
+  const normalizedBlobType = blob.type.trim().toLowerCase();
+  if (/^(?:text\/|application\/(?:json|xml|xhtml\+xml))/i.test(normalizedContentType)) return '';
+  if (/^(?:text\/|application\/(?:json|xml|xhtml\+xml))/i.test(normalizedBlobType)) return '';
+  return normalizeImageMimeType(normalizedBlobType || normalizedContentType || inferImageMimeType(imageUrl, fallbackMimeType), fallbackMimeType);
+}
+
+async function readDownloadedImageResponse(response: Response, imageUrl: string, fallbackMimeType: string) {
+  if (!response.ok) {
+    throw new Error(`图片下载返回 ${formatHttpStatus(response) || '请求失败'}`);
+  }
+
+  const contentType = response.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
+  const downloadedBlob = await response.blob();
+  if (!downloadedBlob.size) throw new Error('图片下载结果为空。');
+
+  const mimeType = getDownloadedImageMimeType(downloadedBlob, contentType, imageUrl, fallbackMimeType);
+  if (!mimeType.startsWith('image/')) throw new Error(`图片下载返回了非图片内容：${contentType || downloadedBlob.type || 'unknown'}`);
+
+  return readBlobAsDataUrl(downloadedBlob.type === mimeType ? downloadedBlob : new Blob([downloadedBlob], { type: mimeType }));
+}
+
+async function fetchGeneratedImageUrlAsDataUrl(imageUrl: string, fallbackMimeType: string, apiKey = '') {
+  const proxyEndpoint = createImageDownloadUrl(imageUrl);
+  const attempts = [
+    { label: '同源下载代理（带鉴权）', endpoint: proxyEndpoint, headers: createImageDownloadHeaders(apiKey), enabled: Boolean(apiKey) },
+    { label: '同源下载代理', endpoint: proxyEndpoint, headers: createImageDownloadHeaders(), enabled: true },
+    { label: '浏览器直连（带鉴权）', endpoint: imageUrl, headers: createImageDownloadHeaders(apiKey), enabled: Boolean(apiKey) && proxyEndpoint !== imageUrl },
+    { label: '浏览器直连', endpoint: imageUrl, headers: createImageDownloadHeaders(), enabled: proxyEndpoint !== imageUrl }
+  ];
+
+  let lastError: unknown = null;
+  for (const attempt of attempts) {
+    if (!attempt.enabled) continue;
+    for (let retryIndex = 0; retryIndex <= openAiImageRetryDelays.length; retryIndex += 1) {
+      try {
+        const response = await fetch(attempt.endpoint, { headers: attempt.headers });
+        if (!response.ok && transientOpenAiImageStatuses.has(response.status) && retryIndex < openAiImageRetryDelays.length) {
+          const retryAfter = parseRetryAfter(response.headers.get('retry-after'));
+          await wait(retryAfter || openAiImageRetryDelays[retryIndex]);
+          continue;
+        }
+        return await readDownloadedImageResponse(response, imageUrl, fallbackMimeType);
+      } catch (error) {
+        lastError = error instanceof Error ? new Error(`${attempt.label}失败：${error.message}`) : error;
+        if (retryIndex < openAiImageRetryDelays.length) {
+          await wait(openAiImageRetryDelays[retryIndex]);
+          continue;
+        }
+        break;
+      }
+    }
+  }
+
+  throw lastError ?? new Error('图片 URL 下载失败。');
+}
+
 function unwrapOpenAiImageEndpoint(endpoint: string) {
   if (!endpoint.startsWith('/__image-proxy')) return endpoint;
   try {
@@ -203,7 +270,11 @@ function isOpenAiResponsesEndpoint(endpoint: string) {
   }
 }
 
-function buildOpenAiImageRequestBody(endpoint: string, model: string, prompt: string, size: string) {
+function supportsB64JsonResponseFormat(model: string) {
+  return /^dall-e-(?:2|3)$/i.test(model.trim());
+}
+
+function buildOpenAiImageRequestBody(endpoint: string, model: string, prompt: string, size: string, preferBase64ImageResponse = false) {
   if (isOpenAiResponsesEndpoint(endpoint)) {
     return {
       model,
@@ -221,6 +292,7 @@ function buildOpenAiImageRequestBody(endpoint: string, model: string, prompt: st
     model,
     prompt,
     ...(size ? { size } : {}),
+    ...(preferBase64ImageResponse && supportsB64JsonResponseFormat(model) ? { response_format: 'b64_json' } : {}),
     n: 1
   };
 }
@@ -547,26 +619,12 @@ function normalizeImageSourceWithMime(value: unknown, mimeType = 'image/png') {
   };
 }
 
-async function localizeGeneratedImageUrl(imageUrl: string, fallbackMimeType = 'image/png') {
+async function localizeGeneratedImageUrl(imageUrl: string, fallbackMimeType = 'image/png', apiKey = '') {
   const trimmed = imageUrl.trim();
   if (!/^https?:\/\//i.test(trimmed)) return trimmed;
 
   try {
-    const response = await fetch(createImageDownloadUrl(trimmed), {
-      headers: { Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' }
-    });
-    if (!response.ok) {
-      throw new Error(`图片下载代理返回 ${formatHttpStatus(response) || '请求失败'}`);
-    }
-
-    const contentType = response.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
-    const downloadedBlob = await response.blob();
-    if (!downloadedBlob.size) throw new Error('图片下载结果为空。');
-
-    const mimeType = normalizeImageMimeType(downloadedBlob.type || contentType || inferImageMimeType(trimmed, fallbackMimeType), fallbackMimeType);
-    if (!mimeType.startsWith('image/')) throw new Error(`图片下载返回了非图片内容：${mimeType}`);
-
-    return readBlobAsDataUrl(downloadedBlob.type ? downloadedBlob : new Blob([downloadedBlob], { type: mimeType }));
+    return await fetchGeneratedImageUrlAsDataUrl(trimmed, fallbackMimeType, apiKey);
   } catch (error) {
     throw new Error(`OpenAI 图片接口返回了远程图片地址，但本地化下载失败：${error instanceof Error ? error.message : String(error)}`);
   }
@@ -1469,7 +1527,7 @@ export async function generateOpenAiImage(settings: AppSettings, overrides: Imag
         'Content-Type': 'application/json',
         Authorization: `Bearer ${resolved.apiKey}`
       },
-      body: JSON.stringify(buildOpenAiImageRequestBody(resolved.endpoint, model, prompt, size))
+      body: JSON.stringify(buildOpenAiImageRequestBody(resolved.endpoint, model, prompt, size, resolved.preferBase64ImageResponse))
     });
   } catch (error) {
     throw new Error(createNetworkErrorMessage(error, 'OpenAI 图片网络请求失败', resolved.endpoint));
@@ -1497,7 +1555,7 @@ export async function generateOpenAiImage(settings: AppSettings, overrides: Imag
 
   const extractedImage = extractGeneratedImage(data);
   const imageUrl = extractedImage.imageUrl
-    ? await localizeGeneratedImageUrl(extractedImage.imageUrl, extractedImage.mimeType)
+    ? await localizeGeneratedImageUrl(extractedImage.imageUrl, extractedImage.mimeType, resolved.apiKey)
     : '';
 
   if (!imageUrl) {
