@@ -73,18 +73,6 @@
         </label>
       </template>
 
-      <template v-else>
-        <label class="field model-select-field">
-          <span>公共语音</span>
-          <div class="model-select-shell">
-            <span class="model-select-vendor">Voice</span>
-            <select class="with-provider" :value="settings.ttsPublic.voice" @change="updatePublicVoice">
-              <option v-for="voice in publicVoices" :key="voice" :value="voice">{{ voice }}</option>
-            </select>
-          </div>
-        </label>
-      </template>
-
       <section class="picker-empty ready">
         <strong>当前 TTS 模型</strong>
         <p>{{ activeProviderSummary }}</p>
@@ -114,12 +102,10 @@ const showPicker = ref(false);
 
 const providerOptions: Array<{ id: TtsProviderType; label: string; detail: string }> = [
   { id: 'minimax', label: 'MiniMax', detail: '精细参数' },
-  { id: 'openai', label: 'OpenAI', detail: '多供应商' },
-  { id: 'public', label: 'Public', detail: '免费接口' }
+  { id: 'openai', label: 'OpenAI', detail: '多供应商' }
 ];
 
 const openAiVoices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'];
-const publicVoices = ['Zhiyu', 'Joanna', 'Matthew', 'Amy', 'Brian', 'Takumi', 'Mizuki'];
 const minimaxModels = ['speech-02-hd', 'speech-02-turbo', 'speech-01-hd', 'speech-01-turbo'];
 
 const settings = computed(() => normalizeAppSettings(store.settings));
@@ -139,7 +125,7 @@ const activeProviderSummary = computed(() => {
   if (settings.value.ttsProvider === 'minimax') {
     return `${settings.value.ttsMinimax.model} · ${settings.value.ttsMinimax.voiceId || '未填写 Voice ID'}`;
   }
-  return `${settings.value.ttsPublic.voice} · ${settings.value.ttsPublic.mimeType}`;
+  return '选择 MiniMax 或 OpenAI 语音接口。';
 });
 
 function finalizeSettings(nextSettings: AppSettings) {
@@ -201,11 +187,6 @@ async function updateMinimaxVoice(event: Event) {
   await saveNext(nextSettings);
 }
 
-async function updatePublicVoice(event: Event) {
-  const nextSettings = nextBase();
-  nextSettings.ttsPublic.voice = (event.target as HTMLSelectElement).value;
-  await saveNext(nextSettings);
-}
 </script>
 
 <style scoped>

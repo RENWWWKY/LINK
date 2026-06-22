@@ -1,5 +1,5 @@
-import type { AppSettings, MinimaxTtsSettings, OpenAiTtsSettings, PublicTtsSettings, TtsProviderType } from '@/types/domain';
-import { getResolvedOpenAiTtsConfig, getTtsVoiceForProvider, normalizeAppSettings } from '@/utils/settings';
+import type { AppSettings, MinimaxTtsSettings, OpenAiTtsSettings, TtsProviderType } from '@/types/domain';
+import { getResolvedOpenAiTtsConfig, normalizeAppSettings } from '@/utils/settings';
 
 interface TtsAudioPayload {
   audioUrl: string;
@@ -10,6 +10,10 @@ export interface TtsAudioResult extends TtsAudioPayload {
   provider: TtsProviderType;
   voiceId: string;
 }
+
+const legacyOpenAiSpeechVoices = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
+const defaultGeminiTtsVoice = 'Kore';
+const geminiTtsVoices = ['Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Aoede'];
 
 function minimaxMimeTypeForFormat(format: MinimaxTtsSettings['audioFormat']) {
   if (format === 'wav') return 'audio/wav';
@@ -35,6 +39,49 @@ function bytesToBase64(bytes: Uint8Array) {
   return btoa(binary);
 }
 
+function base64ToBytes(base64: string) {
+  const binary = atob(base64.trim());
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function writeAscii(view: DataView, offset: number, value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
+}
+
+function pcmBytesToWavDataUrl(bytes: Uint8Array, mimeType: string) {
+  const sampleRate = Number(mimeType.match(/rate=(\d+)/i)?.[1] ?? 24000) || 24000;
+  const channelCount = Number(mimeType.match(/channels?=(\d+)/i)?.[1] ?? 1) || 1;
+  const bitsPerSample = 16;
+  const header = new ArrayBuffer(44);
+  const view = new DataView(header);
+  const blockAlign = channelCount * bitsPerSample / 8;
+
+  writeAscii(view, 0, 'RIFF');
+  view.setUint32(4, 36 + bytes.byteLength, true);
+  writeAscii(view, 8, 'WAVE');
+  writeAscii(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channelCount, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeAscii(view, 36, 'data');
+  view.setUint32(40, bytes.byteLength, true);
+
+  const wavBytes = new Uint8Array(header.byteLength + bytes.byteLength);
+  wavBytes.set(new Uint8Array(header), 0);
+  wavBytes.set(bytes, header.byteLength);
+  return `data:audio/wav;base64,${bytesToBase64(wavBytes)}`;
+}
+
 function hexToDataUrl(hex: string, mimeType: string) {
   const normalized = hex.replace(/\s+/g, '').trim();
   if (!normalized || normalized.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(normalized)) return '';
@@ -54,6 +101,20 @@ function base64ToDataUrl(base64: string, mimeType: string) {
   } catch {
     return '';
   }
+}
+
+function geminiBase64ToAudioPayload(base64: string, mimeType: string): TtsAudioPayload {
+  const normalizedMimeType = mimeType.trim() || 'audio/L16;codec=pcm;rate=24000';
+  if (/audio\/(?:l16|pcm)/i.test(normalizedMimeType)) {
+    return {
+      audioUrl: pcmBytesToWavDataUrl(base64ToBytes(base64), normalizedMimeType),
+      mimeType: 'audio/wav'
+    };
+  }
+
+  const audioUrl = base64ToDataUrl(base64, normalizedMimeType);
+  if (!audioUrl) throw new Error('Gemini TTS 返回了无法解析的音频内容。');
+  return { audioUrl, mimeType: normalizedMimeType };
 }
 
 function readBlobAsDataUrl(blob: Blob) {
@@ -87,29 +148,6 @@ function buildMinimaxEndpoint(apiUrl: string, groupId: string) {
   return `${endpoint}${endpoint.includes('?') ? '&' : '?'}GroupId=${encodeURIComponent(groupId.trim())}`;
 }
 
-function buildPublicEndpoint(apiUrl: string, voice: string, text: string) {
-  const endpoint = apiUrl.trim();
-  if (!endpoint) throw new Error('请先填写公共 TTS API 地址。');
-  const encodedVoice = encodeURIComponent(voice.trim());
-  const encodedText = encodeURIComponent(text.trim());
-
-  if (endpoint.includes('{voice}') || endpoint.includes('{text}')) {
-    return endpoint
-      .split('{voice}').join(encodedVoice)
-      .split('{text}').join(encodedText);
-  }
-
-  let url: URL;
-  try {
-    url = new URL(endpoint);
-  } catch {
-    throw new Error('公共 TTS API 地址必须是完整 URL。');
-  }
-  url.searchParams.set('voice', voice.trim());
-  url.searchParams.set('text', text.trim());
-  return url.toString();
-}
-
 function extractJsonErrorMessage(rawText: string, fallback: string) {
   try {
     const payload = JSON.parse(rawText) as Record<string, unknown>;
@@ -120,6 +158,72 @@ function extractJsonErrorMessage(rawText: string, fallback: string) {
   } catch {
     return rawText.trim() || fallback;
   }
+}
+
+function normalizeObject(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function extractGeminiInlineAudio(payload: unknown) {
+  const record = normalizeObject(payload);
+  const candidates = Array.isArray(record?.candidates) ? record.candidates : [];
+
+  for (const candidate of candidates) {
+    const content = normalizeObject(normalizeObject(candidate)?.content);
+    const parts = Array.isArray(content?.parts) ? content.parts : [];
+    for (const part of parts) {
+      const partRecord = normalizeObject(part);
+      const inlineData = normalizeObject(partRecord?.inlineData) ?? normalizeObject(partRecord?.inline_data);
+      const data = String(inlineData?.data ?? '').trim();
+      if (data) {
+        return {
+          data,
+          mimeType: String(inlineData?.mimeType ?? inlineData?.mime_type ?? 'audio/L16;codec=pcm;rate=24000').trim()
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function isLegacyOpenAiSpeechModel(model: string) {
+  return /^tts-1(?:-hd)?$/i.test(model.trim());
+}
+
+function getOpenAiSpeechVoice(model: string, voice: string) {
+  const normalizedVoice = voice.trim();
+  if (!isLegacyOpenAiSpeechModel(model)) return normalizedVoice;
+  return legacyOpenAiSpeechVoices.includes(normalizedVoice) ? normalizedVoice : legacyOpenAiSpeechVoices[0];
+}
+
+function getGeminiTtsVoice(voice: string) {
+  const normalizedVoice = voice.trim();
+  return geminiTtsVoices.includes(normalizedVoice) ? normalizedVoice : defaultGeminiTtsVoice;
+}
+
+function isGeminiNativeTtsConfig(endpoint: string, model: string) {
+  if (!/gemini.*tts/i.test(model.trim())) return false;
+  try {
+    const url = new URL(endpoint, window.location.origin);
+    return /(?:^|\.)generativelanguage\.googleapis\.com$/i.test(url.hostname);
+  } catch {
+    return /generativelanguage\.googleapis\.com/i.test(endpoint);
+  }
+}
+
+function buildGeminiNativeTtsEndpoint(endpoint: string, model: string) {
+  const url = new URL(endpoint, window.location.origin);
+  const basePath = url.pathname
+    .replace(/\/openai\/audio\/speech\/?$/i, '')
+    .replace(/\/audio\/speech\/?$/i, '')
+    .replace(/\/openai\/?$/i, '')
+    .replace(/\/+$/, '') || '/v1beta';
+  url.pathname = `${basePath}/models/${encodeURIComponent(model.trim())}:generateContent`;
+  url.search = '';
+  return url.toString();
 }
 
 function extractAudioCandidate(payload: unknown): string {
@@ -227,6 +331,47 @@ export async function synthesizeMinimaxSpeech(text: string, settings: MinimaxTts
   return { ...audio, provider: 'minimax', voiceId: settings.voiceId };
 }
 
+async function synthesizeGeminiNativeSpeech(text: string, endpoint: string, apiKey: string, model: string, voice: string): Promise<TtsAudioResult> {
+  const geminiVoice = getGeminiTtsVoice(voice);
+  const response = await fetch(buildGeminiNativeTtsEndpoint(endpoint, model), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(apiKey ? { 'x-goog-api-key': apiKey } : {})
+    },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text }] }],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName: geminiVoice
+            }
+          }
+        }
+      }
+    })
+  });
+
+  const rawText = await response.text();
+  let payload: unknown = rawText;
+  try {
+    payload = JSON.parse(rawText) as unknown;
+  } catch {
+    if (!response.ok) throw new Error(rawText.trim() || `Gemini TTS 请求失败：${response.status}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(extractJsonErrorMessage(rawText, `Gemini TTS 请求失败：${response.status}`));
+  }
+
+  const inlineAudio = extractGeminiInlineAudio(payload);
+  if (!inlineAudio) throw new Error('Gemini TTS 没有返回可播放的音频。');
+  const audio = geminiBase64ToAudioPayload(inlineAudio.data, inlineAudio.mimeType);
+  return { ...audio, provider: 'openai', voiceId: geminiVoice };
+}
+
 export async function synthesizeOpenAiSpeech(text: string, settings: AppSettings): Promise<TtsAudioResult> {
   const content = text.trim();
   if (!content) throw new Error('语音内容为空。');
@@ -234,6 +379,12 @@ export async function synthesizeOpenAiSpeech(text: string, settings: AppSettings
   const resolved = getResolvedOpenAiTtsConfig(settings);
   if (!resolved.endpoint.trim()) throw new Error('请先添加 OpenAI TTS 供应商。');
   if (!resolved.model.trim()) throw new Error('请先同步并选择 OpenAI TTS 模型。');
+
+  if (isGeminiNativeTtsConfig(resolved.endpoint, resolved.model)) {
+    return synthesizeGeminiNativeSpeech(content, resolved.endpoint, resolved.apiKey, resolved.model, settings.ttsOpenAi.voice);
+  }
+
+  const voice = getOpenAiSpeechVoice(resolved.model, settings.ttsOpenAi.voice);
 
   const response = await fetch(resolved.endpoint, {
     method: 'POST',
@@ -244,7 +395,7 @@ export async function synthesizeOpenAiSpeech(text: string, settings: AppSettings
     body: JSON.stringify({
       model: resolved.model,
       input: content,
-      voice: settings.ttsOpenAi.voice,
+      voice,
       response_format: settings.ttsOpenAi.responseFormat,
       speed: settings.ttsOpenAi.speed,
       ...(settings.ttsOpenAi.instructions.trim() ? { instructions: settings.ttsOpenAi.instructions.trim() } : {})
@@ -257,29 +408,12 @@ export async function synthesizeOpenAiSpeech(text: string, settings: AppSettings
   }
 
   const audio = await readAudioResponse(response, openAiMimeTypeForFormat(settings.ttsOpenAi.responseFormat));
-  return { ...audio, provider: 'openai', voiceId: settings.ttsOpenAi.voice };
-}
-
-export async function synthesizePublicSpeech(text: string, settings: PublicTtsSettings): Promise<TtsAudioResult> {
-  const content = text.trim();
-  if (!content) throw new Error('语音内容为空。');
-  if (!settings.voice.trim()) throw new Error('请先填写公共 TTS Voice。');
-
-  const response = await fetch(buildPublicEndpoint(settings.apiUrl, settings.voice, content));
-  if (!response.ok) {
-    const rawText = await response.text();
-    throw new Error(rawText.trim() || `公共 TTS 请求失败：${response.status}`);
-  }
-
-  const audio = await readAudioResponse(response, settings.mimeType || 'audio/mpeg');
-  return { ...audio, provider: 'public', voiceId: settings.voice };
+  return { ...audio, provider: 'openai', voiceId: voice };
 }
 
 export async function synthesizeSpeech(text: string, settings: AppSettings): Promise<TtsAudioResult> {
   const normalized = normalizeAppSettings(settings);
 
   if (normalized.ttsProvider === 'openai') return synthesizeOpenAiSpeech(text, normalized);
-  if (normalized.ttsProvider === 'minimax') return synthesizeMinimaxSpeech(text, normalized.ttsMinimax);
-  const result = await synthesizePublicSpeech(text, normalized.ttsPublic);
-  return { ...result, voiceId: result.voiceId || getTtsVoiceForProvider(normalized) };
+  return synthesizeMinimaxSpeech(text, normalized.ttsMinimax);
 }

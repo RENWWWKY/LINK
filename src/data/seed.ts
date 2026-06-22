@@ -47,14 +47,9 @@ export const defaultSettings: AppSettings = {
   autoGenerateVoom: true,
   disclaimerAccepted: false,
   ttsEnabled: true,
-  ttsVoice: 'Zhiyu',
+  ttsVoice: 'male-qn-qingse',
   ttsPlaybackMode: 'manual',
-  ttsProvider: 'public',
-  ttsPublic: {
-    apiUrl: 'https://api.streamelements.com/kappa/v2/speech',
-    voice: 'Zhiyu',
-    mimeType: 'audio/mpeg'
-  },
+  ttsProvider: 'minimax',
   ttsOpenAi: {
     activeVendorId: '',
     vendors: [],

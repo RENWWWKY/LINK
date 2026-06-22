@@ -180,7 +180,7 @@
         <label class="field">
           <span>Voice</span>
           <select v-model="draft.ttsOpenAi.voice">
-            <option v-for="voice in openAiVoices" :key="voice" :value="voice">{{ voice }}</option>
+            <option v-for="voice in openAiVoiceOptions" :key="voice" :value="voice">{{ voice }}</option>
           </select>
         </label>
 
@@ -206,34 +206,6 @@
         <span>语音指令</span>
         <textarea v-model="draft.ttsOpenAi.instructions" maxlength="500" placeholder="可选，gpt-4o-mini-tts 支持指令，例如：自然、温柔、带一点情绪。"></textarea>
       </label>
-    </section>
-
-    <section v-else class="provider-fields">
-      <div class="section-head compact">
-        <div>
-          <p class="section-kicker">Public</p>
-          <h3>免费公共语音接口</h3>
-        </div>
-      </div>
-
-      <label class="field">
-        <span>API URL</span>
-        <input v-model="draft.ttsPublic.apiUrl" placeholder="https://api.streamelements.com/kappa/v2/speech" />
-      </label>
-
-      <div class="field-grid two-up">
-        <label class="field">
-          <span>Voice</span>
-          <select v-model="draft.ttsPublic.voice">
-            <option v-for="voice in publicVoices" :key="voice" :value="voice">{{ voice }}</option>
-          </select>
-        </label>
-
-        <label class="field">
-          <span>音频类型</span>
-          <input v-model="draft.ttsPublic.mimeType" placeholder="audio/mpeg" />
-        </label>
-      </div>
     </section>
 
     <AppModal v-model="showVendorComposer" :title="vendorEditorTitle" :show-header="false" fixed-height variant="ins">
@@ -377,8 +349,9 @@ const emit = defineEmits<{
   save: [settings: AppSettings];
 }>();
 
-const openAiVoices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'];
-const publicVoices = ['Zhiyu', 'Joanna', 'Matthew', 'Amy', 'Brian', 'Takumi', 'Mizuki'];
+const legacyOpenAiVoices = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
+const modernOpenAiVoices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'];
+const geminiTtsVoices = ['Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Aoede'];
 const vendorTabs = [
   { id: 'provider' as VendorComposerTab, label: 'openai' },
   { id: 'models' as VendorComposerTab, label: '选择模型' },
@@ -386,7 +359,7 @@ const vendorTabs = [
 ];
 
 const syncing = ref(false);
-const activeProvider = ref<TtsProviderType>('public');
+const activeProvider = ref<TtsProviderType>('minimax');
 const showVendorComposer = ref(false);
 const activeVendorTab = ref<VendorComposerTab>('provider');
 const editingVendorId = ref<string | null>(null);
@@ -407,7 +380,6 @@ function cloneVendors(vendors: ApiVendor[]) {
 function createDraft(settings: AppSettings) {
   return normalizeAppSettings({
     ...settings,
-    ttsPublic: { ...settings.ttsPublic },
     ttsOpenAi: {
       ...settings.ttsOpenAi,
       vendors: cloneVendors(settings.ttsOpenAi.vendors)
@@ -430,6 +402,12 @@ const vendorSyncButtonLabel = computed(() => ({
   success: 'Synced',
   error: 'Retry sync'
 }[vendorSyncState.value]));
+const openAiVoiceOptions = computed(() => {
+  const model = resolvedOpenAiConfig.value.model.trim();
+  if (/gemini.*tts/i.test(model)) return geminiTtsVoices;
+  if (/^tts-1(?:-hd)?$/i.test(model)) return legacyOpenAiVoices;
+  return modernOpenAiVoices;
+});
 
 const providerTabs = computed(() => [
   {
@@ -452,19 +430,9 @@ const providerTabs = computed(() => [
     shortLabel: `${openAiVendors.value.length || 0} 家`,
     connected: Boolean(activeOpenAiVendor.value?.enabled && resolvedOpenAiConfig.value.endpoint.trim() && resolvedOpenAiConfig.value.model.trim())
   },
-  {
-    id: 'public' as TtsProviderType,
-    label: 'PUBLIC',
-    badge: 'Free',
-    kicker: 'Public TTS',
-    title: '公共语音接口',
-    visualLabel: 'PB',
-    shortLabel: 'Free',
-    connected: Boolean(draft.ttsPublic.apiUrl.trim() && draft.ttsPublic.voice.trim())
-  }
 ]);
 
-const activeProviderMeta = computed(() => providerTabs.value.find((provider) => provider.id === activeProvider.value) ?? providerTabs.value[2]);
+const activeProviderMeta = computed(() => providerTabs.value.find((provider) => provider.id === activeProvider.value) ?? providerTabs.value[0]);
 
 watch(
   () => props.settings,
@@ -486,7 +454,6 @@ function buildNextSettings() {
     ...draft,
     ttsEnabled: true,
     ttsProvider: provider,
-    ttsPublic: { ...draft.ttsPublic },
     ttsOpenAi: {
       ...draft.ttsOpenAi,
       vendors: cloneVendors(draft.ttsOpenAi.vendors)
@@ -511,6 +478,16 @@ function scheduleSave() {
     saveTimer = undefined;
   }, 350);
 }
+
+watch(
+  () => openAiVoiceOptions.value.join('\0'),
+  () => {
+    if (openAiVoiceOptions.value.includes(draft.ttsOpenAi.voice)) return;
+    draft.ttsOpenAi.voice = openAiVoiceOptions.value[0] ?? 'alloy';
+    scheduleSave();
+  },
+  { immediate: true }
+);
 
 function saveNow() {
   if (syncing.value) return;
@@ -660,7 +637,6 @@ watch(
   () => ({
     provider: draft.ttsProvider,
     enabled: draft.ttsEnabled,
-    ttsPublic: { ...draft.ttsPublic },
     ttsOpenAi: {
       ...draft.ttsOpenAi,
       vendors: cloneVendors(draft.ttsOpenAi.vendors)
@@ -690,7 +666,7 @@ onBeforeUnmount(() => {
 
 .tts-provider-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   width: 100%;
   min-width: 0;
@@ -767,12 +743,6 @@ onBeforeUnmount(() => {
   background:
     radial-gradient(circle at top right, rgba(255, 221, 232, 0.9), transparent 30%),
     linear-gradient(135deg, #fff8fb, #f1f6fb 56%, #eef8f1);
-}
-
-.tts-showcase.provider-public .voice-stage {
-  background:
-    radial-gradient(circle at top, rgba(218, 236, 255, 0.9), transparent 30%),
-    linear-gradient(135deg, #f8fbff, #f2f7ed 56%, #fff7f0);
 }
 
 .voice-stage {

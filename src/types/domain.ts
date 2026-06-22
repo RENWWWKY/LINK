@@ -238,7 +238,7 @@ export interface ChatImageAttachment {
 
 export type ChatVoiceAttachmentSource = 'recorded' | 'text';
 
-export type TtsProviderType = 'public' | 'openai' | 'minimax';
+export type TtsProviderType = 'openai' | 'minimax';
 
 export interface ChatVoiceAttachment {
   source: ChatVoiceAttachmentSource;
@@ -544,12 +544,6 @@ export type MinimaxTtsAudioFormat = 'mp3' | 'wav' | 'pcm';
 
 export type OpenAiTtsAudioFormat = 'mp3' | 'opus' | 'aac' | 'flac' | 'wav' | 'pcm';
 
-export interface PublicTtsSettings {
-  apiUrl: string;
-  voice: string;
-  mimeType: string;
-}
-
 export interface OpenAiTtsSettings {
   activeVendorId: string;
   vendors: ApiVendor[];
@@ -591,7 +585,6 @@ export interface AppSettings {
   ttsVoice: string;
   ttsPlaybackMode: 'manual' | 'auto';
   ttsProvider: TtsProviderType;
-  ttsPublic: PublicTtsSettings;
   ttsOpenAi: OpenAiTtsSettings;
   ttsMinimax: MinimaxTtsSettings;
   imageModel: string;

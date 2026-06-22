@@ -1,4 +1,4 @@
-import type { ApiVendor, ApiVendorModel, AppSettings, ChatModelOverrides, GitHubBackupSettings, ImageModelScope, ImageModelSelection, ImagePromptPreset, ImageProviderType, MinimaxTtsAudioFormat, MinimaxTtsSettings, NovelAiImageSettings, OpenAiImageSettings, OpenAiTtsAudioFormat, OpenAiTtsSettings, PollinationsImageSettings, PublicTtsSettings, TtsProviderType } from '@/types/domain';
+import type { ApiVendor, ApiVendorModel, AppSettings, ChatModelOverrides, GitHubBackupSettings, ImageModelScope, ImageModelSelection, ImagePromptPreset, ImageProviderType, MinimaxTtsAudioFormat, MinimaxTtsSettings, NovelAiImageSettings, OpenAiImageSettings, OpenAiTtsAudioFormat, OpenAiTtsSettings, PollinationsImageSettings, TtsProviderType } from '@/types/domain';
 import { createId } from './id';
 
 export const novelAiOfficialApiUrl = 'https://image.novelai.net';
@@ -35,7 +35,7 @@ export interface ConfiguredImageModelOption {
 }
 
 const imageProviderOrder: ImageProviderType[] = ['openai', 'novelai', 'pollinations'];
-const ttsProviderOrder: TtsProviderType[] = ['public', 'minimax', 'openai'];
+const ttsProviderOrder: TtsProviderType[] = ['minimax', 'openai'];
 const openAiTtsAudioFormats: OpenAiTtsAudioFormat[] = ['mp3', 'opus', 'aac', 'flac', 'wav', 'pcm'];
 const openAiImageGenerationPath = '/images/generations';
 const openAiTtsSpeechPath = '/audio/speech';
@@ -116,14 +116,9 @@ export const defaultAppSettings: AppSettings = {
   autoGenerateVoom: true,
   disclaimerAccepted: false,
   ttsEnabled: true,
-  ttsVoice: 'Zhiyu',
+  ttsVoice: 'male-qn-qingse',
   ttsPlaybackMode: 'manual',
-  ttsProvider: 'public',
-  ttsPublic: {
-    apiUrl: 'https://api.streamelements.com/kappa/v2/speech',
-    voice: 'Zhiyu',
-    mimeType: 'audio/mpeg'
-  },
+  ttsProvider: 'minimax',
   ttsOpenAi: {
     activeVendorId: '',
     vendors: [],
@@ -324,17 +319,6 @@ function normalizeMinimaxTtsSettings(settings: Partial<MinimaxTtsSettings> | nul
   };
 }
 
-function normalizePublicTtsSettings(settings: Partial<PublicTtsSettings> | null | undefined): PublicTtsSettings {
-  const mimeType = String(settings?.mimeType ?? defaultAppSettings.ttsPublic.mimeType).trim().toLowerCase();
-  const voice = settings?.voice || defaultAppSettings.ttsPublic.voice;
-
-  return {
-    apiUrl: String(settings?.apiUrl ?? defaultAppSettings.ttsPublic.apiUrl).trim() || defaultAppSettings.ttsPublic.apiUrl,
-    voice: String(voice).trim() || defaultAppSettings.ttsPublic.voice,
-    mimeType: mimeType.startsWith('audio/') ? mimeType : defaultAppSettings.ttsPublic.mimeType
-  };
-}
-
 function normalizeOpenAiTtsSettings(settings: Partial<OpenAiTtsSettings> | null | undefined, legacyVoice = ''): OpenAiTtsSettings {
   const responseFormat = String(settings?.responseFormat ?? defaultAppSettings.ttsOpenAi.responseFormat).trim().toLowerCase();
   const normalizedResponseFormat: OpenAiTtsAudioFormat = openAiTtsAudioFormats.includes(responseFormat as OpenAiTtsAudioFormat)
@@ -382,10 +366,9 @@ function normalizeOpenAiTtsSettings(settings: Partial<OpenAiTtsSettings> | null 
   };
 }
 
-export function getTtsVoiceForProvider(settings: Pick<AppSettings, 'ttsProvider' | 'ttsPublic' | 'ttsOpenAi' | 'ttsMinimax'>) {
+export function getTtsVoiceForProvider(settings: Pick<AppSettings, 'ttsProvider' | 'ttsOpenAi' | 'ttsMinimax'>) {
   if (settings.ttsProvider === 'openai') return settings.ttsOpenAi.voice;
-  if (settings.ttsProvider === 'minimax') return settings.ttsMinimax.voiceId;
-  return settings.ttsPublic.voice;
+  return settings.ttsMinimax.voiceId;
 }
 
 function normalizePromptPreset(preset: Partial<ImagePromptPreset> | null | undefined, fallbackName: string): ImagePromptPreset | null {
@@ -1097,7 +1080,6 @@ export function normalizeAppSettings(settings?: Partial<AppSettings> | null): Ap
     imageNovelAi: normalizeNovelAiImageSettings(settings?.imageNovelAi),
     imagePollinations: normalizePollinationsImageSettings(settings?.imagePollinations),
     ttsProvider: normalizedTtsProvider,
-    ttsPublic: normalizePublicTtsSettings(settings?.ttsPublic),
     ttsOpenAi: normalizeOpenAiTtsSettings(settings?.ttsOpenAi, normalizedTtsProvider === 'openai' ? legacyTtsVoice : ''),
     ttsMinimax: normalizeMinimaxTtsSettings(settings?.ttsMinimax, {
       enabled: normalizedTtsProvider === 'minimax',
