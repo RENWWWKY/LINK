@@ -169,19 +169,20 @@
         <p>添加 OpenAI、OpenRouter 或自建兼容网关后，可真实同步 /models 并选择语音模型。</p>
       </section>
 
-      <div class="section-head compact parameter-head">
+      <div v-if="showOpenAiParameters" class="section-head compact parameter-head">
         <div>
           <p class="section-kicker">Speech parameters</p>
           <h3>OpenAI Speech 参数</h3>
         </div>
       </div>
 
-      <div class="field-grid three-up openai-parameter-grid">
+      <div v-if="showOpenAiParameters" class="field-grid three-up openai-parameter-grid">
         <label class="field">
           <span>Voice</span>
-          <select v-model="draft.ttsOpenAi.voice">
-            <option v-for="voice in openAiVoiceOptions" :key="voice" :value="voice">{{ voice }}</option>
-          </select>
+          <input v-model.trim="draft.ttsOpenAi.voice" list="openai-tts-voice-options" placeholder="输入 voice / 选择推荐音色" />
+          <datalist id="openai-tts-voice-options">
+            <option v-for="voice in openAiVoiceOptions" :key="voice" :value="voice" />
+          </datalist>
         </label>
 
         <label class="field">
@@ -202,10 +203,15 @@
         </label>
       </div>
 
-      <label class="field">
+      <label v-if="showOpenAiParameters" class="field">
         <span>语音指令</span>
         <textarea v-model="draft.ttsOpenAi.instructions" maxlength="500" placeholder="可选，gpt-4o-mini-tts 支持指令，例如：自然、温柔、带一点情绪。"></textarea>
       </label>
+
+      <section v-else-if="openAiVendors.length" class="empty-shell compact-empty">
+        <strong>尚未选择 TTS 模型</strong>
+        <p>编辑供应商并同步 /models 后，语音参数会按所选模型显示。</p>
+      </section>
     </section>
 
     <AppModal v-model="showVendorComposer" :title="vendorEditorTitle" :show-header="false" fixed-height variant="ins">
@@ -394,6 +400,8 @@ activeProvider.value = draft.ttsProvider;
 const openAiVendors = computed(() => draft.ttsOpenAi.vendors);
 const activeOpenAiVendor = computed(() => openAiVendors.value.find((vendor) => vendor.id === draft.ttsOpenAi.activeVendorId) ?? openAiVendors.value[0] ?? null);
 const resolvedOpenAiConfig = computed(() => getResolvedOpenAiTtsConfig(draft));
+const activeOpenAiModel = computed(() => resolvedOpenAiConfig.value.model.trim());
+const showOpenAiParameters = computed(() => Boolean(activeOpenAiVendor.value?.models.length && activeOpenAiModel.value));
 const selectedVendorModels = computed(() => vendorDraft.value.models.filter((model) => model.selected));
 const vendorEditorTitle = computed(() => editingVendorId.value ? '编辑 TTS 供应商' : '添加 TTS 供应商');
 const vendorSyncButtonLabel = computed(() => ({
@@ -403,11 +411,12 @@ const vendorSyncButtonLabel = computed(() => ({
   error: 'Retry sync'
 }[vendorSyncState.value]));
 const openAiVoiceOptions = computed(() => {
-  const model = resolvedOpenAiConfig.value.model.trim();
+  const model = activeOpenAiModel.value;
   if (/gemini.*tts/i.test(model)) return geminiTtsVoices;
   if (/^tts-1(?:-hd)?$/i.test(model)) return legacyOpenAiVoices;
   return modernOpenAiVoices;
 });
+const requiresKnownOpenAiVoice = computed(() => /gemini.*tts/i.test(activeOpenAiModel.value) || /^tts-1(?:-hd)?$/i.test(activeOpenAiModel.value));
 
 const providerTabs = computed(() => [
   {
@@ -480,9 +489,11 @@ function scheduleSave() {
 }
 
 watch(
-  () => openAiVoiceOptions.value.join('\0'),
+  () => `${activeOpenAiModel.value}\0${openAiVoiceOptions.value.join('\0')}\0${requiresKnownOpenAiVoice.value}`,
   () => {
+    if (!showOpenAiParameters.value) return;
     if (openAiVoiceOptions.value.includes(draft.ttsOpenAi.voice)) return;
+    if (!requiresKnownOpenAiVoice.value && draft.ttsOpenAi.voice.trim()) return;
     draft.ttsOpenAi.voice = openAiVoiceOptions.value[0] ?? 'alloy';
     scheduleSave();
   },

@@ -294,6 +294,10 @@
           <RotateCcw :size="19" />
           <span>撤回</span>
         </button>
+        <button v-if="canRegenerateActiveVoice" type="button" :disabled="regeneratingActiveVoice" @click="regenerateActiveVoice">
+          <RefreshCw :size="19" />
+          <span>{{ regeneratingActiveVoice ? '生成中' : '重新生成语音' }}</span>
+        </button>
         <button type="button" :disabled="!canQuoteActiveMessage" @click="quoteActiveMessage">
           <Quote :size="19" />
           <span>引用</span>
@@ -483,6 +487,7 @@ const generatingVoom = ref(false);
 const deletingFriend = ref(false);
 const clearingHistory = ref(false);
 const regeneratingChatImageMessageIds = ref<string[]>([]);
+const regeneratingVoiceMessageIds = ref<string[]>([]);
 const messageListRef = ref<HTMLElement | null>(null);
 const localImageInputRef = ref<HTMLInputElement | null>(null);
 const activeMessage = ref<ChatMessage | null>(null);
@@ -570,6 +575,10 @@ const activeMessageIsSynthetic = computed(() => Boolean(activeMessage.value?.id.
 const canRecallActiveMessage = computed(() => Boolean(activeMessage.value && activeMessage.value.sender === 'user' && !activeMessageIsSynthetic.value));
 const canQuoteActiveMessage = computed(() => Boolean(activeMessage.value && activeMessage.value.sender === 'char' && !activeMessageIsSynthetic.value));
 const canEditActiveMessage = computed(() => Boolean(activeMessage.value && !activeMessageIsSynthetic.value));
+const canRegenerateActiveVoice = computed(() => Boolean(activeMessage.value?.sender === 'char'
+  && activeMessage.value.voice?.transcript.trim()
+  && !activeMessageIsSynthetic.value));
+const regeneratingActiveVoice = computed(() => Boolean(activeMessage.value && regeneratingVoiceMessageIds.value.includes(activeMessage.value.id)));
 const canRegenerateChatImage = computed(() => Boolean(getSelectedImageModelOption(store.settings, 'onlineChat')));
 const recordedVoiceSeconds = computed(() => recordingVoice.value
   ? Math.max(1, Math.round(recordingElapsed.value))
@@ -1146,6 +1155,21 @@ function quoteActiveMessage() {
   if (!message || !canQuoteActiveMessage.value) return;
   quoteTarget.value = store.createMessageQuoteSnapshot(message);
   showMessageMenu.value = false;
+}
+
+async function regenerateActiveVoice() {
+  const message = activeMessage.value;
+  if (!message || !canRegenerateActiveVoice.value || regeneratingVoiceMessageIds.value.includes(message.id)) return;
+  regeneratingVoiceMessageIds.value = [...regeneratingVoiceMessageIds.value, message.id];
+  try {
+    await store.generateMessageVoiceAudio(message.id, { force: true });
+    showMessageMenu.value = false;
+    store.showConfigAlert('已按当前 TTS 配置重新生成这条语音。', '语音已更新');
+  } catch (error) {
+    store.showConfigAlert(error instanceof Error ? error.message : '语音重新生成失败，请检查 TTS 配置。', '生成失败');
+  } finally {
+    regeneratingVoiceMessageIds.value = regeneratingVoiceMessageIds.value.filter((id) => id !== message.id);
+  }
 }
 
 function openEditActiveMessage() {

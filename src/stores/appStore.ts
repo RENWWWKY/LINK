@@ -933,13 +933,13 @@ export const useAppStore = defineStore('app', () => {
     return nextMessage;
   }
 
-  async function generateMessageVoiceAudio(messageId: string) {
+  async function generateMessageVoiceAudio(messageId: string, options: { force?: boolean } = {}) {
     const messageIndex = messages.value.findIndex((message) => message.id === messageId);
     if (messageIndex < 0) throw new Error('语音消息不存在。');
 
     const existingMessage = messages.value[messageIndex];
     if (!existingMessage.voice) throw new Error('这条消息不是语音消息。');
-    if (existingMessage.voice.audioUrl) return existingMessage.voice.audioUrl;
+    if (existingMessage.voice.audioUrl && !options.force) return existingMessage.voice.audioUrl;
     if (existingMessage.sender !== 'char') throw new Error('这条语音没有可播放的本地录音。');
 
     const currentSettings = settings.value;

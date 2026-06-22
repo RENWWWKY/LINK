@@ -45,13 +45,14 @@
           </div>
         </label>
 
-        <label class="field model-select-field">
+        <label v-if="selectedOpenAiModel" class="field model-select-field">
           <span>Voice</span>
           <div class="model-select-shell">
             <span class="model-select-vendor">Voice</span>
-            <select class="with-provider" :value="settings.ttsOpenAi.voice" @change="updateOpenAiVoice">
-              <option v-for="voice in openAiVoices" :key="voice" :value="voice">{{ voice }}</option>
-            </select>
+            <input :value="settings.ttsOpenAi.voice" list="quick-openai-tts-voices" placeholder="voice" @input="updateOpenAiVoice" />
+            <datalist id="quick-openai-tts-voices">
+              <option v-for="voice in openAiVoiceOptions" :key="voice" :value="voice" />
+            </datalist>
           </div>
         </label>
       </template>
@@ -105,14 +106,22 @@ const providerOptions: Array<{ id: TtsProviderType; label: string; detail: strin
   { id: 'openai', label: 'OpenAI', detail: '多供应商' }
 ];
 
-const openAiVoices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'];
+const legacyOpenAiVoices = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
+const modernOpenAiVoices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'];
+const geminiTtsVoices = ['Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Aoede'];
 const minimaxModels = ['speech-02-hd', 'speech-02-turbo', 'speech-01-hd', 'speech-01-turbo'];
 
 const settings = computed(() => normalizeAppSettings(store.settings));
 const openAiVendors = computed(() => settings.value.ttsOpenAi.vendors);
 const activeOpenAiVendor = computed(() => openAiVendors.value.find((vendor) => vendor.id === settings.value.ttsOpenAi.activeVendorId) ?? openAiVendors.value[0] ?? null);
 const activeOpenAiModels = computed(() => activeOpenAiVendor.value?.models ?? []);
-const selectedOpenAiModel = computed(() => activeOpenAiVendor.value?.models.find((model) => model.selected)?.id ?? settings.value.ttsOpenAi.model);
+const selectedOpenAiModel = computed(() => activeOpenAiVendor.value?.models.find((model) => model.selected)?.id ?? activeOpenAiVendor.value?.models[0]?.id ?? '');
+const openAiVoiceOptions = computed(() => {
+  const model = selectedOpenAiModel.value.trim();
+  if (/gemini.*tts/i.test(model)) return geminiTtsVoices;
+  if (/^tts-1(?:-hd)?$/i.test(model)) return legacyOpenAiVoices;
+  return modernOpenAiVoices;
+});
 const activeProviderLabel = computed(() => providerOptions.find((provider) => provider.id === settings.value.ttsProvider)?.label ?? 'TTS');
 const compactSelectedLabel = computed(() => activeProviderLabel.value);
 const buttonLabel = computed(() => `切换 TTS 模型：${activeProviderLabel.value}`);
@@ -171,7 +180,7 @@ async function updateOpenAiModel(event: Event) {
 
 async function updateOpenAiVoice(event: Event) {
   const nextSettings = nextBase();
-  nextSettings.ttsOpenAi.voice = (event.target as HTMLSelectElement).value;
+  nextSettings.ttsOpenAi.voice = (event.target as HTMLInputElement).value.trim();
   await saveNext(nextSettings);
 }
 
