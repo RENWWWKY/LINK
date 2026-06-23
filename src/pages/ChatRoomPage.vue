@@ -54,10 +54,10 @@
       :quote="quoteTarget"
       :sticker-suggestions="composerStickerSuggestions"
       @cancel-quote="quoteTarget = null"
-      @draft-text="composerText = $event"
+      @draft-text="handleComposerDraftText"
       @prepare-focus="captureKeyboardScrollAnchor"
-      @focus="startKeyboardScrollGuard"
-      @blur="stopKeyboardScrollGuard"
+      @focus="handleComposerFocus"
+      @blur="handleComposerBlur"
       @capture-photo="sendCapturedPhoto"
       @open-image-panel="openImagePanel"
       @open-menu="showActionMenu = true"
@@ -495,6 +495,7 @@ const activeCardDetailMessageId = ref('');
 const selectionMode = ref(false);
 const selectedMessageIds = ref<string[]>([]);
 const quoteTarget = ref<ChatMessageQuote | null>(null);
+const composerFocused = ref(false);
 const composerText = ref('');
 const editDraft = ref('');
 const editLocationNameDraft = ref('');
@@ -533,6 +534,8 @@ let discardRecording = false;
 const initialMessageLimit = 60;
 const messageLoadStep = 30;
 const topLoadThreshold = 48;
+const bottomStickThreshold = 72;
+const bottomRestoreDelays = [40, 120, 260, 520];
 
 const conversation = computed(() => store.conversationById(props.id));
 const character = computed(() => (conversation.value ? store.characterById(conversation.value.charId) : undefined));
@@ -618,6 +621,27 @@ const canSaveEditedMessage = computed(() => {
 });
 const { captureKeyboardScrollAnchor, releaseKeyboardScrollGuard, startKeyboardScrollGuard, stopKeyboardScrollGuard } = useKeyboardScrollGuard(messageListRef);
 
+function isMessageListNearBottom() {
+  const messageList = messageListRef.value;
+  if (!messageList) return false;
+  const bottomOffset = Math.max(0, messageList.scrollHeight - messageList.clientHeight - messageList.scrollTop);
+  return bottomOffset <= bottomStickThreshold;
+}
+
+function scrollMessagesToBottomNow() {
+  const messageList = messageListRef.value;
+  if (!messageList) return;
+  messageList.scrollTop = messageList.scrollHeight;
+}
+
+function queueMessagesToBottomAfterLayout() {
+  void nextTick(() => {
+    scrollMessagesToBottomNow();
+    window.requestAnimationFrame(scrollMessagesToBottomNow);
+    for (const delay of bottomRestoreDelays) window.setTimeout(scrollMessagesToBottomNow, delay);
+  });
+}
+
 async function syncConversationState(id: string) {
   await store.markConversationRead(id);
   const currentConversation = store.conversationById(id);
@@ -628,9 +652,25 @@ async function syncConversationState(id: string) {
 
 async function scrollMessagesToBottom() {
   await nextTick();
-  const messageList = messageListRef.value;
-  if (!messageList) return;
-  messageList.scrollTop = messageList.scrollHeight;
+  scrollMessagesToBottomNow();
+}
+
+function handleComposerFocus() {
+  const shouldStickToBottom = isMessageListNearBottom();
+  composerFocused.value = true;
+  startKeyboardScrollGuard();
+  if (shouldStickToBottom) queueMessagesToBottomAfterLayout();
+}
+
+function handleComposerBlur() {
+  composerFocused.value = false;
+  stopKeyboardScrollGuard();
+}
+
+function handleComposerDraftText(content: string) {
+  const shouldStickToBottom = composerFocused.value || isMessageListNearBottom();
+  composerText.value = content;
+  if (shouldStickToBottom) queueMessagesToBottomAfterLayout();
 }
 
 function resetMessageWindow() {
@@ -678,6 +718,10 @@ watch(() => [allOnlineMessages.value.length, currentConversationReplying.value],
   void scrollMessagesToBottom();
 }, {
   flush: 'post'
+});
+
+watch(() => composerStickerSuggestions.value.length, () => {
+  if (composerFocused.value || isMessageListNearBottom()) queueMessagesToBottomAfterLayout();
 });
 
 watch(showVoicePanel, (open) => {

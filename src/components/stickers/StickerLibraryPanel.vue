@@ -1061,9 +1061,9 @@ async function deleteSelectedSticker() {
 
 .sticker-sheet-modal .sticker-grid {
   --modal-grid-width: min(calc(100vw - var(--safe-left) - var(--safe-right) - 44px), 424px);
-  --modal-grid-column: calc((var(--modal-grid-width) - 24px) / 5);
-  --modal-grid-row: calc(var(--modal-grid-column) + 28px);
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  --modal-grid-column: calc((var(--modal-grid-width) - 18px) / 4);
+  --modal-grid-row: calc(var(--modal-grid-column) + 34px);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
   max-height: min(
     calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 132px),
@@ -1086,8 +1086,10 @@ async function deleteSelectedSticker() {
 }
 
 .sticker-sheet-modal .sticker-tile > span {
-  min-height: 26px;
-  font-size: 10px;
+  min-height: 30px;
+  font-size: 8px;
+  line-height: 1.25;
+  -webkit-line-clamp: 3;
 }
 
 .empty-stickers {
