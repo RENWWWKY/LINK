@@ -1,5 +1,5 @@
 import { unzipSync } from 'fflate';
-import type { ApiVendor, AppSettings, CharacterProfile, ConversationTimeAwarenessSettings, GenerateReplyInput, ImageProviderType, NovelAiModelOption, PollinationsModelOption, PromptContext, UserProfile, VoomComment, VoomFrequency, VoomPost } from '@/types/domain';
+import type { ApiVendor, AppSettings, CharacterProfile, ConversationTimeAwarenessSettings, GenerateReplyInput, ImageProviderType, MusicComment, MusicTrack, NovelAiModelOption, PollinationsModelOption, PromptContext, UserProfile, VoomComment, VoomFrequency, VoomPost } from '@/types/domain';
 import { createId } from '@/utils/id';
 import { getCharacterVoomAuthorName } from '@/utils/character';
 import { defaultNovelAiModels, defaultPollinationsModels, getImageGenerationSize, getResolvedApiConfig, getResolvedOpenAiImageConfig, getSelectedImageModelOption, novelAiOfficialApiUrl, novelAiProxyApiUrl } from '@/utils/settings';
@@ -2093,6 +2093,115 @@ export async function generateVoomCommentReplies(input: {
     }
   }
   throw new Error('评论区回复模型没有返回内容。');
+}
+
+function formatMusicTrackPrompt(track: MusicTrack) {
+  return [
+    `歌名：${track.name}`,
+    `歌手：${track.artists.join('、') || '未知歌手'}`,
+    `专辑：${track.album || '未知专辑'}`,
+    `音乐源：${track.source}`
+  ].join('\n');
+}
+
+function formatMusicCommentPromptLine(comment: MusicComment) {
+  const replyText = comment.parentId ? ` 回复 ${comment.parentId}` : '';
+  return `${comment.id}｜${comment.authorName}${replyText}：${comment.content}`;
+}
+
+function normalizeMusicComments(value: unknown, input: { user: UserProfile; characters: CharacterProfile[]; existingComments: MusicComment[] }) {
+  const source = Array.isArray((value as { comments?: unknown[] })?.comments)
+    ? (value as { comments: unknown[] }).comments
+    : Array.isArray(value)
+      ? value
+      : [];
+  const characterById = new Map(input.characters.map((character) => [character.id, character]));
+  const existingCommentIds = new Set(input.existingComments.map((comment) => comment.id));
+  const generatedIdByDraftId = new Map<string, string>();
+  const comments: MusicComment[] = [];
+  const createdAt = Date.now();
+
+  source.forEach((entry, index) => {
+    if (comments.length >= 12 || !entry || typeof entry !== 'object') return;
+    const record = entry as Record<string, unknown>;
+    const content = String(record.content ?? record.text ?? record.comment ?? '').trim();
+    if (!content) return;
+
+    const draftId = String(record.id ?? record.draftId ?? '').trim();
+    const id = createId('music_comment');
+    if (draftId) generatedIdByDraftId.set(draftId, id);
+
+    const authorId = String(record.authorId ?? record.characterId ?? '').trim();
+    const character = authorId ? characterById.get(authorId) : undefined;
+    const authorType = character ? 'character' : 'passerby';
+    const fallbackName = character?.nickname || character?.name || `听友${Math.floor(1000 + Math.random() * 9000)}`;
+    const authorName = String(record.authorName ?? record.name ?? fallbackName).trim() || fallbackName;
+    const rawParentId = String(record.parentId ?? record.replyTo ?? '').trim();
+    const parentId = existingCommentIds.has(rawParentId)
+      ? rawParentId
+      : generatedIdByDraftId.get(rawParentId) ?? '';
+    const contentTranslation = normalizeTranslationText(record.contentTranslation ?? record.translation ?? record.translationZh ?? record.chineseTranslation);
+
+    comments.push({
+      id,
+      authorName,
+      authorId: character?.id,
+      authorType,
+      avatar: character?.avatar,
+      content,
+      ...(contentTranslation ? { contentTranslation } : {}),
+      ...(parentId && parentId !== id ? { parentId } : {}),
+      createdAt: createdAt + index
+    });
+  });
+
+  return comments;
+}
+
+export async function generateMusicCommentThread(input: {
+  track: MusicTrack;
+  user: UserProfile;
+  characters: CharacterProfile[];
+  existingComments?: MusicComment[];
+  mode?: 'replace' | 'expand';
+  settings?: AppSettings;
+  modelOverride?: string;
+}) {
+  requireTextGenerationConfig(input.settings, input.modelOverride, '音乐评论区生成');
+  const existingComments = input.existingComments ?? [];
+  const boundCharacters = input.characters.filter((character) => character.boundUserId === input.user.id);
+  const characterText = boundCharacters.length
+    ? boundCharacters.map((character) => [
+      `id: ${character.id}`,
+      `昵称: ${character.nickname || character.name}`,
+      `角色名: ${character.name}`,
+      `签名: ${character.signature || '无'}`,
+      `设定: ${character.description || '无'}`
+    ].join('；')).join('\n')
+    : '当前账号暂未绑定角色。';
+  const prompt = [
+    '你要为 LINK 音乐页生成一个独立的歌曲评论区。它不是线上聊天、线下 RP 或 VOOM 会话，不要写入任何聊天事件。只输出 JSON，不要输出 JSON 以外的文字。',
+    `当前用户：${input.user.nickname || input.user.name || '我'}（不要代替该用户发评论）`,
+    `歌曲信息：\n${formatMusicTrackPrompt(input.track)}`,
+    `该用户账号绑定的角色：\n${characterText}`,
+    existingComments.length ? `已有评论区：\n${existingComments.map(formatMusicCommentPromptLine).join('\n')}` : '已有评论区：暂无。',
+    input.mode === 'expand' ? '任务：在已有评论区基础上追加新的评论和回复，延续上下文。' : '任务：生成一版新的完整评论区，可包含一级评论和互相回复。',
+    `输出格式：
+{
+  "comments": [
+    { "id": "c1", "authorId": "绑定角色id，可留空", "authorName": "角色昵称或真实感听友名", "content": "评论内容", "contentTranslation": "如需翻译则填写，否则留空", "parentId": "回复的已有评论ID或本次前面输出的id，可留空" }
+  ]
+}`,
+    '要求：1. 输出 8-12 条；2. 至少包含 2 条该用户绑定角色的评论或回复，角色 authorId 必须来自绑定角色；3. 其余可以是有真实感的路人听友；4. 可以回复任意已有评论或本次前面评论；5. 不要使用“NPC”“路人A”“朋友A”这类占位名；6. 语气像音乐 App 评论区，短、自然、有情绪和梗，但不要刷屏；7. contentTranslation 规则：外语、粤语、方言、繁体中文、文言/古风表达都要翻译成自然现代简体普通话，不要加“翻译：”前缀。'
+  ].join('\n\n');
+
+  const apiReply = await callTextApi(input.settings, prompt, input.modelOverride);
+  if (!apiReply) return [];
+  try {
+    return normalizeMusicComments(JSON.parse(extractJsonContent(apiReply)), { user: input.user, characters: boundCharacters, existingComments });
+  } catch {
+    return [];
+  }
 }
 
 export async function generateConversationSummary(input: {

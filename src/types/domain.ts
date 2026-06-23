@@ -351,6 +351,46 @@ export interface VoomComment {
   createdAt?: number;
 }
 
+export type MusicSource = 'netease' | 'kuwo' | 'joox' | 'tencent' | 'tidal' | 'qobuz' | 'bilibili' | 'apple' | 'ytmusic' | 'spotify';
+
+export interface MusicTrack {
+  id: string;
+  platformId: string;
+  urlId?: string;
+  source: MusicSource | string;
+  name: string;
+  artists: string[];
+  album: string;
+  picId: string;
+  lyricId: string;
+  coverUrl?: string;
+  audioUrl?: string;
+  duration?: number;
+  addedAt?: number;
+  updatedAt?: number;
+}
+
+export interface MusicComment {
+  id: string;
+  authorName: string;
+  authorId?: string;
+  authorType: 'user' | 'character' | 'passerby';
+  avatar?: string;
+  content: string;
+  contentTranslation?: string;
+  parentId?: string;
+  createdAt: number;
+}
+
+export interface MusicCommentThread {
+  trackKey: string;
+  track: MusicTrack;
+  comments: MusicComment[];
+  expanded: boolean;
+  generatedAt: number;
+  updatedAt: number;
+}
+
 export type WorldBookScope = 'global-online' | 'global-offline' | 'local';
 
 export type WorldBookEntryActivation = 'keyword' | 'constant' | 'priority';
@@ -608,6 +648,8 @@ export interface AppSnapshot {
   conversations: Conversation[];
   messages: ChatMessage[];
   voomPosts: VoomPost[];
+  musicFavoriteTracks: MusicTrack[];
+  musicCommentThreads: MusicCommentThread[];
   worldBooks: WorldBookEntry[];
   stickerGroups: StickerGroup[];
   stickers: Sticker[];

@@ -2,7 +2,7 @@ import { computed, ref, toRaw } from 'vue';
 import { defineStore } from 'pinia';
 import { deleteEntity, loadSnapshot, putEntity, replaceSnapshot } from '@/data/db';
 import { defaultSettings } from '@/data/seed';
-import type { AppSettings, AppSnapshot, CharacterProfile, ChatImageAttachment, ChatImageCandidate, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatMode, ChatModelOverrides, ChatModelScope, ChatTransferAttachment, ChatTransferStatus, ChatVoiceAttachment, Conversation, ConversationMemoryRecord, ConversationSettings, GeneratedImageRecord, ImageModuleId, Sticker, StickerGroup, UserProfile, VisualProfile, VoomComment, VoomFrequency, VoomImageCandidate, VoomPost, VoomPostVisibility, WorldBookEntry } from '@/types/domain';
+import type { AppSettings, AppSnapshot, CharacterProfile, ChatImageAttachment, ChatImageCandidate, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatMode, ChatModelOverrides, ChatModelScope, ChatTransferAttachment, ChatTransferStatus, ChatVoiceAttachment, Conversation, ConversationMemoryRecord, ConversationSettings, GeneratedImageRecord, ImageModuleId, MusicCommentThread, MusicTrack, Sticker, StickerGroup, UserProfile, VisualProfile, VoomComment, VoomFrequency, VoomImageCandidate, VoomPost, VoomPostVisibility, WorldBookEntry } from '@/types/domain';
 import { createAccountId, createId } from '@/utils/id';
 import { getCharacterVoomAuthorName, normalizeCharacterMindStateLines, normalizeCharacterProfile } from '@/utils/character';
 import { normalizeUserProfile, normalizeVisualProfile } from '@/utils/profile';
@@ -79,6 +79,8 @@ export const useAppStore = defineStore('app', () => {
   const activeConversationId = ref<string | null>(null);
   const messages = ref<ChatMessage[]>([]);
   const voomPosts = ref<VoomPost[]>([]);
+  const musicFavoriteTracks = ref<MusicTrack[]>([]);
+  const musicCommentThreads = ref<MusicCommentThread[]>([]);
   const worldBooks = ref<WorldBookEntry[]>([]);
   const stickerGroups = ref<StickerGroup[]>([]);
   const stickers = ref<Sticker[]>([]);
@@ -185,6 +187,8 @@ export const useAppStore = defineStore('app', () => {
       conversations: snapshot.conversations,
       messages: snapshot.messages,
       voomPosts: snapshot.voomPosts,
+      musicFavoriteTracks: snapshot.musicFavoriteTracks ?? [],
+      musicCommentThreads: snapshot.musicCommentThreads ?? [],
       worldBooks: normalizeWorldBooks(snapshot.worldBooks),
       stickerGroups: stickerLibrary.groups,
       stickers: stickerLibrary.stickers,
@@ -271,6 +275,8 @@ export const useAppStore = defineStore('app', () => {
     conversations.value = snapshot.conversations;
     messages.value = snapshot.messages;
     voomPosts.value = snapshot.voomPosts;
+    musicFavoriteTracks.value = snapshot.musicFavoriteTracks ?? [];
+    musicCommentThreads.value = snapshot.musicCommentThreads ?? [];
     worldBooks.value = snapshot.worldBooks;
     stickerGroups.value = snapshot.stickerGroups;
     stickers.value = snapshot.stickers;
@@ -293,6 +299,8 @@ export const useAppStore = defineStore('app', () => {
     conversations.value = snapshot.conversations;
     messages.value = snapshot.messages;
     voomPosts.value = snapshot.voomPosts;
+    musicFavoriteTracks.value = snapshot.musicFavoriteTracks ?? [];
+    musicCommentThreads.value = snapshot.musicCommentThreads ?? [];
     worldBooks.value = snapshot.worldBooks;
     const stickerLibrary = normalizeStickerLibrary(snapshot.stickerGroups, snapshot.stickers);
     stickerGroups.value = stickerLibrary.groups;
@@ -3615,6 +3623,8 @@ export const useAppStore = defineStore('app', () => {
     unreadConversationCount,
     messages,
     voomPosts,
+    musicFavoriteTracks,
+    musicCommentThreads,
     sortedVoomPosts,
     worldBooks,
     stickerGroups,

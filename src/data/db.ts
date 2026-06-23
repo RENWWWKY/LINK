@@ -1,6 +1,6 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import { toRaw } from 'vue';
-import type { AppSettings, AppSnapshot, CharacterProfile, ChatMessage, Conversation, ConversationMemoryRecord, ConversationSettings, GeneratedImageRecord, Sticker, StickerGroup, UserProfile, VoomPost, WorldBookEntry } from '@/types/domain';
+import type { AppSettings, AppSnapshot, CharacterProfile, ChatMessage, Conversation, ConversationMemoryRecord, ConversationSettings, GeneratedImageRecord, MusicCommentThread, MusicTrack, Sticker, StickerGroup, UserProfile, VoomPost, WorldBookEntry } from '@/types/domain';
 import { normalizeUserProfile } from '@/utils/profile';
 import { normalizeAppSettings } from '@/utils/settings';
 import { isLegacyGanadiSticker, isLegacyGanadiStickerGroup, isRecentStickerGroupId } from '@/utils/stickers';
@@ -13,6 +13,8 @@ interface LinkDb extends DBSchema {
   conversations: { key: string; value: Conversation; indexes: { byChar: string } };
   messages: { key: string; value: ChatMessage; indexes: { byConversation: string } };
   voomPosts: { key: string; value: VoomPost; indexes: { byChar: string; byConversation: string } };
+  musicFavoriteTracks: { key: string; value: MusicTrack };
+  musicCommentThreads: { key: string; value: MusicCommentThread };
   worldBooks: { key: string; value: WorldBookEntry; indexes: { byScope: string } };
   stickerGroups: { key: string; value: StickerGroup };
   stickers: { key: string; value: Sticker };
@@ -24,7 +26,7 @@ interface LinkDb extends DBSchema {
 
 let dbPromise: Promise<IDBPDatabase<LinkDb>> | undefined;
 
-const storeNames = ['user', 'characters', 'conversations', 'messages', 'voomPosts', 'worldBooks', 'stickerGroups', 'stickers', 'conversationSettings', 'conversationMemories', 'generatedImages', 'settings'] as const;
+const storeNames = ['user', 'characters', 'conversations', 'messages', 'voomPosts', 'musicFavoriteTracks', 'musicCommentThreads', 'worldBooks', 'stickerGroups', 'stickers', 'conversationSettings', 'conversationMemories', 'generatedImages', 'settings'] as const;
 const legacyDefaultUserIds = new Set(['1008600002']);
 const legacyDefaultCharacterIds = new Set(['2000100001', '2000100002', '2000100003']);
 const legacyDefaultConversationIds = new Set(['conv_2000100001', 'conv_2000100002', 'conv_2000100003']);
@@ -32,7 +34,7 @@ const legacyDefaultWorldBookIds = new Set(['wb_global_online', 'wb_global_offlin
 const legacyDefaultVoomPostIds = new Set(['voom_seed_1']);
 
 export function getDb() {
-  dbPromise ??= openDB<LinkDb>('link-local-db', 5, {
+  dbPromise ??= openDB<LinkDb>('link-local-db', 6, {
     upgrade(db, oldVersion, _newVersion, transaction) {
       if (!db.objectStoreNames.contains('user')) db.createObjectStore('user', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('characters')) db.createObjectStore('characters', { keyPath: 'id' });
@@ -49,6 +51,8 @@ export function getDb() {
         voomStore.createIndex('byChar', 'charId');
         voomStore.createIndex('byConversation', 'conversationId');
       }
+      if (!db.objectStoreNames.contains('musicFavoriteTracks')) db.createObjectStore('musicFavoriteTracks', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('musicCommentThreads')) db.createObjectStore('musicCommentThreads', { keyPath: 'trackKey' });
       if (!db.objectStoreNames.contains('worldBooks')) {
         const worldBookStore = db.createObjectStore('worldBooks', { keyPath: 'id' });
         worldBookStore.createIndex('byScope', 'scope');
@@ -87,7 +91,7 @@ export async function seedDatabase() {
   const existingUser = await db.get('user', defaultUsers[0].id);
   if (existingUser) return;
 
-  const tx = db.transaction(['user', 'characters', 'conversations', 'messages', 'voomPosts', 'worldBooks', 'stickerGroups', 'stickers', 'conversationSettings', 'conversationMemories', 'generatedImages', 'settings'], 'readwrite');
+  const tx = db.transaction(['user', 'characters', 'conversations', 'messages', 'voomPosts', 'musicFavoriteTracks', 'musicCommentThreads', 'worldBooks', 'stickerGroups', 'stickers', 'conversationSettings', 'conversationMemories', 'generatedImages', 'settings'], 'readwrite');
   await Promise.all(defaultUsers.map((user) => tx.objectStore('user').put(user)));
   await Promise.all(defaultCharacters.map((character) => tx.objectStore('characters').put(character)));
   await Promise.all(defaultConversations.map((conversation) => tx.objectStore('conversations').put(conversation)));
@@ -178,12 +182,14 @@ export async function loadSnapshot() {
   await seedDatabase();
   await pruneLegacyDefaultData();
   const db = await getDb();
-  const [users, characters, conversations, messages, voomPosts, worldBooks, stickerGroups, stickers, conversationSettings, conversationMemories, generatedImages, settings] = await Promise.all([
+  const [users, characters, conversations, messages, voomPosts, musicFavoriteTracks, musicCommentThreads, worldBooks, stickerGroups, stickers, conversationSettings, conversationMemories, generatedImages, settings] = await Promise.all([
     db.getAll('user'),
     db.getAll('characters'),
     db.getAll('conversations'),
     db.getAll('messages'),
     db.getAll('voomPosts'),
+    db.getAll('musicFavoriteTracks'),
+    db.getAll('musicCommentThreads'),
     db.getAll('worldBooks'),
     db.getAll('stickerGroups'),
     db.getAll('stickers'),
@@ -199,6 +205,8 @@ export async function loadSnapshot() {
     conversations,
     messages,
     voomPosts,
+    musicFavoriteTracks,
+    musicCommentThreads,
     worldBooks: normalizeWorldBooks(worldBooks),
     stickerGroups,
     stickers,
@@ -232,6 +240,14 @@ export async function replaceSnapshot(snapshot: AppSnapshot) {
   const voomStore = tx.objectStore('voomPosts');
   void voomStore.clear();
   snapshot.voomPosts.forEach((entry) => void voomStore.put(toPersistableValue(entry)));
+
+  const musicFavoriteTrackStore = tx.objectStore('musicFavoriteTracks');
+  void musicFavoriteTrackStore.clear();
+  (snapshot.musicFavoriteTracks ?? []).forEach((entry) => void musicFavoriteTrackStore.put(toPersistableValue(entry)));
+
+  const musicCommentThreadStore = tx.objectStore('musicCommentThreads');
+  void musicCommentThreadStore.clear();
+  (snapshot.musicCommentThreads ?? []).forEach((entry) => void musicCommentThreadStore.put(toPersistableValue(entry)));
 
   const worldBookStore = tx.objectStore('worldBooks');
   void worldBookStore.clear();
