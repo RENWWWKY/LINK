@@ -38,7 +38,7 @@
       <input
         v-model="text"
         :placeholder="placeholder"
-        :disabled="disabled"
+        :disabled="effectiveInputDisabled"
         @pointerdown="emit('prepare-focus')"
         @touchstart.passive="emit('prepare-focus')"
         @focus="handleFocus"
@@ -68,6 +68,7 @@ import type { ChatMessageQuote, Sticker } from '@/types/domain';
 const props = defineProps<{
   canSendReply?: boolean;
   disabled?: boolean;
+  inputDisabled?: boolean;
   online?: boolean;
   placeholder?: string;
   quote?: ChatMessageQuote | null;
@@ -94,6 +95,7 @@ const text = ref('');
 const inputFocused = ref(false);
 const cameraInputRef = ref<HTMLInputElement | null>(null);
 let blurTimer: number | undefined;
+const effectiveInputDisabled = computed(() => props.inputDisabled ?? props.disabled ?? false);
 const textMode = computed(() => Boolean(props.online && inputFocused.value));
 const visibleStickerSuggestions = computed(() => text.value.trim() ? props.stickerSuggestions?.slice(0, 6) ?? [] : []);
 const quoteContent = computed(() => {
@@ -131,6 +133,7 @@ function handleBlur() {
 }
 
 function submit() {
+  if (props.disabled) return;
   const content = text.value.trim();
   if (!content) return;
   emit('send', content);
@@ -138,6 +141,7 @@ function submit() {
 }
 
 function submitAndReply() {
+  if (props.disabled) return;
   const content = text.value.trim();
   if (content) text.value = '';
   emit('reply', content);

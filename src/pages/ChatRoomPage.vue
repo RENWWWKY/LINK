@@ -51,6 +51,7 @@
     <MessageComposer
       :can-send-reply="true"
       :disabled="currentConversationReplying"
+      :input-disabled="false"
       online
       placeholder="Aa"
       :quote="quoteTarget"
