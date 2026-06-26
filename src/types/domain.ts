@@ -7,7 +7,7 @@ export interface VisualProfileStats {
   postsLabel: string;
   followers: string;
   followersLabel: string;
-  following: number;
+  following: string | number;
   followingLabel: string;
 }
 
@@ -43,6 +43,8 @@ export interface VisualProfile {
   messageLabel: string;
   momentsLabel: string;
   accentColor: string;
+  textColor: string;
+  avatarBorderColor: string;
   stats: VisualProfileStats;
   tags: string[];
   chips: string[];
@@ -74,6 +76,16 @@ export interface CharacterInitialProfile {
   signature: string;
 }
 
+export type CharacterProfileHistoryField = 'nickname' | 'signature' | 'mood';
+
+export interface CharacterProfileHistoryEntry {
+  id: string;
+  field: CharacterProfileHistoryField;
+  previousValue: string;
+  nextValue: string;
+  createdAt: number;
+}
+
 export interface CharacterProfile {
   id: string;
   nickname: string;
@@ -88,6 +100,7 @@ export interface CharacterProfile {
   localWorldBookIds: string[];
   voomFrequency: VoomFrequency;
   initialProfile?: CharacterInitialProfile;
+  profileHistory?: CharacterProfileHistoryEntry[];
   profile?: VisualProfile;
   mindState?: CharacterMindState;
   modelOverrides?: ChatModelOverrides;

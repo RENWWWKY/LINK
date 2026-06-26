@@ -136,6 +136,8 @@ export function createVisualProfile(user?: VisualProfileOwner): VisualProfile {
     messageLabel: 'message',
     momentsLabel: 'Moments',
     accentColor: '#f49ab5',
+    textColor: '#f5f3f1',
+    avatarBorderColor: '#090c0f',
     stats: {
       posts: 520,
       postsLabel: 'Posts',
@@ -227,6 +229,8 @@ function isLegacyDefaultVisualProfile(profile: Partial<VisualProfile> | undefine
     (profile.messageLabel ?? 'message') === 'message' &&
     (profile.momentsLabel ?? 'Moments') === 'Moments' &&
     (profile.accentColor ?? '#f49ab5') === '#f49ab5' &&
+    (profile.textColor ?? '#f5f3f1') === '#f5f3f1' &&
+    (profile.avatarBorderColor ?? '#090c0f') === '#090c0f' &&
     tagsAreDefault &&
     chipsAreDefault &&
     statsAreDefault &&
@@ -266,7 +270,8 @@ export function normalizeUserProfile(user: UserProfile): UserProfile {
   const profile = isLegacyDefaultUser(user) && isLegacyDefaultVisualProfile(user.profile)
     ? createDefaultLinkerProfile()
     : normalizeVisualProfile(user.profile, user);
-  const avatar = normalizeProfileAvatar(user.avatar) || profile.avatar;
+  const avatar = normalizeProfileAvatar(user.avatar) || normalizeProfileAvatar(profile.avatar);
+  const profileAvatar = normalizeProfileAvatar(profile.avatar) || avatar;
 
   return {
     ...user,
@@ -277,7 +282,7 @@ export function normalizeUserProfile(user: UserProfile): UserProfile {
     profile: {
       ...profile,
       nickname: user.nickname?.trim() || user.name,
-      avatar,
+      avatar: profileAvatar,
       bio: user.signature?.trim() || profile.bio
     }
   };

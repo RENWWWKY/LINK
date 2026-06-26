@@ -1,4 +1,4 @@
-import type { CharacterInitialProfile, CharacterProfile } from '@/types/domain';
+import type { CharacterInitialProfile, CharacterProfile, CharacterProfileHistoryEntry, CharacterProfileHistoryField } from '@/types/domain';
 import { normalizeVisualProfile } from '@/utils/profile';
 import { normalizeChatModelOverrides } from '@/utils/settings';
 import { normalizeVoomFrequency } from '@/utils/voom';
@@ -6,6 +6,7 @@ import { normalizeVoomFrequency } from '@/utils/voom';
 export const defaultNewFriendSignature = '该用户很懒，什么也没留下';
 const defaultCharacterSignature = '这个角色还没有写个性签名。';
 const maxMindStateLines = 5;
+const profileHistoryFields = new Set<CharacterProfileHistoryField>(['nickname', 'signature', 'mood']);
 
 export function normalizeCharacterMindStateLines(lines: unknown) {
   if (Array.isArray(lines)) {
@@ -42,6 +43,28 @@ function normalizeCharacterInitialProfile(initialProfile: Partial<CharacterIniti
   return { nickname, signature };
 }
 
+function normalizeCharacterProfileHistory(history: unknown): CharacterProfileHistoryEntry[] {
+  if (!Array.isArray(history)) return [];
+  return history
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') return null;
+      const record = entry as Partial<CharacterProfileHistoryEntry> & { value?: unknown };
+      const field = profileHistoryFields.has(record.field as CharacterProfileHistoryField) ? record.field as CharacterProfileHistoryField : null;
+      const previousValue = String(record.previousValue ?? '').trim();
+      const nextValue = String(record.nextValue ?? record.value ?? '').trim();
+      if (!field || previousValue === nextValue) return null;
+      return {
+        id: String(record.id ?? '').trim() || `profile_history_${Math.random().toString(16).slice(2)}`,
+        field,
+        previousValue,
+        nextValue,
+        createdAt: Number.isFinite(record.createdAt) ? Number(record.createdAt) : Date.now()
+      };
+    })
+    .filter((entry): entry is CharacterProfileHistoryEntry => Boolean(entry))
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
 export function getCharacterInitialProfile(character: Pick<CharacterProfile, 'initialProfile' | 'nickname' | 'name'>): CharacterInitialProfile {
   const nickname = String(character.initialProfile?.nickname ?? '').trim()
     || String(character.name ?? '').trim()
@@ -71,6 +94,7 @@ export function normalizeCharacterProfile(character: CharacterProfile, fallbackU
     signature
   });
   const initialProfile = normalizeCharacterInitialProfile(rawInitialProfile, { nickname, signature });
+  const profileHistory = normalizeCharacterProfileHistory(character.profileHistory);
 
   return {
     ...characterBase,
@@ -87,6 +111,7 @@ export function normalizeCharacterProfile(character: CharacterProfile, fallbackU
     modelOverrides: normalizeChatModelOverrides(character.modelOverrides),
     profile,
     ...(initialProfile ? { initialProfile } : {}),
+    ...(profileHistory.length ? { profileHistory } : {}),
     mindState: mindStateLines.length
       ? {
           lines: mindStateLines,

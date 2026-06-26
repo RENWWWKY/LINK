@@ -432,18 +432,30 @@ defineEmits<{
 
 .floating-close {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 2;
+  top: 26px;
+  right: 20px;
+  z-index: 8;
   display: grid;
   place-items: center;
   width: 30px;
   height: 30px;
   border: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.72);
-  color: #5a434b;
-  box-shadow: 0 10px 24px rgba(89, 62, 70, 0.14);
-  backdrop-filter: blur(14px);
+  background: transparent;
+  color: #f5f3f1;
+  box-shadow: none;
+  filter: drop-shadow(0 2px 7px rgba(0, 0, 0, 0.45));
+}
+
+.floating-close,
+.modal-panel-profile-ins .modal-body :deep(.character-sheet .sheet-icon-button),
+.modal-panel-profile-ins .modal-body :deep(.user-profile-sheet .edit-button) {
+  width: 30px !important;
+  height: 30px !important;
+  min-height: 30px !important;
+  padding: 0 !important;
+  padding-inline: 0 !important;
+  padding-block: 0 !important;
+  border-radius: 999px !important;
 }
 </style>

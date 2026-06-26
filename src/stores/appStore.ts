@@ -2,7 +2,7 @@ import { computed, ref, toRaw } from 'vue';
 import { defineStore } from 'pinia';
 import { deleteEntity, loadSnapshot, putEntity, replaceSnapshot } from '@/data/db';
 import { defaultSettings } from '@/data/seed';
-import type { AppSettings, AppSnapshot, CharacterProfile, ChatImageAttachment, ChatImageCandidate, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatMode, ChatModelOverrides, ChatModelScope, ChatOfflineInvitationAttachment, ChatOfflineInvitationStatus, ChatTransferAttachment, ChatTransferStatus, ChatVoiceAttachment, Conversation, ConversationMemoryRecord, ConversationSettings, GeneratedImageRecord, ImageModuleId, MusicCommentThread, MusicTrack, Sticker, StickerGroup, UserProfile, VisualProfile, VoomComment, VoomFrequency, VoomImageCandidate, VoomPost, VoomPostVisibility, WorldBookEntry } from '@/types/domain';
+import type { AppSettings, AppSnapshot, CharacterProfile, CharacterProfileHistoryEntry, CharacterProfileHistoryField, ChatImageAttachment, ChatImageCandidate, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatMode, ChatModelOverrides, ChatModelScope, ChatOfflineInvitationAttachment, ChatOfflineInvitationStatus, ChatTransferAttachment, ChatTransferStatus, ChatVoiceAttachment, Conversation, ConversationMemoryRecord, ConversationSettings, GeneratedImageRecord, ImageModuleId, MusicCommentThread, MusicTrack, Sticker, StickerGroup, UserProfile, VisualProfile, VoomComment, VoomFrequency, VoomImageCandidate, VoomPost, VoomPostVisibility, WorldBookEntry } from '@/types/domain';
 import { createAccountId, createId } from '@/utils/id';
 import { getCharacterInitialProfile, getCharacterVoomAuthorName, normalizeCharacterMindStateLines, normalizeCharacterProfile } from '@/utils/character';
 import { normalizeUserProfile, normalizeVisualProfile } from '@/utils/profile';
@@ -61,6 +61,32 @@ function renderMemoryRangeTimelineContext(memories: ConversationMemoryRecord[]) 
   return memories
     .map((memory) => `【${memory.startFloor}-${memory.endFloor}楼】记忆创建：${formatMemoryTimelineTime(memory.createdAt)}；最近更新：${formatMemoryTimelineTime(memory.updatedAt)}`)
     .join('\n');
+}
+
+function getCharacterTrackedMood(character: CharacterProfile) {
+  return normalizeCharacterMindStateLines(character.mindState?.lines).join('\n');
+}
+
+function createCharacterProfileHistoryEntries(previousCharacter: CharacterProfile, nextCharacter: CharacterProfile): CharacterProfileHistoryEntry[] {
+  const createdAt = Date.now();
+  const changes: Array<{ field: CharacterProfileHistoryField; previousValue: string; nextValue: string }> = [
+    { field: 'nickname', previousValue: previousCharacter.nickname, nextValue: nextCharacter.nickname },
+    { field: 'signature', previousValue: previousCharacter.signature, nextValue: nextCharacter.signature },
+    { field: 'mood', previousValue: getCharacterTrackedMood(previousCharacter), nextValue: getCharacterTrackedMood(nextCharacter) }
+  ];
+
+  return changes.flatMap((change) => {
+    const previousValue = String(change.previousValue ?? '').trim();
+    const nextValue = String(change.nextValue ?? '').trim();
+    if (previousValue === nextValue) return [];
+    return [{
+      id: createId('profile-history'),
+      field: change.field,
+      previousValue,
+      nextValue,
+      createdAt
+    }];
+  });
 }
 
 export const useAppStore = defineStore('app', () => {
@@ -1182,7 +1208,17 @@ export const useAppStore = defineStore('app', () => {
     const characterToNormalize = existingCharacter?.initialProfile && !nextCharacter.initialProfile
       ? { ...nextCharacter, initialProfile: existingCharacter.initialProfile }
       : nextCharacter;
-    const normalizedCharacter = normalizeCharacterProfile(characterToNormalize, user.value?.id || users.value[0]?.id || '');
+    const normalizedCharacterBase = normalizeCharacterProfile(characterToNormalize, user.value?.id || users.value[0]?.id || '');
+    const profileHistoryEntries = existingCharacter
+      ? createCharacterProfileHistoryEntries(existingCharacter, normalizedCharacterBase)
+      : [];
+    const profileHistory = [
+      ...(normalizedCharacterBase.profileHistory?.length ? normalizedCharacterBase.profileHistory : existingCharacter?.profileHistory ?? []),
+      ...profileHistoryEntries
+    ];
+    const normalizedCharacter = profileHistory.length
+      ? { ...normalizedCharacterBase, profileHistory }
+      : normalizedCharacterBase;
     const index = characters.value.findIndex((character) => character.id === normalizedCharacter.id);
     if (index >= 0) characters.value[index] = normalizedCharacter;
     else characters.value.push(normalizedCharacter);
