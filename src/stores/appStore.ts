@@ -1690,6 +1690,7 @@ export const useAppStore = defineStore('app', () => {
       subtitle: '刚刚成为好友',
       lastSeen: '现在',
       voomFrequency: 'medium',
+      profileHistory: [],
       mindState: undefined,
       profile: undefined
     }, character.boundUserId);
