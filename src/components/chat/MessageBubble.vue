@@ -7,15 +7,21 @@
       <img class="avatar mini" :src="avatarSource" :alt="avatarAlt" />
     </button>
     <div class="bubble-wrap">
+      <span v-if="canQuote" class="swipe-quote-cue" :class="{ visible: swipeOffset > 0, ready: swipeQuoteReady }" aria-hidden="true">
+        <Quote :size="16" />
+      </span>
       <div
         class="bubble-stack"
+        :class="{ swiping: swipeOffset > 0, 'quote-ready': swipeQuoteReady }"
+        :style="swipeStyle"
+        @click.capture="suppressClickAfterSwipe"
         @click="handleBubbleClick"
         @contextmenu.prevent="emitLongPress"
-        @pointercancel="cancelLongPress"
-        @pointerdown="startLongPress"
-        @pointerleave="cancelLongPress"
-        @pointermove="trackPointerMove"
-        @pointerup="cancelLongPress"
+        @pointercancel="handlePointerCancel"
+        @pointerdown="handlePointerDown"
+        @pointerleave="handlePointerLeave"
+        @pointermove="handlePointerMove"
+        @pointerup="handlePointerUp"
       >
         <div class="bubble" :class="{ narration: message.displayStyle === 'narration', sticker: message.sticker, image: message.image, voice: message.voice, location: message.location, transfer: message.transfer, offlineInvitation: message.offlineInvitation }" :style="bubbleStyle">
           <template v-if="message.sticker">
@@ -164,7 +170,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { DoorOpen, LoaderCircle, MapPin, Pause, Play, X } from 'lucide-vue-next';
+import { DoorOpen, LoaderCircle, MapPin, Pause, Play, Quote, X } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
 import type { CharacterProfile, ChatAppearanceSettings, ChatImageCandidate, ChatMessage, UserProfile } from '@/types/domain';
 import { useAppStore } from '@/stores/appStore';
@@ -185,9 +191,11 @@ const props = withDefaults(defineProps<{
   regeneratingImage?: boolean;
   selectionMode?: boolean;
   selected?: boolean;
+  canQuote?: boolean;
 }>(), {
   appearance: () => defaultConversationSettings.appearance,
   canRegenerateImage: false,
+  canQuote: false,
   hideAvatar: false,
   profileAlert: false,
   regeneratingImage: false,
@@ -204,6 +212,7 @@ const emit = defineEmits<{
   'apply-image': [messageId: string, candidateId: string];
   'busy-action': [message: string, title: string];
   'open-card-detail': [message: ChatMessage];
+  'quote-message': [message: ChatMessage];
   'accept-offline-invitation': [];
   'reject-offline-invitation': [];
 }>();
@@ -213,6 +222,9 @@ const store = useAppStore();
 let longPressTimer: number | undefined;
 let longPressStart: { x: number; y: number } | null = null;
 let longPressTriggered = false;
+let swipeStart: { x: number; y: number; pointerId: number } | null = null;
+let swipeTracking = false;
+let suppressNextClick = false;
 const showImageModal = ref(false);
 const imageFlipped = ref(false);
 const imageDescriptionDraft = ref('');
@@ -221,7 +233,11 @@ const brokenImageSources = ref<string[]>([]);
 const playingVoice = ref(false);
 const showVoiceTranscript = ref(true);
 const voiceLoading = ref(false);
+const swipeOffset = ref(0);
 let activeVoiceAudio: HTMLAudioElement | null = null;
+
+const swipeTriggerDistance = 54;
+const swipeMaxDistance = 74;
 
 function extractJsonContent(content: string) {
   const trimmed = content.trim();
@@ -461,6 +477,10 @@ const statusLabel = computed(() => ({
   sent: '已读',
   failed: '未送达'
 }[props.message.status ?? 'sent']));
+const swipeQuoteReady = computed(() => swipeOffset.value >= swipeTriggerDistance);
+const swipeStyle = computed(() => ({
+  '--swipe-quote-offset': `${0 - swipeOffset.value}px`
+}));
 
 function clearLongPressTimer() {
   if (longPressTimer === undefined) return;
@@ -488,6 +508,97 @@ function trackPointerMove(event: PointerEvent) {
 function cancelLongPress() {
   clearLongPressTimer();
   longPressStart = null;
+}
+
+function resetSwipe() {
+  swipeStart = null;
+  swipeTracking = false;
+  swipeOffset.value = 0;
+}
+
+function canStartSwipe(event: PointerEvent) {
+  return props.canQuote && !props.selectionMode && event.button === 0 && event.isPrimary !== false;
+}
+
+function handlePointerDown(event: PointerEvent) {
+  if (canStartSwipe(event)) {
+    swipeStart = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+    swipeTracking = false;
+    swipeOffset.value = 0;
+  }
+  startLongPress(event);
+}
+
+function handlePointerMove(event: PointerEvent) {
+  if (!swipeStart || event.pointerId !== swipeStart.pointerId) {
+    trackPointerMove(event);
+    return;
+  }
+
+  const deltaX = event.clientX - swipeStart.x;
+  const deltaY = event.clientY - swipeStart.y;
+  const horizontalDistance = Math.abs(deltaX);
+  const verticalDistance = Math.abs(deltaY);
+
+  if (!swipeTracking) {
+    if (verticalDistance > 12 && verticalDistance > horizontalDistance) {
+      resetSwipe();
+      trackPointerMove(event);
+      return;
+    }
+    if (deltaX < -10 && horizontalDistance > verticalDistance * 1.15) {
+      swipeTracking = true;
+      clearLongPressTimer();
+    }
+  }
+
+  if (!swipeTracking) {
+    trackPointerMove(event);
+    return;
+  }
+
+  swipeOffset.value = Math.min(swipeMaxDistance, Math.max(0, 0 - deltaX));
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function handlePointerUp(event: PointerEvent) {
+  if (!swipeTracking) {
+    cancelLongPress();
+    resetSwipe();
+    return;
+  }
+
+  const shouldQuote = swipeQuoteReady.value;
+  event.preventDefault();
+  event.stopPropagation();
+  resetSwipe();
+  cancelLongPress();
+  if (!shouldQuote) return;
+  suppressNextClick = true;
+  emit('quote-message', props.message);
+  window.setTimeout(() => {
+    suppressNextClick = false;
+  }, 120);
+}
+
+function handlePointerCancel() {
+  cancelLongPress();
+  resetSwipe();
+}
+
+function handlePointerLeave() {
+  if (swipeTracking) return;
+  cancelLongPress();
+  resetSwipe();
+}
+
+function suppressClickAfterSwipe(event: MouseEvent) {
+  if (!suppressNextClick) return;
+  suppressNextClick = false;
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation?.();
 }
 
 function handleAvatarClick() {
@@ -756,6 +867,7 @@ onBeforeUnmount(stopVoicePlayback);
 }
 
 .bubble-wrap {
+  position: relative;
   display: flex;
   align-items: flex-end;
   gap: 5px;
@@ -777,6 +889,42 @@ onBeforeUnmount(stopVoicePlayback);
   cursor: default;
   touch-action: pan-y;
   user-select: text;
+  transform: translate3d(var(--swipe-quote-offset, 0), 0, 0);
+  transition: transform 0.18s ease;
+}
+
+.bubble-stack.swiping {
+  user-select: none;
+  transition: none;
+}
+
+.swipe-quote-cue {
+  position: absolute;
+  right: -34px;
+  top: 50%;
+  z-index: 0;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  color: #7a828b;
+  opacity: 0;
+  transform: translate3d(-8px, -50%, 0) scale(0.88);
+  transition: opacity 0.16s ease, transform 0.16s ease, color 0.16s ease;
+  pointer-events: none;
+  box-shadow: 0 6px 18px rgba(17, 20, 24, 0.12);
+}
+
+.swipe-quote-cue.visible,
+.swipe-quote-cue.ready {
+  opacity: 1;
+  transform: translate3d(0, -50%, 0) scale(1);
+}
+
+.swipe-quote-cue.ready {
+  color: var(--link-green);
 }
 
 .message-row.user .bubble-stack {

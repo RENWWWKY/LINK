@@ -36,6 +36,7 @@
     </button>
     <label class="composer-input">
       <input
+        ref="inputRef"
         v-model="text"
         :placeholder="placeholder"
         :disabled="effectiveInputDisabled"
@@ -93,6 +94,7 @@ const emit = defineEmits<{
 
 const text = ref('');
 const inputFocused = ref(false);
+const inputRef = ref<HTMLInputElement | null>(null);
 const cameraInputRef = ref<HTMLInputElement | null>(null);
 let blurTimer: number | undefined;
 const effectiveInputDisabled = computed(() => props.inputDisabled ?? props.disabled ?? false);
@@ -115,6 +117,23 @@ function clearBlurTimer() {
 
 function keepTextMode() {
   clearBlurTimer();
+}
+
+function focusInput() {
+  if (effectiveInputDisabled.value) return;
+  clearBlurTimer();
+  inputFocused.value = true;
+  const input = inputRef.value;
+  if (!input) return;
+  try {
+    input.focus({ preventScroll: true });
+  } catch {
+    input.focus();
+  }
+  const cursorPosition = input.value.length;
+  try {
+    input.setSelectionRange(cursorPosition, cursorPosition);
+  } catch {}
 }
 
 function handleFocus() {
@@ -175,6 +194,8 @@ function handleCameraFile(event: Event) {
 watch(text, (value) => emit('draft-text', value));
 
 onBeforeUnmount(clearBlurTimer);
+
+defineExpose({ focusInput });
 </script>
 
 <style scoped>

@@ -23,6 +23,7 @@
         :regenerating-image="regeneratingChatImageMessageIds.includes(message.id)"
         :selection-mode="selectionMode"
         :selected="isMessageSelected(message)"
+        :can-quote="canQuoteMessage(message)"
         @apply-image="applyChatImageCandidate"
         @accept-offline-invitation="acceptOfflineInvitation(message)"
         @busy-action="store.showConfigAlert"
@@ -30,6 +31,7 @@
         @open-card-detail="openCardDetail"
         @open-profile="openCharacterProfile"
         @open-user-profile="openUserProfile"
+        @quote-message="quoteMessage"
         @regenerate-image="regenerateChatImage"
         @reject-offline-invitation="rejectOfflineInvitation(message)"
         @toggle-select="toggleMessageSelection(message)"
@@ -52,6 +54,7 @@
     </section>
 
     <MessageComposer
+      ref="composerRef"
       :can-send-reply="true"
       :disabled="currentConversationReplying"
       :input-disabled="false"
@@ -540,6 +543,10 @@ type SpeechRecognitionWindow = Window & {
   webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
 };
 
+type MessageComposerExpose = {
+  focusInput: () => void;
+};
+
 const voiceTranscriptLimit = 500;
 
 const props = defineProps<{
@@ -572,6 +579,7 @@ const clearingHistory = ref(false);
 const regeneratingChatImageMessageIds = ref<string[]>([]);
 const regeneratingVoiceMessageIds = ref<string[]>([]);
 const messageListRef = ref<HTMLElement | null>(null);
+const composerRef = ref<MessageComposerExpose | null>(null);
 const localImageInputRef = ref<HTMLInputElement | null>(null);
 const activeMessage = ref<ChatMessage | null>(null);
 const activeCardDetailMessageId = ref('');
@@ -680,7 +688,7 @@ const hasUnreadMindState = computed(() => Boolean(character.value?.mindState?.li
   && character.value.mindState.updatedAt > character.value.mindState.readAt));
 const activeMessageIsSynthetic = computed(() => Boolean(activeMessage.value?.id.includes('__')));
 const canRecallActiveMessage = computed(() => Boolean(activeMessage.value && activeMessage.value.sender === 'user' && !activeMessageIsSynthetic.value));
-const canQuoteActiveMessage = computed(() => Boolean(activeMessage.value && activeMessage.value.sender === 'char' && !activeMessageIsSynthetic.value));
+const canQuoteActiveMessage = computed(() => Boolean(activeMessage.value && canQuoteMessage(activeMessage.value)));
 const canEditActiveMessage = computed(() => Boolean(activeMessage.value && !activeMessageIsSynthetic.value));
 const canRegenerateActiveVoice = computed(() => Boolean(activeMessage.value?.sender === 'char'
   && activeMessage.value.voice?.transcript.trim()
@@ -740,6 +748,19 @@ function scrollMessagesToBottomNow() {
   const messageList = messageListRef.value;
   if (!messageList) return;
   messageList.scrollTop = messageList.scrollHeight;
+}
+
+function focusComposerInput() {
+  captureKeyboardScrollAnchor();
+  composerRef.value?.focusInput();
+  void nextTick(() => {
+    composerRef.value?.focusInput();
+    queueMessagesToBottomAfterLayout();
+  });
+  window.setTimeout(() => {
+    composerRef.value?.focusInput();
+    queueMessagesToBottomAfterLayout();
+  }, 80);
 }
 
 function queueMessagesToBottomAfterLayout() {
@@ -1389,6 +1410,18 @@ function messageActionText(message: ChatMessage) {
   return message.content;
 }
 
+function canQuoteMessage(message: ChatMessage) {
+  return message.sender === 'char' && !message.id.includes('__') && Boolean(store.createMessageQuoteSnapshot(message));
+}
+
+function quoteMessage(message: ChatMessage) {
+  if (!canQuoteMessage(message)) return;
+  const quote = store.createMessageQuoteSnapshot(message);
+  if (!quote) return;
+  quoteTarget.value = quote;
+  focusComposerInput();
+}
+
 function detailLocationDistanceLabel(message: ChatMessage) {
   return message.sender === 'user'
     ? `距离对方 ${message.location?.distance ?? ''}`
@@ -1531,8 +1564,8 @@ async function recallActiveMessage() {
 function quoteActiveMessage() {
   const message = activeMessage.value;
   if (!message || !canQuoteActiveMessage.value) return;
-  quoteTarget.value = store.createMessageQuoteSnapshot(message);
   showMessageMenu.value = false;
+  quoteMessage(message);
 }
 
 async function regenerateActiveVoice() {
