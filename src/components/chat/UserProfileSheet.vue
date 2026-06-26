@@ -233,7 +233,7 @@ function saveEditor() {
   const profile = visualProfile.value;
   const nextPosts = Number.parseInt(editorForm.posts, 10);
   const nextNickname = editorForm.nickname.trim() || props.user.nickname || props.user.name;
-  const nextCardAvatar = editorForm.avatar.trim() || profile.avatar || props.user.avatar;
+  const nextProfileAvatar = editorForm.avatar.trim() || profile.avatar || props.user.avatar;
   const nextSignature = editorForm.signature.trim() || props.user.signature || profile.bio;
 
   emit('save', {
@@ -243,7 +243,7 @@ function saveEditor() {
     profile: normalizeVisualProfile({
       ...profile,
       nickname: nextNickname,
-      avatar: nextCardAvatar,
+      avatar: nextProfileAvatar,
       bio: nextSignature,
       backgroundImage: editorForm.backgroundImage.trim() || profile.backgroundImage,
       textColor: editorForm.textColor.trim() || profile.textColor,
@@ -260,7 +260,7 @@ function saveEditor() {
     }, {
       ...props.user,
       nickname: nextNickname,
-      avatar: nextCardAvatar,
+      avatar: props.user.avatar,
       signature: nextSignature
     })
   });

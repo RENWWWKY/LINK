@@ -501,7 +501,7 @@ import { useAppStore } from '@/stores/appStore';
 import type { CharacterProfile, ChatAppearanceSettings, ConversationMemoryRecord, ConversationSettings } from '@/types/domain';
 import { readImageFileFromInput } from '@/utils/imageFile';
 import { estimateTokenCount, getConversationFloorCount, getEffectiveHiddenFloorRanges, getMemoryHiddenEndFloor, normalizeConversationSettings } from '@/utils/memory';
-import { defaultProfileAvatar } from '@/utils/profile';
+import { defaultProfileAvatar, getVisualProfile } from '@/utils/profile';
 import { normalizeChatModelOverrides } from '@/utils/settings';
 import { normalizeVoomFrequency, voomFrequencyOptions } from '@/utils/voom';
 
@@ -554,7 +554,7 @@ const mergeDisabled = computed(() => hasMergedSummary.value || memories.value.fi
 const mergeableMemories = computed(() => memories.value.filter((memory) => !memory.isMergedSummary));
 const mergedMemories = computed(() => memories.value.filter((memory) => memory.isMergedSummary));
 const characterDraftNickname = computed(() => characterDraft.nickname || 'new.friend');
-const userAvatarPreview = computed(() => store.user?.avatar || defaultProfileAvatar);
+const userAvatarPreview = computed(() => getVisualProfile(store.user)?.avatar || store.user?.avatar || defaultProfileAvatar);
 const userAvatarAlt = computed(() => store.user?.nickname || store.user?.name || '我');
 const backgroundImageOptions = computed(() => draft.appearance.backgroundImages);
 const localWorldBooks = computed(() => store.worldBooks.filter((book) => book.scope === 'local'));

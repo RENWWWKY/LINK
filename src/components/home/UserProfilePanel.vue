@@ -1,17 +1,17 @@
 <template>
-  <button class="profile-panel" v-if="user && visualProfile" type="button" aria-label="打开个人资料" @click="emit('open')">
+  <button class="profile-panel" v-if="user" type="button" aria-label="打开个人资料" @click="emit('open')">
     <div>
       <h1>{{ user.nickname }}</h1>
       <p>{{ user.signature }}</p>
     </div>
-    <img class="profile-avatar" :src="visualProfile.avatar" :alt="visualProfile.nickname" />
+    <img class="profile-avatar" :src="accountAvatar" :alt="user.nickname || user.name" />
   </button>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { UserProfile } from '@/types/domain';
-import { getVisualProfile } from '@/utils/profile';
+import { defaultProfileAvatar } from '@/utils/profile';
 
 const props = defineProps<{
   user: UserProfile | null;
@@ -21,7 +21,7 @@ const emit = defineEmits<{
   open: [];
 }>();
 
-const visualProfile = computed(() => getVisualProfile(props.user));
+const accountAvatar = computed(() => props.user?.avatar || defaultProfileAvatar);
 </script>
 
 <style scoped>
