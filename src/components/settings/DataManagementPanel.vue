@@ -9,6 +9,11 @@
       <strong>{{ totalDataSizeLabel }}</strong>
     </section>
 
+    <p v-if="dataBusy" class="busy-notice" role="status" aria-live="polite">
+      <span class="busy-spinner" aria-hidden="true"></span>
+      <span>{{ dataBusyLabel }}</span>
+    </p>
+
     <section class="storage-band">
       <header class="section-head">
         <div>
@@ -40,8 +45,9 @@
 
       <div class="cleanup-grid">
         <button v-for="action in cleanupActions" :key="action.id" class="cleanup-action" type="button" :disabled="Boolean(dataBusy)" @click="runCleanupAction(action.id)">
-          <component :is="action.icon" :size="15" />
-          <span>{{ action.label }}</span>
+          <span v-if="dataBusy === action.id" class="button-spinner" aria-hidden="true"></span>
+          <component v-else :is="action.icon" :size="15" />
+          <span>{{ dataBusy === action.id ? '清理中' : action.label }}</span>
           <small>{{ formatBytes(store.estimateCleanupFreedBytes(action.id)) }}</small>
         </button>
       </div>
@@ -63,8 +69,9 @@
       </label>
 
       <button class="danger-action" type="button" :disabled="Boolean(dataBusy) || !selectedClearSections.length" @click="clearSelectedDataSections">
-        <Trash2 :size="15" />
-        <span>清理所选数据</span>
+        <span v-if="dataBusy === 'clear'" class="button-spinner light" aria-hidden="true"></span>
+        <Trash2 v-else :size="15" />
+        <span>{{ dataBusy === 'clear' ? '清理中' : '清理所选数据' }}</span>
       </button>
     </section>
 
@@ -73,12 +80,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import { ImageOff, MessageSquareX, MicOff, Sparkles, Trash2, WandSparkles } from 'lucide-vue-next';
 import { useAppStore, type ClearableDataSection, type DataCleanupAction } from '@/stores/appStore';
 
 const store = useAppStore();
-const dataBusy = ref('');
+const dataBusy = ref<DataCleanupAction | 'clear' | ''>('');
 const dataFeedback = ref('');
 const dataFeedbackKind = ref<'success' | 'error'>('success');
 const selectedClearSections = ref<ClearableDataSection[]>([]);
@@ -95,10 +102,20 @@ const cleanupActions: Array<{ id: DataCleanupAction; label: string; icon: typeof
   { id: 'voice-audio', label: '语音音频缓存', icon: MicOff },
   { id: 'memory-vectors', label: '记忆向量缓存', icon: Trash2 }
 ];
+const dataBusyLabel = computed(() => {
+  if (dataBusy.value === 'clear') return '正在清理所选分区，数据较多时可能需要一点时间，请稍候。';
+  const action = cleanupActions.find((item) => item.id === dataBusy.value);
+  return action ? `正在清理${action.label}，请稍候。` : '正在处理本地数据，请稍候。';
+});
 
 function setDataFeedback(message: string, kind: 'success' | 'error' = 'success') {
   dataFeedback.value = message;
   dataFeedbackKind.value = kind;
+}
+
+async function waitForBusyPaint() {
+  await nextTick();
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
 }
 
 function formatBytes(bytes: number) {
@@ -132,6 +149,7 @@ async function runCleanupAction(action: DataCleanupAction) {
 
   dataBusy.value = action;
   dataFeedback.value = '';
+  await waitForBusyPaint();
 
   try {
     const changed = await store.cleanupData(action);
@@ -153,6 +171,7 @@ async function clearSelectedDataSections() {
 
   dataBusy.value = 'clear';
   dataFeedback.value = '';
+  await waitForBusyPaint();
   try {
     const changed = await store.clearDataSections(selectedClearSections.value);
     selectedClearSections.value = [];
@@ -232,6 +251,43 @@ async function clearSelectedDataSections() {
 
 .cleanup-band {
   background: linear-gradient(180deg, #f8faf9, #edf4f1);
+}
+
+.busy-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #ecf8f1;
+  color: #116237;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.busy-spinner,
+.button-spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(17, 98, 55, 0.22);
+  border-top-color: #116237;
+  border-radius: 999px;
+  animation: data-spin 0.72s linear infinite;
+}
+
+.button-spinner.light {
+  border-color: rgba(255, 255, 255, 0.38);
+  border-top-color: #ffffff;
+}
+
+@keyframes data-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .clear-band {

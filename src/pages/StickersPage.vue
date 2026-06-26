@@ -9,6 +9,9 @@
         <button class="stickers-action-button" type="button" aria-label="导入 Stickers" @click="openImportModal">
           <Plus :size="20" stroke-width="2.4" />
         </button>
+        <button class="stickers-action-button" type="button" aria-label="维护 Stickers" @click="openMaintenanceModal">
+          <Settings2 :size="19" stroke-width="2.3" />
+        </button>
         <button class="stickers-action-button" type="button" aria-label="管理 Stickers" @click="openManagePage">
           <PencilLine :size="19" stroke-width="2.3" />
         </button>
@@ -47,18 +50,84 @@
       @create-group="createImportGroup"
       @submit="submitImport"
     />
+
+    <AppModal :model-value="showMaintenanceModal" title="Stickers 维护" :show-header="false" variant="ins" @update:model-value="showMaintenanceModal = $event">
+      <section class="maintenance-modal">
+        <div class="modal-head">
+          <div>
+            <p class="modal-kicker">Sticker Maintenance</p>
+            <h3>检查并确认要删除的贴纸</h3>
+          </div>
+          <span class="mode-badge">{{ activeMaintenanceTab === 'invalid' ? '失效清理' : '去重检查' }}</span>
+        </div>
+
+        <nav class="tab-row" aria-label="Stickers 维护方式">
+          <button class="tab-pill" :class="{ active: activeMaintenanceTab === 'invalid' }" type="button" @click="setMaintenanceTab('invalid')">失效清理</button>
+          <button class="tab-pill" :class="{ active: activeMaintenanceTab === 'dedupe' }" type="button" @click="setMaintenanceTab('dedupe')">去重检查</button>
+        </nav>
+
+        <section class="maintenance-action-card">
+          <div>
+            <h4>{{ activeMaintenanceTab === 'invalid' ? '清理失效 Stickers' : '检查重复 Stickers' }}</h4>
+            <p>{{ activeMaintenanceCopy }}</p>
+          </div>
+          <button class="scan-button" type="button" :disabled="Boolean(maintenanceBusy) || !store.sortedStickers.length" @click="scanActiveMaintenanceTab">
+            <LoaderCircle v-if="isScanningActiveTab" :size="16" class="spin" />
+            <ScanSearch v-else-if="activeMaintenanceTab === 'invalid'" :size="16" />
+            <Layers2 v-else :size="16" />
+            <span>{{ activeScanButtonLabel }}</span>
+          </button>
+        </section>
+
+        <section v-if="activeMaintenanceCandidates.length" class="maintenance-results">
+          <div class="results-head">
+            <strong>将删除 {{ activeMaintenanceCandidates.length }} 个 Stickers</strong>
+            <span>{{ activeMaintenanceTab === 'invalid' ? '失效项' : '重复项' }}</span>
+          </div>
+          <article v-for="item in activeMaintenanceCandidates" :key="item.sticker.id" class="candidate-row">
+            <img :src="item.sticker.imageUrl" :alt="item.sticker.description || 'Sticker'" />
+            <div>
+              <strong>{{ item.sticker.description || '未命名 Sticker' }}</strong>
+              <span>{{ item.reason }}</span>
+              <small v-if="item.keeper">保留：{{ item.keeper.description || '未命名 Sticker' }}</small>
+              <small>{{ item.sticker.imageUrl || '无图片链接' }}</small>
+            </div>
+          </article>
+        </section>
+
+        <p v-if="maintenanceFeedback" class="feedback">{{ maintenanceFeedback }}</p>
+
+        <div class="modal-actions">
+          <button class="secondary-ghost" type="button" :disabled="maintenanceBusy === 'delete'" @click="closeMaintenanceModal">取消</button>
+          <button class="save-button danger-save" type="button" :disabled="!activeMaintenanceCandidates.length || Boolean(maintenanceBusy)" @click="deleteActiveMaintenanceCandidates">
+            <Trash2 :size="15" />
+            <span>{{ maintenanceBusy === 'delete' ? '删除中' : '删除这些' }}</span>
+          </button>
+        </div>
+      </section>
+    </AppModal>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { PencilLine, Plus } from 'lucide-vue-next';
+import { Layers2, LoaderCircle, PencilLine, Plus, ScanSearch, Settings2, Trash2 } from 'lucide-vue-next';
+import AppModal from '@/components/common/AppModal.vue';
 import StickerImportModal, { type StickerImportTab } from '@/components/stickers/StickerImportModal.vue';
 import StickerLibraryPanel from '@/components/stickers/StickerLibraryPanel.vue';
 import { useAppStore } from '@/stores/appStore';
-import type { StickerSourceType } from '@/types/domain';
+import type { Sticker, StickerSourceType } from '@/types/domain';
 import { RECENT_STICKER_GROUP_ID, createImageFileStickerDraft, parseStickerImportText, readStickerImportFile, type StickerImportDraft } from '@/utils/stickers';
+
+type MaintenanceTab = 'invalid' | 'dedupe';
+type MaintenanceBusy = 'invalid' | 'dedupe' | 'delete';
+
+interface MaintenanceCandidate {
+  sticker: Sticker;
+  reason: string;
+  keeper?: Sticker;
+}
 
 const router = useRouter();
 const store = useAppStore();
@@ -71,11 +140,33 @@ const selectedFiles = ref<File[]>([]);
 const importNewGroupName = ref('');
 const importFeedback = ref('');
 const importing = ref(false);
+const showMaintenanceModal = ref(false);
+const activeMaintenanceTab = ref<MaintenanceTab>('invalid');
+const maintenanceBusy = ref<MaintenanceBusy | null>(null);
+const maintenanceFeedback = ref('');
+const invalidScanProgress = ref({ checked: 0, total: 0 });
+const invalidStickerCandidates = ref<MaintenanceCandidate[]>([]);
+const duplicateStickerCandidates = ref<MaintenanceCandidate[]>([]);
+const duplicateKeeperUpdates = ref<Sticker[]>([]);
 
 const groups = computed(() => store.sortedStickerGroups ?? []);
 const importDisabled = computed(() => {
   if (importing.value || !importTargetGroupId.value) return true;
   return importTab.value === 'url' ? !importText.value.trim() : !selectedFiles.value.length;
+});
+const activeMaintenanceCandidates = computed(() => activeMaintenanceTab.value === 'invalid' ? invalidStickerCandidates.value : duplicateStickerCandidates.value);
+const isScanningActiveTab = computed(() => maintenanceBusy.value === activeMaintenanceTab.value);
+const activeScanButtonLabel = computed(() => {
+  if (maintenanceBusy.value === 'invalid') return '扫描中';
+  if (maintenanceBusy.value === 'dedupe') return '检查中';
+  return activeMaintenanceTab.value === 'invalid' ? '扫描失效' : '扫描重复';
+});
+const activeMaintenanceCopy = computed(() => {
+  if (maintenanceBusy.value === 'invalid') return `正在检查 ${invalidScanProgress.value.checked} / ${invalidScanProgress.value.total} 个贴纸图片。`;
+  if (maintenanceBusy.value === 'dedupe') return `正在比对 ${invalidScanProgress.value.checked} / ${invalidScanProgress.value.total} 个贴纸的 URL 和图片内容。`;
+  if (!store.sortedStickers.length) return '当前没有可维护的贴纸。';
+  if (activeMaintenanceTab.value === 'invalid') return invalidStickerCandidates.value.length ? '已列出将删除的失效贴纸，确认后才会删除。' : '扫描无法加载、空描述或空图片链接的贴纸，先列出结果再确认删除。';
+  return duplicateStickerCandidates.value.length ? '已列出将删除的重复贴纸，确认后才会删除。' : '检查 URL 完全相同，或可读取图片内容完全相同的贴纸。';
 });
 
 onMounted(() => {
@@ -108,12 +199,204 @@ function resetImportState() {
 function openImportModal() {
   importTab.value = 'url';
   resetImportState();
+  showMaintenanceModal.value = false;
   showImportModal.value = true;
+}
+
+function openMaintenanceModal() {
+  showImportModal.value = false;
+  maintenanceFeedback.value = '';
+  invalidScanProgress.value = { checked: 0, total: 0 };
+  showMaintenanceModal.value = true;
+}
+
+function closeMaintenanceModal() {
+  if (maintenanceBusy.value) return;
+  showMaintenanceModal.value = false;
+}
+
+function setMaintenanceTab(tab: MaintenanceTab) {
+  if (maintenanceBusy.value) return;
+  activeMaintenanceTab.value = tab;
+  maintenanceFeedback.value = '';
 }
 
 function openManagePage() {
   showImportModal.value = false;
+  showMaintenanceModal.value = false;
   void router.push({ name: 'stickers-manage' });
+}
+
+function isRemoteImageUrl(value: string) {
+  return /^https?:\/\//i.test(value.trim());
+}
+
+function createHashDownloadUrl(imageUrl: string) {
+  return import.meta.env.DEV && isRemoteImageUrl(imageUrl)
+    ? `/__image-download?url=${encodeURIComponent(imageUrl)}`
+    : imageUrl;
+}
+
+function bytesToHex(buffer: ArrayBuffer) {
+  return [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function hashStickerImage(sticker: Sticker) {
+  const imageUrl = sticker.imageUrl.trim();
+  if (!imageUrl) return '';
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 5500);
+  try {
+    const response = await fetch(createHashDownloadUrl(imageUrl), {
+      headers: { Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' },
+      signal: controller.signal
+    });
+    if (!response.ok) return '';
+    const contentType = response.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
+    const imageBytes = await response.arrayBuffer();
+    if (!imageBytes.byteLength) return '';
+    const mimeKey = contentType.startsWith('image/') ? contentType : 'image/unknown';
+    const digest = await crypto.subtle.digest('SHA-256', imageBytes);
+    return `${mimeKey}:${bytesToHex(digest)}`;
+  } catch {
+    return '';
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function validateStickerImage(sticker: Sticker) {
+  const imageUrl = sticker.imageUrl.trim();
+  if (!sticker.description.trim()) return Promise.resolve({ valid: false, reason: '缺少描述' });
+  if (!imageUrl) return Promise.resolve({ valid: false, reason: '缺少图片链接' });
+  return new Promise<{ valid: boolean; reason: string }>((resolve) => {
+    const image = new Image();
+    let settled = false;
+    const finish = (valid: boolean, reason = '') => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve({ valid, reason });
+    };
+    const timer = window.setTimeout(() => finish(false, '图片加载超时'), 5500);
+    image.onload = () => finish(Boolean(image.naturalWidth && image.naturalHeight), image.naturalWidth && image.naturalHeight ? '' : '图片尺寸异常');
+    image.onerror = () => finish(false, '图片无法加载');
+    image.src = imageUrl;
+  });
+}
+
+async function scanInvalidStickers() {
+  if (maintenanceBusy.value || !store.sortedStickers.length) return;
+  maintenanceBusy.value = 'invalid';
+  maintenanceFeedback.value = '';
+  const sourceStickers = [...store.sortedStickers];
+  const candidates: MaintenanceCandidate[] = [];
+  let nextStickerIndex = 0;
+  invalidScanProgress.value = { checked: 0, total: sourceStickers.length };
+  try {
+    const scanSticker = async () => {
+      while (nextStickerIndex < sourceStickers.length) {
+        const sticker = sourceStickers[nextStickerIndex];
+        nextStickerIndex += 1;
+        const { valid, reason } = await validateStickerImage(sticker);
+        invalidScanProgress.value = { ...invalidScanProgress.value, checked: invalidScanProgress.value.checked + 1 };
+        if (!valid) candidates.push({ sticker, reason });
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(6, sourceStickers.length) }, scanSticker));
+    invalidStickerCandidates.value = candidates;
+    maintenanceFeedback.value = candidates.length ? `发现 ${candidates.length} 个失效 Stickers，请确认后删除。` : '没有发现失效 Stickers。';
+  } catch (error) {
+    maintenanceFeedback.value = error instanceof Error ? error.message : '扫描失败，请重试。';
+  } finally {
+    maintenanceBusy.value = null;
+  }
+}
+
+function buildDuplicateKeeperUpdates(candidates: MaintenanceCandidate[]) {
+  const updates = new Map<string, Sticker>();
+  for (const candidate of candidates) {
+    if (!candidate.keeper) continue;
+    const existingKeeper = updates.get(candidate.keeper.id) ?? candidate.keeper;
+    const mergedGroupIds = [...new Set([...existingKeeper.groupIds, ...candidate.sticker.groupIds].filter(Boolean))];
+    const mergedLastUsedAt = Math.max(existingKeeper.lastUsedAt ?? 0, candidate.sticker.lastUsedAt ?? 0) || undefined;
+    updates.set(existingKeeper.id, {
+      ...existingKeeper,
+      groupIds: mergedGroupIds,
+      lastUsedAt: mergedLastUsedAt
+    });
+  }
+  return [...updates.values()];
+}
+
+async function scanDuplicateStickers() {
+  if (maintenanceBusy.value || !store.sortedStickers.length) return;
+  maintenanceBusy.value = 'dedupe';
+  maintenanceFeedback.value = '';
+  const sourceStickers = [...store.sortedStickers];
+  const candidates: MaintenanceCandidate[] = [];
+  const candidateIds = new Set<string>();
+  const stickersByUrl = new Map<string, Sticker>();
+  const stickersByHash = new Map<string, Sticker>();
+  invalidScanProgress.value = { checked: 0, total: sourceStickers.length };
+  try {
+    for (const sticker of sourceStickers) {
+      const imageUrl = sticker.imageUrl.trim();
+      const sameUrlKeeper = imageUrl ? stickersByUrl.get(imageUrl) : undefined;
+      if (sameUrlKeeper) {
+        candidates.push({ sticker, keeper: sameUrlKeeper, reason: 'URL 完全相同' });
+        candidateIds.add(sticker.id);
+        invalidScanProgress.value = { ...invalidScanProgress.value, checked: invalidScanProgress.value.checked + 1 };
+        continue;
+      }
+      if (imageUrl) stickersByUrl.set(imageUrl, sticker);
+
+      const imageHash = await hashStickerImage(sticker);
+      const sameImageKeeper = imageHash ? stickersByHash.get(imageHash) : undefined;
+      if (sameImageKeeper && !candidateIds.has(sticker.id)) {
+        candidates.push({ sticker, keeper: sameImageKeeper, reason: '图片内容完全相同' });
+        candidateIds.add(sticker.id);
+      } else if (imageHash) {
+        stickersByHash.set(imageHash, sticker);
+      }
+      invalidScanProgress.value = { ...invalidScanProgress.value, checked: invalidScanProgress.value.checked + 1 };
+    }
+    duplicateStickerCandidates.value = candidates;
+    duplicateKeeperUpdates.value = buildDuplicateKeeperUpdates(candidates);
+    maintenanceFeedback.value = candidates.length ? `发现 ${candidates.length} 个重复 Stickers，请确认后删除。` : '没有发现重复 Stickers。';
+  } catch (error) {
+    maintenanceFeedback.value = error instanceof Error ? error.message : '检查失败，请重试。';
+  } finally {
+    maintenanceBusy.value = null;
+  }
+}
+
+function scanActiveMaintenanceTab() {
+  if (activeMaintenanceTab.value === 'invalid') void scanInvalidStickers();
+  else void scanDuplicateStickers();
+}
+
+async function deleteActiveMaintenanceCandidates() {
+  if (maintenanceBusy.value || !activeMaintenanceCandidates.value.length) return;
+  maintenanceBusy.value = 'delete';
+  maintenanceFeedback.value = '';
+  const candidates = [...activeMaintenanceCandidates.value];
+  try {
+    if (activeMaintenanceTab.value === 'dedupe') {
+      await Promise.all(duplicateKeeperUpdates.value.map((sticker) => store.saveSticker(sticker)));
+    }
+    const removedCount = await store.deleteStickers(candidates.map((candidate) => candidate.sticker.id));
+    if (activeMaintenanceTab.value === 'invalid') invalidStickerCandidates.value = [];
+    else {
+      duplicateStickerCandidates.value = [];
+      duplicateKeeperUpdates.value = [];
+    }
+    maintenanceFeedback.value = removedCount ? `已删除 ${removedCount} 个 Stickers。` : '没有删除任何 Stickers。';
+  } catch (error) {
+    maintenanceFeedback.value = error instanceof Error ? error.message : '删除失败，请重试。';
+  } finally {
+    maintenanceBusy.value = null;
+  }
 }
 
 function goBack() {
@@ -315,6 +598,188 @@ async function createImportGroup() {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(249, 250, 252, 0.84));
 }
 
+.maintenance-modal {
+  display: grid;
+  gap: 12px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.modal-kicker {
+  margin: 0;
+  color: #8f8790;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.modal-head h3 {
+  margin: 4px 0 0;
+  color: #2a242c;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.mode-badge {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(17, 17, 17, 0.08);
+  color: #2a242c;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.tab-row,
+.modal-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.tab-pill {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #6a636a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.tab-pill.active,
+.scan-button,
+.save-button {
+  background: #111111;
+  color: #ffffff;
+}
+
+.maintenance-action-card,
+.maintenance-results {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.maintenance-action-card h4 {
+  margin: 0 0 5px;
+  color: #2a242c;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.maintenance-action-card p,
+.candidate-row span,
+.candidate-row small,
+.feedback {
+  margin: 0;
+  color: #6a636a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.scan-button,
+.secondary-ghost,
+.save-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.scan-button:disabled,
+.save-button:disabled,
+.secondary-ghost:disabled {
+  opacity: 0.4;
+}
+
+.results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.results-head strong,
+.candidate-row strong {
+  color: #2a242c;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.results-head span {
+  flex: 0 0 auto;
+  color: #8f8790;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.candidate-row {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 14px;
+  background: rgba(242, 243, 246, 0.72);
+}
+
+.candidate-row img {
+  width: 54px;
+  height: 54px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: rgba(17, 17, 17, 0.08);
+}
+
+.candidate-row div {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.candidate-row strong,
+.candidate-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.secondary-ghost {
+  background: rgba(17, 17, 17, 0.08);
+  color: #251f26;
+}
+
+.danger-save {
+  background: #111111;
+}
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 420px) {
   .stickers-main {
     padding-inline: 12px;
@@ -322,6 +787,10 @@ async function createImportGroup() {
 
   .stickers-panel {
     padding: 14px;
+  }
+
+  .scan-button {
+    width: 100%;
   }
 }
 </style>
