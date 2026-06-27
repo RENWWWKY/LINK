@@ -52,13 +52,17 @@ function normalizeCharacterProfileHistory(history: unknown): CharacterProfileHis
       const field = profileHistoryFields.has(record.field as CharacterProfileHistoryField) ? record.field as CharacterProfileHistoryField : null;
       const previousValue = String(record.previousValue ?? '').trim();
       const nextValue = String(record.nextValue ?? record.value ?? '').trim();
+      const sourceConversationId = String(record.sourceConversationId ?? '').trim();
+      const sourceReplyBatchId = String(record.sourceReplyBatchId ?? '').trim();
       if (!field || previousValue === nextValue) return null;
       return {
         id: String(record.id ?? '').trim() || `profile_history_${Math.random().toString(16).slice(2)}`,
         field,
         previousValue,
         nextValue,
-        createdAt: Number.isFinite(record.createdAt) ? Number(record.createdAt) : Date.now()
+        createdAt: Number.isFinite(record.createdAt) ? Number(record.createdAt) : Date.now(),
+        ...(sourceConversationId ? { sourceConversationId } : {}),
+        ...(sourceReplyBatchId ? { sourceReplyBatchId } : {})
       };
     })
     .filter((entry): entry is CharacterProfileHistoryEntry => Boolean(entry))
@@ -121,7 +125,8 @@ export function normalizeCharacterProfile(character: CharacterProfile, fallbackU
           lines: mindStateLines,
           updatedAt: Number.isFinite(character.mindState?.updatedAt) ? Number(character.mindState?.updatedAt) : Date.now(),
           readAt: Number.isFinite(character.mindState?.readAt) ? Number(character.mindState?.readAt) : 0,
-          sourceConversationId: String(character.mindState?.sourceConversationId ?? '').trim() || undefined
+          sourceConversationId: String(character.mindState?.sourceConversationId ?? '').trim() || undefined,
+          sourceReplyBatchId: String(character.mindState?.sourceReplyBatchId ?? '').trim() || undefined
         }
       : undefined
   };

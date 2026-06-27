@@ -173,9 +173,14 @@
                 <time>{{ item.time }}</time>
               </div>
               <div class="timeline-change">
-                <p>{{ item.previousValue || '空白' }}</p>
-                <b>→</b>
-                <p>{{ item.nextValue || '空白' }}</p>
+                <template v-if="item.field === 'mood'">
+                  <p>{{ item.nextValue || '空白' }}</p>
+                </template>
+                <template v-else>
+                  <p>{{ item.previousValue || '空白' }}</p>
+                  <b>→</b>
+                  <p>{{ item.nextValue || '空白' }}</p>
+                </template>
               </div>
             </div>
           </article>

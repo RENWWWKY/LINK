@@ -37,6 +37,11 @@ interface ConversationSummaryResult {
   status: ConversationSummaryResultStatus;
 }
 
+interface ProfileHistorySource {
+  sourceConversationId?: string;
+  sourceReplyBatchId?: string;
+}
+
 const memoryTimelineTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',
   month: '2-digit',
@@ -68,7 +73,7 @@ function getCharacterTrackedMood(character: CharacterProfile) {
   return normalizeCharacterMindStateLines(character.mindState?.lines).join('\n');
 }
 
-function createCharacterProfileHistoryEntries(previousCharacter: CharacterProfile, nextCharacter: CharacterProfile): CharacterProfileHistoryEntry[] {
+function createCharacterProfileHistoryEntries(previousCharacter: CharacterProfile, nextCharacter: CharacterProfile, source: ProfileHistorySource = {}): CharacterProfileHistoryEntry[] {
   const createdAt = Date.now();
   const changes: Array<{ field: CharacterProfileHistoryField; previousValue: string; nextValue: string }> = [
     { field: 'nickname', previousValue: previousCharacter.nickname, nextValue: nextCharacter.nickname },
@@ -85,7 +90,9 @@ function createCharacterProfileHistoryEntries(previousCharacter: CharacterProfil
       field: change.field,
       previousValue,
       nextValue,
-      createdAt
+      createdAt,
+      ...(source.sourceConversationId ? { sourceConversationId: source.sourceConversationId } : {}),
+      ...(source.sourceReplyBatchId ? { sourceReplyBatchId: source.sourceReplyBatchId } : {})
     }];
   });
 }
@@ -1214,14 +1221,14 @@ export const useAppStore = defineStore('app', () => {
     await saveUserProfile({ ...user.value, profile: normalizeVisualProfile(nextProfile, user.value) });
   }
 
-  async function saveCharacter(nextCharacter: CharacterProfile) {
+  async function saveCharacter(nextCharacter: CharacterProfile, options: { profileHistorySource?: ProfileHistorySource } = {}) {
     const existingCharacter = characters.value.find((character) => character.id === nextCharacter.id);
     const characterToNormalize = existingCharacter?.initialProfile && !nextCharacter.initialProfile
       ? { ...nextCharacter, initialProfile: existingCharacter.initialProfile }
       : nextCharacter;
     const normalizedCharacterBase = normalizeCharacterProfile(characterToNormalize, user.value?.id || users.value[0]?.id || '');
     const profileHistoryEntries = existingCharacter
-      ? createCharacterProfileHistoryEntries(existingCharacter, normalizedCharacterBase)
+      ? createCharacterProfileHistoryEntries(existingCharacter, normalizedCharacterBase, options.profileHistorySource)
       : [];
     const profileHistory = [
       ...(normalizedCharacterBase.profileHistory?.length ? normalizedCharacterBase.profileHistory : existingCharacter?.profileHistory ?? []),
@@ -1266,10 +1273,19 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  async function updateCharacterMindState(characterId: string, lines: unknown, conversationId: string) {
+  async function saveCharacterSnapshot(nextCharacter: CharacterProfile) {
+    const normalizedCharacter = normalizeCharacterProfile(nextCharacter, user.value?.id || users.value[0]?.id || '');
+    const index = characters.value.findIndex((character) => character.id === normalizedCharacter.id);
+    if (index >= 0) characters.value[index] = normalizedCharacter;
+    else characters.value.push(normalizedCharacter);
+    await putEntity('characters', normalizedCharacter);
+  }
+
+  async function updateCharacterMindState(characterId: string, lines: unknown, conversationId: string, options: { replyBatchId?: string } = {}) {
     const character = characterById(characterId);
     const mindStateLines = normalizeCharacterMindStateLines(lines);
     if (!character || !mindStateLines.length) return;
+    const sourceReplyBatchId = String(options.replyBatchId ?? '').trim();
 
     await saveCharacter({
       ...character,
@@ -1277,8 +1293,84 @@ export const useAppStore = defineStore('app', () => {
         lines: mindStateLines,
         updatedAt: Date.now(),
         readAt: character.mindState?.readAt ?? 0,
-        sourceConversationId: conversationId
+        sourceConversationId: conversationId,
+        sourceReplyBatchId: sourceReplyBatchId || undefined
       }
+    }, {
+      profileHistorySource: {
+        sourceConversationId: conversationId,
+        sourceReplyBatchId: sourceReplyBatchId || undefined
+      }
+    });
+  }
+
+  function findRegeneratedReplyMoodHistoryEntry(character: CharacterProfile, conversationId: string, messagesToRemove: ChatMessage[]) {
+    const moodEntries = (character.profileHistory ?? []).filter((entry) => entry.field === 'mood');
+    if (!moodEntries.length) return null;
+
+    const replyBatchIds = new Set(messagesToRemove
+      .map((message) => String(message.replyBatchId ?? '').trim())
+      .filter(Boolean));
+    const directEntry = [...moodEntries].reverse().find((entry) => {
+      const sourceConversationId = String(entry.sourceConversationId ?? '').trim();
+      const sourceReplyBatchId = String(entry.sourceReplyBatchId ?? '').trim();
+      return sourceReplyBatchId
+        && replyBatchIds.has(sourceReplyBatchId)
+        && (!sourceConversationId || sourceConversationId === conversationId);
+    });
+    if (directEntry) return directEntry;
+
+    const messageTimestamps = messagesToRemove
+      .map((message) => Number(message.createdAt))
+      .filter((timestamp) => Number.isFinite(timestamp));
+    const windowStart = messageTimestamps.length ? Math.min(...messageTimestamps) - 60_000 : Number.NEGATIVE_INFINITY;
+    const windowEnd = messageTimestamps.length ? Math.max(...messageTimestamps) + 60_000 : Number.POSITIVE_INFINITY;
+    const currentMood = getCharacterTrackedMood(character);
+
+    return [...moodEntries].reverse().find((entry) => {
+      const sourceConversationId = String(entry.sourceConversationId ?? '').trim();
+      const sourceReplyBatchId = String(entry.sourceReplyBatchId ?? '').trim();
+      if (sourceConversationId && sourceConversationId !== conversationId) return false;
+      if (sourceReplyBatchId && replyBatchIds.size && !replyBatchIds.has(sourceReplyBatchId)) return false;
+      if (entry.createdAt < windowStart || entry.createdAt > windowEnd) return false;
+      return !currentMood || normalizeCharacterMindStateLines(entry.nextValue).join('\n') === currentMood;
+    }) ?? null;
+  }
+
+  async function rollbackCharacterMoodForOnlineRegeneration(conversation: Conversation, messagesToRemove: ChatMessage[]) {
+    const character = characterById(conversation.charId);
+    if (!character?.profileHistory?.length) return;
+    const moodEntryToRemove = findRegeneratedReplyMoodHistoryEntry(character, conversation.id, messagesToRemove);
+    if (!moodEntryToRemove) return;
+
+    const nextProfileHistory = character.profileHistory.filter((entry) => entry.id !== moodEntryToRemove.id);
+    const currentMood = getCharacterTrackedMood(character);
+    const removedMood = normalizeCharacterMindStateLines(moodEntryToRemove.nextValue).join('\n');
+    const sourceReplyBatchId = String(moodEntryToRemove.sourceReplyBatchId ?? '').trim();
+    const shouldRestoreMindState = currentMood === removedMood
+      || Boolean(sourceReplyBatchId && character.mindState?.sourceReplyBatchId === sourceReplyBatchId);
+    const restoredLines = normalizeCharacterMindStateLines(moodEntryToRemove.previousValue);
+    const restoredMood = restoredLines.join('\n');
+    const previousMatchingMoodEntry = [...nextProfileHistory].reverse().find((entry) => entry.field === 'mood'
+      && entry.createdAt <= moodEntryToRemove.createdAt
+      && normalizeCharacterMindStateLines(entry.nextValue).join('\n') === restoredMood);
+    const previousMoodEntry = previousMatchingMoodEntry
+      ?? [...nextProfileHistory].reverse().find((entry) => entry.field === 'mood' && entry.createdAt <= moodEntryToRemove.createdAt);
+    const restoredUpdatedAt = previousMoodEntry?.createdAt ?? Math.max(0, moodEntryToRemove.createdAt - 1);
+    const restoredMindState = restoredLines.length
+      ? {
+        lines: restoredLines,
+        updatedAt: restoredUpdatedAt,
+        readAt: Math.min(character.mindState?.readAt ?? 0, restoredUpdatedAt),
+        sourceConversationId: previousMoodEntry?.sourceConversationId,
+        sourceReplyBatchId: previousMoodEntry?.sourceReplyBatchId
+      }
+      : undefined;
+
+    await saveCharacterSnapshot({
+      ...character,
+      profileHistory: nextProfileHistory,
+      mindState: shouldRestoreMindState ? restoredMindState : character.mindState
     });
   }
 
@@ -2983,7 +3075,7 @@ export const useAppStore = defineStore('app', () => {
         await saveCharacter(nextCharacter);
       }
       if (conversation.activeMode === 'online' && profileUpdate?.innerMonologue?.length) {
-        await updateCharacterMindState(character.id, profileUpdate.innerMonologue, conversationId);
+        await updateCharacterMindState(character.id, profileUpdate.innerMonologue, conversationId, { replyBatchId });
       }
       for (const messageId of validRecallMessageIds) {
         await recallMessage(messageId, { actor: 'char', replyBatchId });
@@ -3360,6 +3452,7 @@ export const useAppStore = defineStore('app', () => {
       return true;
     }
 
+    await rollbackCharacterMoodForOnlineRegeneration(conversation, messagesToRemove);
     await deleteMessages(messagesToRemove.map((message) => message.id));
 
     await requestRoleplayReply(conversationId);

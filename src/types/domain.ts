@@ -71,6 +71,7 @@ export interface CharacterMindState {
   updatedAt: number;
   readAt: number;
   sourceConversationId?: string;
+  sourceReplyBatchId?: string;
 }
 
 export interface CharacterInitialProfile {
@@ -86,6 +87,8 @@ export interface CharacterProfileHistoryEntry {
   previousValue: string;
   nextValue: string;
   createdAt: number;
+  sourceConversationId?: string;
+  sourceReplyBatchId?: string;
 }
 
 export interface CharacterProfile {
