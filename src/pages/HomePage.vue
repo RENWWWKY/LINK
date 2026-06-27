@@ -73,11 +73,13 @@ import { getCharacterDisplayName } from '@/utils/character';
 const store = useAppStore();
 const router = useRouter();
 const friendRows = computed(() =>
-  store.charactersForActiveUser.flatMap((character) => {
-    const conversation = store.conversationsForActiveUser.find((item) => item.charId === character.id);
-    if (!conversation) return [];
-    return [{ character, conversation }];
-  })
+  store.characters
+    .flatMap((character) => {
+      const conversation = store.conversations.find((item) => item.charId === character.id && item.userId === character.boundUserId);
+      if (!conversation) return [];
+      return [{ character, conversation }];
+    })
+    .sort((left, right) => right.conversation.updatedAt - left.conversation.updatedAt)
 );
 
 function openCharacterChat(conversationId: string) {
