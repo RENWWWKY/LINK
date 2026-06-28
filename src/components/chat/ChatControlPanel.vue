@@ -95,8 +95,8 @@
                   <input v-model="draft.memory.vectorMemoryEnabled" type="checkbox" @change="saveDraft" />
                   <span class="switch-track"></span>
                   <div>
-                    <strong>向量化记忆</strong>
-                    <span>用相似度辅助召回，减少跑题和漏记。</span>
+                    <strong>语义向量召回</strong>
+                    <span>用 embedding 辅助召回，减少跑题和漏记。</span>
                   </div>
                 </label>
                 <label class="switch-card">
@@ -184,22 +184,29 @@
               <small>开放事项</small>
             </span>
             <span>
-              <strong>{{ memoryDebugTrace?.selectedAtoms.length ?? 0 }}</strong>
-              <small>命中条目</small>
+              <strong>{{ activeRecallTrace?.selectedAtoms.length ?? 0 }}</strong>
+              <small>{{ recallPreviewTrace ? '预览命中' : '命中条目' }}</small>
             </span>
             <span>
-              <strong>{{ memoryDebugTrace ? `${memoryDebugTrace.selectedTokenCount}/${memoryDebugTrace.tokenBudget}` : '0/0' }}</strong>
+              <strong>{{ activeRecallTrace ? `${activeRecallTrace.selectedTokenCount}/${activeRecallTrace.tokenBudget}` : '0/0' }}</strong>
               <small>预算 tokens</small>
             </span>
           </div>
-          <div v-if="memoryDebugTrace?.selectedAtoms.length" class="memory-debug-list">
+          <label class="memory-recall-preview">
+            <span>预览下一轮召回</span>
+            <textarea v-model="recallPreviewQuery" rows="2" placeholder="输入可能发送的话，查看会命中哪些原子"></textarea>
+          </label>
+          <div v-if="activeRecallTrace?.selectedAtoms.length" class="memory-debug-list">
             <article v-for="atom in memoryDebugPreview" :key="atom.id" class="memory-debug-row">
               <span>{{ memoryAtomTypeLabel(atom.type) }} · {{ memoryAtomStatusLabel(atom.status) }} · {{ atom.tokenCount }} tokens · {{ atom.score }}</span>
               <strong>{{ atom.subject }}</strong>
               <p>{{ atom.content }}</p>
+              <div v-if="atom.scoreBreakdown?.length" class="score-breakdown">
+                <span v-for="part in atom.scoreBreakdown.slice(0, 7)" :key="`${atom.id}-${part.label}`" :class="{ negative: part.value < 0 }">{{ part.label }} {{ formatSignedScore(part.value) }}</span>
+              </div>
             </article>
           </div>
-          <div v-else class="empty-note compact-empty-note">还没有召回记录。发送一次消息或生成一次回复后，这里会显示系统挑中了哪些记忆。</div>
+          <div v-else class="empty-note compact-empty-note">还没有召回记录。发送消息、生成回复或输入预览文本后，这里会显示系统挑中了哪些记忆。</div>
           <section v-if="memoryAtoms.length" class="memory-atom-manager">
             <header class="merge-picker-head">
               <div>
@@ -213,6 +220,12 @@
                 <button class="tiny-action" type="button" @click="toggleAtomPinned(atom.id)">{{ atom.pinned ? '已固定' : '固定' }}</button>
               </div>
               <textarea :value="atom.content" rows="2" @change="updateAtomContent(atom, $event)"></textarea>
+              <div class="memory-atom-meta-grid">
+                <label><span>责任</span><input :value="atom.owner ?? ''" @change="updateAtomMeta(atom, 'owner', $event)" /></label>
+                <label><span>对象</span><input :value="atom.counterparty ?? ''" @change="updateAtomMeta(atom, 'counterparty', $event)" /></label>
+                <label><span>期限</span><input :value="atom.due ?? ''" @change="updateAtomMeta(atom, 'due', $event)" /></label>
+                <label><span>结果</span><input :value="atom.resolution ?? ''" @change="updateAtomMeta(atom, 'resolution', $event)" /></label>
+              </div>
               <div class="memory-atom-controls">
                 <label>
                   <span>状态</span>
@@ -224,6 +237,7 @@
                   <span>重要度</span>
                   <input :value="atom.importance" min="1" max="5" type="number" @change="updateAtomImportance(atom, $event)" />
                 </label>
+                <button class="tiny-action" type="button" @click="toggleAtomArchived(atom)">{{ atom.archivedAt ? '取消屏蔽' : '屏蔽' }}</button>
                 <button class="danger-action" type="button" @click="requestDeleteAtom(atom.id)">删除</button>
               </div>
             </article>
@@ -697,6 +711,7 @@ type RgbParts = Record<RgbChannel, number>;
 type ConfirmTone = 'primary' | 'danger';
 type ConfirmAction = () => Promise<void> | void;
 type MemoryNumberField = 'summarizeEvery' | 'atomWriterEvery' | 'autoMergeThreshold' | 'autoMergeBatchSize';
+type MemoryAtomMetaField = 'owner' | 'counterparty' | 'due' | 'resolution';
 const memoryAtomStatusOptions: Array<{ value: ConversationMemoryEntryStatus; label: string }> = [
   { value: 'active', label: '有效' },
   { value: 'open', label: '待处理' },
@@ -736,6 +751,7 @@ const showStickerGroupPicker = ref(false);
 const showAvatarEditor = ref(false);
 const avatarEditorSource = ref('');
 const backgroundImageUrlDraft = ref('');
+const recallPreviewQuery = ref('');
 const selectedMergeIds = ref<string[]>([]);
 const draft = reactive<ConversationSettings>(normalizeConversationSettings(null, props.conversationId));
 const memoryNumberDraft = reactive<Record<MemoryNumberField, string>>({
@@ -767,12 +783,16 @@ const manualSummary = reactive({
 const memories = computed(() => store.memoriesForConversation(props.conversationId));
 const memoryAtoms = computed(() => store.memoryAtomsForConversation(props.conversationId));
 const memoryDebugTrace = computed(() => store.memoryDebugTraceForConversation(props.conversationId));
+const recallPreviewTrace = computed(() => recallPreviewQuery.value.trim()
+  ? store.previewMemoryRecallForConversation(props.conversationId, recallPreviewQuery.value)
+  : null);
+const activeRecallTrace = computed(() => recallPreviewTrace.value ?? memoryDebugTrace.value);
 const currentConversationSettings = computed(() => store.settingsForConversation(props.conversationId));
 const localModelOverrides = computed(() => store.modelOverridesForConversation(props.conversationId));
 const summaryModelValue = computed(() => localModelOverrides.value.summary.trim() || store.settings?.modelOverrides.summary?.trim() || '');
 const totalMemoryTokens = computed(() => store.nextReplyTokenCountForConversation(props.conversationId));
 const openMemoryAtomCount = computed(() => memoryAtoms.value.filter((atom) => atom.status === 'open' && !atom.archivedAt).length);
-const memoryDebugPreview = computed(() => memoryDebugTrace.value?.selectedAtoms.slice(0, 8) ?? []);
+const memoryDebugPreview = computed(() => activeRecallTrace.value?.selectedAtoms.slice(0, 8) ?? []);
 const memoryAtomPreview = computed(() => [...memoryAtoms.value]
   .sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.importance - left.importance || right.updatedAt - left.updatedAt)
   .slice(0, 12));
@@ -1127,6 +1147,11 @@ function memoryAtomStatusLabel(status: string) {
   }[status] ?? '有效';
 }
 
+function formatSignedScore(value: number) {
+  const rounded = Number(value.toFixed(2));
+  return rounded > 0 ? `+${rounded}` : String(rounded);
+}
+
 function toggleMergePicker() {
   const nextOpen = !showMergePicker.value;
   showMergePicker.value = nextOpen;
@@ -1353,6 +1378,16 @@ function updateAtomContent(atom: ConversationMemoryAtom, event: Event) {
   const content = (event.target as HTMLTextAreaElement).value.trim();
   if (!content || content === atom.content) return;
   void store.updateMemoryAtom(atom.id, { content, pinned: true });
+}
+
+function updateAtomMeta(atom: ConversationMemoryAtom, field: MemoryAtomMetaField, event: Event) {
+  const value = (event.target as HTMLInputElement).value.trim() || undefined;
+  if ((atom[field] ?? undefined) === value) return;
+  void store.updateMemoryAtom(atom.id, { [field]: value, pinned: true });
+}
+
+function toggleAtomArchived(atom: ConversationMemoryAtom) {
+  void store.updateMemoryAtom(atom.id, { archivedAt: atom.archivedAt ? undefined : Date.now(), pinned: true });
 }
 
 function requestDeleteAtom(atomId: string) {
@@ -1704,6 +1739,32 @@ function applyEditedAvatar(value: string) {
   gap: 8px;
 }
 
+.memory-recall-preview {
+  display: grid;
+  gap: 6px;
+}
+
+.memory-recall-preview span {
+  color: #746f70;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.memory-recall-preview textarea {
+  width: 100%;
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid rgba(76, 67, 62, 0.08);
+  border-radius: 14px;
+  outline: 0;
+  background: rgba(255, 255, 255, 0.74);
+  color: #24201e;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+  resize: vertical;
+}
+
 .memory-debug-row {
   display: grid;
   gap: 4px;
@@ -1724,6 +1785,26 @@ function applyEditedAvatar(value: string) {
 .memory-debug-row strong {
   color: #24201e;
   font-size: 13px;
+}
+
+.score-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.score-breakdown span {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(128, 152, 116, 0.12);
+  color: #52644a;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.score-breakdown span.negative {
+  background: rgba(180, 95, 105, 0.12);
+  color: #9a4f5b;
 }
 
 .memory-run-action {
@@ -1769,11 +1850,35 @@ function applyEditedAvatar(value: string) {
   resize: vertical;
 }
 
-.memory-atom-controls {
-  grid-template-columns: minmax(0, 1fr) 92px auto;
+.memory-atom-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
 }
 
-.memory-atom-controls .danger-action {
+.memory-atom-meta-grid label {
+  display: grid;
+  gap: 4px;
+}
+
+.memory-atom-meta-grid span {
+  color: #746f70;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.memory-atom-meta-grid input {
+  width: 100%;
+  min-height: 34px;
+  border-radius: 10px;
+}
+
+.memory-atom-controls {
+  grid-template-columns: minmax(0, 1fr) 82px auto auto;
+}
+
+.memory-atom-controls .danger-action,
+.memory-atom-controls .tiny-action {
   min-height: 34px;
   padding-inline: 12px;
 }

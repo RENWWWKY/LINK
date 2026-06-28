@@ -1,5 +1,5 @@
 import { unzipSync } from 'fflate';
-import type { ApiVendor, AppSettings, CharacterProfile, ConversationTimeAwarenessSettings, GenerateReplyInput, ImageProviderType, MusicComment, MusicTrack, NovelAiModelOption, PollinationsModelOption, PromptContext, UserProfile, VoomComment, VoomFrequency, VoomPost } from '@/types/domain';
+import type { ApiVendor, AppSettings, CharacterProfile, ConversationMemoryAtom, ConversationMemoryEntryStatus, ConversationMemoryEntryType, ConversationTimeAwarenessSettings, GenerateReplyInput, ImageProviderType, MusicComment, MusicTrack, NovelAiModelOption, PollinationsModelOption, PromptContext, UserProfile, VoomComment, VoomFrequency, VoomPost } from '@/types/domain';
 import { createId } from '@/utils/id';
 import { getCharacterVoomAuthorName } from '@/utils/character';
 import { defaultNovelAiModels, defaultPollinationsModels, getResolvedApiConfig, getResolvedOpenAiImageConfig, novelAiOfficialApiUrl, novelAiProxyApiUrl } from '@/utils/settings';
@@ -72,6 +72,25 @@ export interface VoomCommentReplyResult {
   contentTranslation?: string;
   parentId?: string;
   draftId?: string;
+}
+
+export interface MemoryAtomAuditUpdate {
+  id: string;
+  type?: ConversationMemoryEntryType;
+  status?: ConversationMemoryEntryStatus;
+  subject?: string;
+  content?: string;
+  owner?: string;
+  counterparty?: string;
+  due?: string;
+  resolution?: string;
+  importance?: number;
+  confidence?: number;
+  reason?: string;
+}
+
+export interface MemoryAtomAuditResult {
+  updates: MemoryAtomAuditUpdate[];
 }
 
 export type UserVoomCommentResult = Pick<VoomComment, 'authorName' | 'authorId' | 'content' | 'contentTranslation' | 'parentId'>;
@@ -2370,6 +2389,76 @@ export async function generateConversationSummary(input: {
   ].filter(Boolean).join('\n\n');
   const apiReply = await callTextApi(input.settings, prompt, input.modelOverride);
   return apiReply || input.messages.slice(0, 1400);
+}
+
+function formatAtomForAudit(atom: Pick<ConversationMemoryAtom, 'id' | 'type' | 'status' | 'subject' | 'content' | 'importance' | 'owner' | 'counterparty' | 'due' | 'resolution' | 'evidenceFloors' | 'lastTouchedFloor'>) {
+  const meta = [
+    atom.owner ? `owner=${atom.owner}` : '',
+    atom.counterparty ? `counterparty=${atom.counterparty}` : '',
+    atom.due ? `due=${atom.due}` : '',
+    atom.resolution ? `resolution=${atom.resolution}` : '',
+    atom.evidenceFloors?.length ? `floors=${atom.evidenceFloors.join('/')}` : '',
+    atom.lastTouchedFloor ? `lastFloor=${atom.lastTouchedFloor}` : ''
+  ].filter(Boolean).join('; ');
+  return `- id=${atom.id} [${atom.type}|${atom.status}|${atom.importance}|${atom.subject}${meta ? `|${meta}` : ''}] ${atom.content}`;
+}
+
+function normalizeMemoryAtomAuditResult(value: unknown, allowedIds: Set<string>): MemoryAtomAuditResult {
+  const record = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const rawUpdates = Array.isArray(record.updates) ? record.updates : [];
+  const statuses: ConversationMemoryEntryStatus[] = ['active', 'open', 'resolved', 'superseded', 'cancelled'];
+  const types: ConversationMemoryEntryType[] = ['fact', 'preference', 'promise', 'conflict', 'plot', 'relationship', 'boundary', 'emotion', 'world'];
+  const updates = rawUpdates
+    .map((item): MemoryAtomAuditUpdate | null => {
+      if (!item || typeof item !== 'object') return null;
+      const update = item as Record<string, unknown>;
+      const id = String(update.id ?? '').trim();
+      if (!id || !allowedIds.has(id)) return null;
+      const status = String(update.status ?? '').trim() as ConversationMemoryEntryStatus;
+      const type = String(update.type ?? '').trim() as ConversationMemoryEntryType;
+      const normalizedUpdate: MemoryAtomAuditUpdate = { id };
+      if (statuses.includes(status)) normalizedUpdate.status = status;
+      if (types.includes(type)) normalizedUpdate.type = type;
+      const textFields = ['subject', 'content', 'owner', 'counterparty', 'due', 'resolution', 'reason'] as const;
+      textFields.forEach((field) => {
+        const text = String(update[field] ?? '').replace(/\s+/g, ' ').trim();
+        if (text) normalizedUpdate[field] = text;
+      });
+      const importance = Math.round(Number(update.importance));
+      if (Number.isFinite(importance)) normalizedUpdate.importance = Math.min(5, Math.max(1, importance));
+      const confidence = Number(update.confidence);
+      if (Number.isFinite(confidence)) normalizedUpdate.confidence = Math.min(1, Math.max(0, confidence));
+      return Object.keys(normalizedUpdate).length > 1 ? normalizedUpdate : null;
+    })
+    .filter((item): item is MemoryAtomAuditUpdate => Boolean(item));
+  return { updates };
+}
+
+export async function generateMemoryAtomAudit(input: {
+  conversationText: string;
+  previousAtoms: ConversationMemoryAtom[];
+  newAtoms: ConversationMemoryAtom[];
+  settings?: AppSettings;
+  modelOverride?: string;
+}) {
+  const previousAtoms = input.previousAtoms.slice(0, 28);
+  if (!previousAtoms.length || !input.conversationText.trim()) return { updates: [] } satisfies MemoryAtomAuditResult;
+  const allowedIds = new Set(previousAtoms.map((atom) => atom.id));
+  const prompt = [
+    '你是聊天记忆生命周期审查器。请只审查“旧原子记忆”是否被“本轮对话”和“新原子候选”更新、解决、推翻或取消。',
+    '只允许输出 JSON 对象，不要 Markdown，不要解释。格式：{"updates":[{"id":"旧原子ID","status":"active|open|resolved|superseded|cancelled","content":"可选的新内容","subject":"可选主题","owner":"可选责任方","counterparty":"可选对象","due":"可选期限","resolution":"可选结果","importance":1-5,"confidence":0-1,"reason":"简短原因"}]}。',
+    '规则：只能引用旧原子里存在的 id；不要为新事实编造 id；承诺/冲突仍需后续处理才保留 open；已经兑现、和解、拒绝、撤销或被新版本覆盖的，改为 resolved/superseded/cancelled；信息不足就不要输出该原子的更新。',
+    `旧原子记忆：\n${previousAtoms.map(formatAtomForAudit).join('\n')}`,
+    input.newAtoms.length ? `新原子候选：\n${input.newAtoms.slice(0, 18).map(formatAtomForAudit).join('\n')}` : '新原子候选：暂无。',
+    `本轮对话：\n${input.conversationText}`
+  ].join('\n\n');
+  const apiReply = await callTextApi(input.settings, prompt, input.modelOverride);
+  if (!apiReply.trim()) return { updates: [] } satisfies MemoryAtomAuditResult;
+  try {
+    return normalizeMemoryAtomAuditResult(JSON.parse(extractJsonContent(apiReply)), allowedIds);
+  } catch {
+    return { updates: [] } satisfies MemoryAtomAuditResult;
+  }
 }
 
 export function shouldAutoGenerateMoment(frequency: VoomFrequency) {

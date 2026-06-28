@@ -395,6 +395,50 @@ function normalizeMemoryContent(content: string) {
     .trim();
 }
 
+function normalizeOptionalMemoryText(value: unknown) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text || undefined;
+}
+
+function inferMemoryEntryMeta(type: ConversationMemoryEntryType, status: ConversationMemoryEntryStatus, subject: string, content: string) {
+  const text = `${subject} ${content}`;
+  const due = text.match(/(?:期限|时间|约定|计划|改天|下次|今晚|明天|后天|周[一二三四五六日天]|星期[一二三四五六日天]|\d{1,2}[月/-]\d{1,2}[日号]?)/)?.[0];
+  const resolution = status === 'resolved'
+    ? text.match(/(?:已|已经|后来)?(?:兑现|完成|解决|和解|说清|拒绝|撤销|取消|放下)[^。；，,]*/)?.[0]
+    : undefined;
+  const owner = type === 'promise'
+    ? text.match(/(?:由|责任人[:：]?|承诺方[:：]?)([^，。；,]{1,16})/)?.[1]?.trim()
+      ?? text.match(/([^，。；,]{1,10})(?:答应|承诺|保证|约定)/)?.[1]?.trim()
+    : undefined;
+  const counterparty = type === 'promise'
+    ? text.match(/(?:给|向|陪|帮|和)([^，。；,]{1,16})(?:[^，。；,]{0,8})(?:做|去|完成|解释|见面|联系|处理)/)?.[1]?.trim()
+    : type === 'conflict'
+      ? text.match(/(?:与|和|跟)([^，。；,]{1,16})(?:之间)?(?:冲突|争执|误会|矛盾)/)?.[1]?.trim()
+      : undefined;
+  return {
+    owner: normalizeOptionalMemoryText(owner),
+    counterparty: normalizeOptionalMemoryText(counterparty),
+    due: normalizeOptionalMemoryText(due),
+    resolution: normalizeOptionalMemoryText(resolution)
+  };
+}
+
+function normalizeMemoryEntryMeta(entry: Partial<ConversationMemoryEntry>, type: ConversationMemoryEntryType, status: ConversationMemoryEntryStatus, subject: string, content: string) {
+  const inferred = inferMemoryEntryMeta(type, status, subject, content);
+  const normalizeField = (field: 'owner' | 'counterparty' | 'due' | 'resolution') => (
+    Object.prototype.hasOwnProperty.call(entry, field)
+      ? normalizeOptionalMemoryText(entry[field])
+      : inferred[field]
+  );
+  return {
+    owner: normalizeField('owner'),
+    counterparty: normalizeField('counterparty'),
+    due: normalizeField('due'),
+    resolution: normalizeField('resolution'),
+    sourceAtomIds: Array.isArray(entry.sourceAtomIds) ? [...new Set(entry.sourceAtomIds.map((id) => String(id).trim()).filter(Boolean))] : undefined
+  };
+}
+
 function buildFallbackSubject(type: ConversationMemoryEntryType) {
   return {
     fact: '事实',
@@ -426,6 +470,7 @@ function parseBracketMemoryEntry(line: string, fallbackType: ConversationMemoryE
     status,
     subject,
     content,
+    ...normalizeMemoryEntryMeta({}, type, status, subject, content),
     evidenceFloors,
     lastTouchedFloor: Math.max(...evidenceFloors, fallbackEndFloor),
     importance,
@@ -457,6 +502,7 @@ function parseLooseMemoryEntry(line: string, fallbackType: ConversationMemoryEnt
     status,
     subject: buildFallbackSubject(type),
     content,
+    ...normalizeMemoryEntryMeta({}, type, status, buildFallbackSubject(type), content),
     evidenceFloors,
     lastTouchedFloor: Math.max(...evidenceFloors, fallbackEndFloor),
     importance: status === 'open' || type === 'relationship' ? 4 : 3,
@@ -484,6 +530,7 @@ export function normalizeMemoryRecordEntries(memory: Pick<ConversationMemoryReco
           status,
           subject: String(entry.subject ?? '').trim() || buildFallbackSubject(type),
           content,
+          ...normalizeMemoryEntryMeta(entry, type, status, String(entry.subject ?? '').trim() || buildFallbackSubject(type), content),
           evidenceFloors,
           lastTouchedFloor: Math.max(1, Math.floor(Number(entry.lastTouchedFloor) || Math.max(...evidenceFloors, endFloor))),
           importance: clampMemoryImportance(entry.importance),
@@ -526,6 +573,7 @@ export function normalizeMemoryRecordEntries(memory: Pick<ConversationMemoryReco
     status: 'active',
     subject: '摘要',
     content: content.slice(0, 600),
+    ...normalizeMemoryEntryMeta({}, 'plot', 'active', '摘要', content),
     evidenceFloors: startFloor === endFloor ? [startFloor] : [startFloor, endFloor],
     lastTouchedFloor: endFloor,
     importance: 3,
@@ -571,6 +619,7 @@ export function normalizeMemoryAtom(atom: Partial<ConversationMemoryAtom>, fallb
     status,
     subject,
     content,
+    ...normalizeMemoryEntryMeta(atom, type, status, subject, content),
     evidenceFloors,
     lastTouchedFloor: Math.max(1, Math.floor(Number(atom.lastTouchedFloor) || Math.max(...evidenceFloors, 1))),
     importance: clampMemoryImportance(atom.importance),
@@ -652,10 +701,34 @@ function cosineSimilarity(first: number[], second: number[]) {
   return magnitude ? dot / magnitude : 0;
 }
 
-function scoreMemoryEntry(entry: ConversationMemoryEntry, queryTokens: Set<string>, queryVector: number[], latestFloor: number, now: number) {
+interface MemoryScoreContext {
+  queryText: string;
+  queryTokens: Set<string>;
+  queryVector: number[];
+  queryLocalVector: number[];
+  latestFloor: number;
+  now: number;
+}
+
+function compactScoreValue(value: number) {
+  return Number(value.toFixed(2));
+}
+
+function pushScorePart(parts: ConversationMemoryDebugTrace['selectedAtoms'][number]['scoreBreakdown'], label: string, value: number, reason: string) {
+  if (!value) return;
+  parts.push({ label, value: compactScoreValue(value), reason });
+}
+
+function scoreMemoryEntryDetailed(entry: ConversationMemoryEntry, context: MemoryScoreContext) {
   const entryTokens = tokenizeMemoryText(getEntryText(entry));
-  const overlap = [...queryTokens].filter((token) => entryTokens.has(token)).length;
-  const vectorScore = queryVector.length ? cosineSimilarity(queryVector, entry.vector ?? vectorizeText(getEntryText(entry))) : 0;
+  const matchedTokens = [...context.queryTokens].filter((token) => entryTokens.has(token)).slice(0, 8);
+  const semanticSimilarity = context.queryVector.length && entry.vector?.length === context.queryVector.length
+    ? cosineSimilarity(context.queryVector, entry.vector)
+    : 0;
+  const localSimilarity = context.queryLocalVector.length
+    ? cosineSimilarity(context.queryLocalVector, vectorizeText(getEntryText(entry)))
+    : 0;
+  const vectorScore = semanticSimilarity ? semanticSimilarity * 12 : localSimilarity * 8;
   const statusWeight = {
     open: 18,
     active: 12,
@@ -664,18 +737,61 @@ function scoreMemoryEntry(entry: ConversationMemoryEntry, queryTokens: Set<strin
     cancelled: -16
   }[entry.status];
   const typeWeight = entry.type === 'relationship' ? 5 : entry.type === 'preference' ? 4 : entry.type === 'promise' || entry.type === 'conflict' ? 6 : 0;
-  const floorDistance = Math.max(0, latestFloor - entry.lastTouchedFloor);
+  const floorDistance = Math.max(0, context.latestFloor - entry.lastTouchedFloor);
   const recencyWeight = Math.max(0, 8 - Math.floor(floorDistance / 20));
-  const agePenalty = entry.expiresAt && entry.expiresAt < now ? 30 : 0;
-  return overlap * 7 + vectorScore * 12 + entry.importance * 4 + statusWeight + typeWeight + recencyWeight - agePenalty;
+  const agePenalty = entry.expiresAt && entry.expiresAt < context.now ? 30 : 0;
+  const scoreBreakdown: ConversationMemoryDebugTrace['selectedAtoms'][number]['scoreBreakdown'] = [];
+  pushScorePart(scoreBreakdown, '关键词', matchedTokens.length * 7, matchedTokens.length ? matchedTokens.join('/') : '无关键词命中');
+  pushScorePart(scoreBreakdown, semanticSimilarity ? '语义向量' : '本地相关', vectorScore, semanticSimilarity ? `相似度 ${semanticSimilarity.toFixed(2)}` : `相似度 ${localSimilarity.toFixed(2)}`);
+  pushScorePart(scoreBreakdown, '重要度', entry.importance * 4, `重要度 ${entry.importance}`);
+  pushScorePart(scoreBreakdown, '状态', statusWeight, entry.status);
+  pushScorePart(scoreBreakdown, '类型', typeWeight, entry.type);
+  pushScorePart(scoreBreakdown, '近期', recencyWeight, `${floorDistance} 楼前`);
+  pushScorePart(scoreBreakdown, '过期', -agePenalty, '超过 expiresAt');
+  return {
+    score: matchedTokens.length * 7 + vectorScore + entry.importance * 4 + statusWeight + typeWeight + recencyWeight - agePenalty,
+    scoreBreakdown,
+    matchedTokens
+  };
 }
 
-function scoreMemoryAtom(atom: ConversationMemoryAtom, queryTokens: Set<string>, queryVector: number[], latestFloor: number, now: number) {
-  const baseScore = scoreMemoryEntry(atom, queryTokens, queryVector, latestFloor, now);
+function scoreMemoryEntry(entry: ConversationMemoryEntry, queryTokens: Set<string>, queryVector: number[], latestFloor: number, now: number) {
+  const isLocalQueryVector = queryVector.length === 16;
+  return scoreMemoryEntryDetailed(entry, {
+    queryText: '',
+    queryTokens,
+    queryVector: isLocalQueryVector ? [] : queryVector,
+    queryLocalVector: isLocalQueryVector ? queryVector : [],
+    latestFloor,
+    now
+  }).score;
+}
+
+function scoreMemoryAtomDetailed(atom: ConversationMemoryAtom, context: MemoryScoreContext) {
+  const detailed = scoreMemoryEntryDetailed(atom, context);
   const pinWeight = atom.pinned ? 20 : 0;
   const archivePenalty = atom.archivedAt ? 24 : 0;
   const confidenceWeight = atom.confidence * 6;
-  return baseScore + pinWeight + confidenceWeight - archivePenalty;
+  pushScorePart(detailed.scoreBreakdown, '固定', pinWeight, atom.pinned ? '用户固定' : '未固定');
+  pushScorePart(detailed.scoreBreakdown, '可信度', confidenceWeight, `可信度 ${atom.confidence.toFixed(2)}`);
+  pushScorePart(detailed.scoreBreakdown, '归档', -archivePenalty, '已屏蔽或归档');
+  return {
+    score: detailed.score + pinWeight + confidenceWeight - archivePenalty,
+    scoreBreakdown: detailed.scoreBreakdown,
+    matchedTokens: detailed.matchedTokens
+  };
+}
+
+function scoreMemoryAtom(atom: ConversationMemoryAtom, queryTokens: Set<string>, queryVector: number[], latestFloor: number, now: number) {
+  const isLocalQueryVector = queryVector.length === 16;
+  return scoreMemoryAtomDetailed(atom, {
+    queryText: '',
+    queryTokens,
+    queryVector: isLocalQueryVector ? [] : queryVector,
+    queryLocalVector: isLocalQueryVector ? queryVector : [],
+    latestFloor,
+    now
+  }).score;
 }
 
 function formatMemoryEntry(entry: ConversationMemoryEntry) {
@@ -687,7 +803,13 @@ function formatMemoryEntry(entry: ConversationMemoryEntry) {
     cancelled: '已取消'
   }[entry.status];
   const floorText = entry.evidenceFloors.length ? `；证据楼层 ${entry.evidenceFloors.join('/')}` : '';
-  return `- ${entry.subject}：${entry.content}（${statusLabel}；重要度 ${entry.importance}${floorText}）`;
+  const metaText = [
+    entry.owner ? `责任 ${entry.owner}` : '',
+    entry.counterparty ? `对象 ${entry.counterparty}` : '',
+    entry.due ? `期限 ${entry.due}` : '',
+    entry.resolution ? `结果 ${entry.resolution}` : ''
+  ].filter(Boolean).join('；');
+  return `- ${entry.subject}：${entry.content}（${statusLabel}；重要度 ${entry.importance}${floorText}${metaText ? `；${metaText}` : ''}）`;
 }
 
 function memoryContextSection(title: string, entries: ConversationMemoryEntry[]) {
@@ -733,22 +855,24 @@ export function getMemoryContext(memories: ConversationMemoryRecord[], options: 
   ].filter(Boolean).join('\n\n');
 }
 
-export function buildMemoryAtomContext(atoms: ConversationMemoryAtom[], options: { conversationId: string; queryText?: string; maxEntries?: number; maxTokens?: number; includeResolved?: boolean } ): { text: string; debug: ConversationMemoryDebugTrace } {
+export function buildMemoryAtomContext(atoms: ConversationMemoryAtom[], options: { conversationId: string; queryText?: string; queryVector?: number[]; maxEntries?: number; maxTokens?: number; includeResolved?: boolean } ): { text: string; debug: ConversationMemoryDebugTrace } {
   const conversationAtoms = mergeMemoryAtoms(atoms)
     .filter((atom) => atom.conversationId === options.conversationId)
     .filter((atom) => options.includeResolved || (!['superseded', 'cancelled'].includes(atom.status) && !atom.archivedAt));
   const latestFloor = conversationAtoms.reduce((max, atom) => Math.max(max, atom.lastTouchedFloor), 0);
   const queryText = options.queryText ?? '';
   const queryTokens = tokenizeMemoryText(queryText);
-  const queryVector = queryText.trim() ? vectorizeText(queryText) : [];
+  const queryVector = Array.isArray(options.queryVector) ? options.queryVector.filter((value) => Number.isFinite(value)) : [];
+  const queryLocalVector = queryText.trim() ? vectorizeText(queryText) : [];
   const now = Date.now();
+  const scoreContext: MemoryScoreContext = { queryText, queryTokens, queryVector, queryLocalVector, latestFloor, now };
   const maxEntries = Math.max(4, Math.floor(options.maxEntries ?? 18));
   const maxTokens = Math.max(120, Math.floor(options.maxTokens ?? 1200));
   const rankedAtoms = conversationAtoms
-    .map((atom) => ({ atom, score: scoreMemoryAtom(atom, queryTokens, queryVector, latestFloor, now) }))
+    .map((atom) => ({ atom, ...scoreMemoryAtomDetailed(atom, scoreContext) }))
     .sort((left, right) => right.score - left.score || right.atom.updatedAt - left.atom.updatedAt);
 
-  const selected: Array<{ atom: ConversationMemoryAtom; score: number; tokenCount: number }> = [];
+  const selected: Array<{ atom: ConversationMemoryAtom; score: number; scoreBreakdown: ConversationMemoryDebugTrace['selectedAtoms'][number]['scoreBreakdown']; matchedTokens: string[]; tokenCount: number }> = [];
   let selectedTokenCount = 0;
   for (const candidate of rankedAtoms) {
     if (selected.length >= maxEntries) break;
@@ -785,6 +909,8 @@ export function buildMemoryAtomContext(atoms: ConversationMemoryAtom[], options:
         subject: item.atom.subject,
         content: item.atom.content,
         score: Number(item.score.toFixed(2)),
+        scoreBreakdown: item.scoreBreakdown,
+        matchedTokens: item.matchedTokens,
         tokenCount: item.tokenCount
       }))
     }

@@ -217,16 +217,27 @@ export interface ConversationSettings {
 export type ConversationMemoryEntryType = 'fact' | 'preference' | 'promise' | 'conflict' | 'plot' | 'relationship' | 'boundary' | 'emotion' | 'world';
 export type ConversationMemoryEntryStatus = 'active' | 'open' | 'resolved' | 'superseded' | 'cancelled';
 
+export interface ConversationMemoryScoreBreakdown {
+  label: string;
+  value: number;
+  reason: string;
+}
+
 export interface ConversationMemoryEntry {
   id: string;
   type: ConversationMemoryEntryType;
   status: ConversationMemoryEntryStatus;
   subject: string;
   content: string;
+  owner?: string;
+  counterparty?: string;
+  due?: string;
+  resolution?: string;
   evidenceFloors: number[];
   lastTouchedFloor: number;
   importance: number;
   vector?: number[];
+  sourceAtomIds?: string[];
   createdAt: number;
   updatedAt: number;
   expiresAt?: number;
@@ -255,6 +266,8 @@ export interface ConversationMemoryDebugTrace {
     subject: string;
     content: string;
     score: number;
+    scoreBreakdown: ConversationMemoryScoreBreakdown[];
+    matchedTokens: string[];
     tokenCount: number;
   }>;
 }
