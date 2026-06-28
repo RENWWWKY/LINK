@@ -55,6 +55,11 @@
               </span>
             </div>
 
+            <button v-if="canRequestNotificationPermission" class="keepalive-auth" type="button" @click="authorizeNotifications">
+              <BellRing :size="14" />
+              <span>授权通知</span>
+            </button>
+
             <div class="keepalive-options">
               <label :class="['keepalive-option', { active: keepAliveSettings.silentAudio }]">
                 <input type="checkbox" :checked="keepAliveSettings.silentAudio" @change="updateKeepAliveOption('silentAudio', $event)" />
@@ -163,7 +168,7 @@
 import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref, type PropType } from 'vue';
 import { useRouter } from 'vue-router';
 import { BatteryCharging, BellRing, LoaderCircle, MessageCircle, Music2, Power, RadioTower, RotateCcw, ShieldCheck, Undo2, Upload, VolumeX } from 'lucide-vue-next';
-import { getKeepAliveStatus, startKeepAlive, stopKeepAlive, subscribeKeepAliveStatus, type KeepAliveRuntimeStatus } from '@/services/keepAlive';
+import { getKeepAliveStatus, requestKeepAliveNotificationPermission, startKeepAlive, stopKeepAlive, subscribeKeepAliveStatus, type KeepAliveRuntimeStatus } from '@/services/keepAlive';
 import { useAppStore } from '@/stores/appStore';
 import type { AppKeepAliveSettings, AppRingtoneSettings, RingtoneAsset, RingtoneEventType } from '@/types/domain';
 import { getCharacterDisplayName } from '@/utils/character';
@@ -246,6 +251,9 @@ const wakeStateLabel = computed(() => {
   if (keepAliveStatus.value.wakeLockActive) return '运行';
   return keepAliveSettings.value.wakeLock ? '待机' : '关闭';
 });
+const canRequestNotificationPermission = computed(() => keepAliveSettings.value.notifications
+  && keepAliveStatus.value.notificationSupported
+  && keepAliveStatus.value.notificationPermission === 'default');
 const keepAliveAlert = computed(() => {
   if (keepAliveStatus.value.lastError) return keepAliveStatus.value.lastError;
   if (keepAliveStatus.value.platform === 'ios' && !keepAliveStatus.value.standalone) return 'iOS 浏览器模式下，后台通知与音频会更容易被系统收紧。';
@@ -382,6 +390,11 @@ async function toggleKeepAlive() {
 async function updateKeepAliveOption(option: keyof Pick<AppKeepAliveSettings, 'silentAudio' | 'notifications' | 'wakeLock'>, event: Event) {
   const checked = (event.target as HTMLInputElement).checked;
   await saveKeepAliveSettings({ ...keepAliveSettings.value, [option]: checked }, option === 'notifications' && checked && keepAliveSettings.value.enabled);
+}
+
+async function authorizeNotifications() {
+  await requestKeepAliveNotificationPermission();
+  if (keepAliveSettings.value.enabled) await startKeepAlive(keepAliveSettings.value);
 }
 
 async function importRingtone(scope: RingtoneScope, eventType: RingtoneEventType, event: Event, characterId = '') {
@@ -749,6 +762,25 @@ async function resetCharacter(characterId: string, eventType: RingtoneEventType)
 
 .keepalive-state.muted {
   color: #b0b7b3;
+}
+
+.keepalive-auth {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 38px;
+  border-radius: 999px;
+  background: #141a17;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+  box-shadow: 0 10px 22px rgba(20, 26, 23, 0.14);
+}
+
+.keepalive-auth:active {
+  transform: translateY(1px);
 }
 
 .keepalive-option {
