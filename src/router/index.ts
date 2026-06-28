@@ -20,6 +20,7 @@ import StickerManagePage from '@/pages/StickerManagePage.vue';
 import WorldBookPage from '@/pages/WorldBookPage.vue';
 import WorldBookEditorPage from '@/pages/WorldBookEditorPage.vue';
 import FavoritesPage from '@/pages/FavoritesPage.vue';
+import RingtoneSettingsPage from '@/pages/RingtoneSettingsPage.vue';
 
 export const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -32,6 +33,7 @@ export const router = createRouter({
     { path: '/services', name: 'services', component: ServicesPage },
     { path: '/stickers', name: 'stickers', component: StickersPage },
     { path: '/favorites', name: 'favorites', component: FavoritesPage },
+    { path: '/ringtones', name: 'ringtones', component: RingtoneSettingsPage },
     { path: '/stickers/manage', name: 'stickers-manage', component: StickerManagePage },
     { path: '/world-book', name: 'world-book', component: WorldBookPage },
     { path: '/world-book/new', name: 'world-book-new', component: WorldBookEditorPage },

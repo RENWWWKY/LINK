@@ -711,6 +711,31 @@ export interface MinimaxTtsSettings {
   channel: 1 | 2;
 }
 
+export type RingtoneEventType = 'voom' | 'message';
+
+export type RingtoneSourceType = 'default' | 'imported';
+
+export interface RingtoneAsset {
+  id: string;
+  name: string;
+  url: string;
+  mimeType: string;
+  size: number;
+  source: RingtoneSourceType;
+  updatedAt: number;
+}
+
+export interface CharacterRingtoneSettings {
+  characterId: string;
+  voom?: RingtoneAsset;
+  message?: RingtoneAsset;
+}
+
+export interface AppRingtoneSettings {
+  global: Record<RingtoneEventType, RingtoneAsset>;
+  characters: Record<string, CharacterRingtoneSettings>;
+}
+
 export interface AppSettings {
   activeUserId: string;
   apiEndpoint: string;
@@ -736,6 +761,7 @@ export interface AppSettings {
   voomImageProvider: ImageProviderType | '';
   voomImageModel: string;
   voomReadAtByUser: Record<string, Record<string, number>>;
+  ringtoneSettings: AppRingtoneSettings;
   imagePrivateOnly: boolean;
   imageGenerationEnabled: boolean;
   githubBackup: GitHubBackupSettings;

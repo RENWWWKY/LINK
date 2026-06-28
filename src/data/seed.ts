@@ -1,5 +1,6 @@
 import type { AppSettings, CharacterProfile, ChatMessage, Conversation, Sticker, StickerGroup, UserProfile, VoomPost, WorldBookEntry } from '@/types/domain';
 import { createUserVisualProfile, defaultProfileAvatar } from '@/utils/profile';
+import { createDefaultRingtoneSettings } from '@/utils/settings';
 
 export const defaultUsers: UserProfile[] = [
   {
@@ -161,6 +162,7 @@ export const defaultSettings: AppSettings = {
   voomImageProvider: '',
   voomImageModel: '',
   voomReadAtByUser: {},
+  ringtoneSettings: createDefaultRingtoneSettings(),
   imagePrivateOnly: true,
   imageGenerationEnabled: true,
   githubBackup: {

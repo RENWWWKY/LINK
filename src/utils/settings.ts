@@ -1,4 +1,4 @@
-import type { ApiVendor, ApiVendorModel, AppSettings, ChatModelOverrides, GitHubBackupSettings, ImageModelScope, ImageModelSelection, ImagePromptPreset, ImageProviderType, MinimaxTtsAudioFormat, MinimaxTtsSettings, NovelAiImageSettings, OpenAiImageSettings, OpenAiTtsAudioFormat, OpenAiTtsSettings, PollinationsImageSettings, TtsProviderType } from '@/types/domain';
+import type { ApiVendor, ApiVendorModel, AppRingtoneSettings, AppSettings, ChatModelOverrides, CharacterRingtoneSettings, GitHubBackupSettings, ImageModelScope, ImageModelSelection, ImagePromptPreset, ImageProviderType, MinimaxTtsAudioFormat, MinimaxTtsSettings, NovelAiImageSettings, OpenAiImageSettings, OpenAiTtsAudioFormat, OpenAiTtsSettings, PollinationsImageSettings, RingtoneAsset, RingtoneEventType, TtsProviderType } from '@/types/domain';
 import { createId } from './id';
 
 export const novelAiOfficialApiUrl = 'https://image.novelai.net';
@@ -44,6 +44,10 @@ const defaultPromptPresetName = '默认预设';
 const defaultOpenAiPromptPresetId = 'openai_default';
 const defaultNovelAiPromptPresetId = 'novelai_default';
 const defaultPollinationsPromptPresetId = 'pollinations_default';
+
+export const ringtoneEventTypes: RingtoneEventType[] = ['voom', 'message'];
+export const defaultRingtoneFileName = '吉森信 - 前略 じーちゃん.mp3';
+export const defaultRingtoneUrl = `/${encodeURI(defaultRingtoneFileName.normalize('NFD'))}`;
 
 export const openAiImageSizeOptions = ['1024x1024', '832x1216', '768x1152', '640x960', '1216x832', '1152x768'];
 
@@ -103,6 +107,28 @@ export function normalizeChatModelOverrides(overrides?: Partial<ChatModelOverrid
     offline: String(overrides?.offline ?? '').trim(),
     summary: String(overrides?.summary ?? '').trim(),
     voom: String(overrides?.voom ?? '').trim()
+  };
+}
+
+function createDefaultRingtoneAsset(): RingtoneAsset {
+  return {
+    id: 'ringtone_default_jichan',
+    name: defaultRingtoneFileName,
+    url: defaultRingtoneUrl,
+    mimeType: 'audio/mpeg',
+    size: 0,
+    source: 'default',
+    updatedAt: 0
+  };
+}
+
+export function createDefaultRingtoneSettings(): AppRingtoneSettings {
+  return {
+    global: {
+      voom: createDefaultRingtoneAsset(),
+      message: createDefaultRingtoneAsset()
+    },
+    characters: {}
   };
 }
 
@@ -213,6 +239,7 @@ export const defaultAppSettings: AppSettings = {
   voomImageProvider: '',
   voomImageModel: '',
   voomReadAtByUser: {},
+  ringtoneSettings: createDefaultRingtoneSettings(),
   imagePrivateOnly: true,
   imageGenerationEnabled: true,
   githubBackup: {
@@ -294,6 +321,54 @@ function normalizeVoomReadAtByUser(input: unknown): Record<string, Record<string
   }
 
   return normalized;
+}
+
+function normalizeRingtoneAsset(asset: Partial<RingtoneAsset> | null | undefined, fallback?: RingtoneAsset): RingtoneAsset | null {
+  const source = asset?.source === 'imported' ? 'imported' : fallback?.source ?? 'default';
+  const url = source === 'default'
+    ? String(fallback?.url ?? defaultRingtoneUrl).trim()
+    : String(asset?.url ?? fallback?.url ?? '').trim();
+  if (!url) return fallback ? { ...fallback } : null;
+  return {
+    id: String(asset?.id ?? fallback?.id ?? '').trim() || (source === 'default' ? 'ringtone_default_jichan' : createId('ringtone')),
+    name: String(asset?.name ?? fallback?.name ?? '').trim() || defaultRingtoneFileName,
+    url,
+    mimeType: String(asset?.mimeType ?? fallback?.mimeType ?? '').trim() || 'audio/mpeg',
+    size: Math.max(0, Math.round(Number(asset?.size ?? fallback?.size ?? 0) || 0)),
+    source,
+    updatedAt: Math.max(0, Number(asset?.updatedAt ?? fallback?.updatedAt ?? 0) || 0)
+  };
+}
+
+function normalizeCharacterRingtoneSettings(entry: Partial<CharacterRingtoneSettings> | null | undefined): CharacterRingtoneSettings | null {
+  const characterId = String(entry?.characterId ?? '').trim();
+  if (!characterId) return null;
+
+  const normalized: CharacterRingtoneSettings = { characterId };
+  ringtoneEventTypes.forEach((eventType) => {
+    const asset = normalizeRingtoneAsset(entry?.[eventType]);
+    if (asset) normalized[eventType] = asset;
+  });
+
+  return normalized.voom || normalized.message ? normalized : null;
+}
+
+export function normalizeRingtoneSettings(settings: Partial<AppRingtoneSettings> | null | undefined): AppRingtoneSettings {
+  const fallback = createDefaultRingtoneSettings();
+  const global = ringtoneEventTypes.reduce((result, eventType) => {
+    result[eventType] = normalizeRingtoneAsset(settings?.global?.[eventType], fallback.global[eventType]) ?? fallback.global[eventType];
+    return result;
+  }, {} as Record<RingtoneEventType, RingtoneAsset>);
+
+  const characters: Record<string, CharacterRingtoneSettings> = {};
+  if (settings?.characters && typeof settings.characters === 'object' && !Array.isArray(settings.characters)) {
+    Object.entries(settings.characters).forEach(([characterId, entry]) => {
+      const normalized = normalizeCharacterRingtoneSettings({ ...entry, characterId });
+      if (normalized) characters[normalized.characterId] = normalized;
+    });
+  }
+
+  return { global, characters };
 }
 
 function normalizeMinimaxTtsSettings(settings: Partial<MinimaxTtsSettings> | null | undefined, legacy: { enabled?: boolean; voiceId?: string } = {}): MinimaxTtsSettings {
@@ -1089,6 +1164,7 @@ export function normalizeAppSettings(settings?: Partial<AppSettings> | null): Ap
         : ''
     }),
     voomReadAtByUser: normalizeVoomReadAtByUser(settings?.voomReadAtByUser),
+    ringtoneSettings: normalizeRingtoneSettings(settings?.ringtoneSettings),
     githubBackup: normalizeGitHubBackupSettings(settings?.githubBackup)
   };
 

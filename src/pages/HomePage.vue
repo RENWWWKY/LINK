@@ -6,7 +6,7 @@
         <button class="icon-button" type="button" aria-label="收藏" @click="openFavoritesPage">
           <Bookmark :size="24" />
         </button>
-        <button class="icon-button" type="button" aria-label="通知">
+        <button class="icon-button" type="button" aria-label="铃声设置" @click="openRingtoneSettings">
           <Bell :size="24" />
         </button>
         <button class="icon-button" type="button" aria-label="添加好友" @click="openAddFriendPage">
@@ -112,6 +112,10 @@ function openWorldBookPage() {
 
 function openFavoritesPage() {
   void router.push({ name: 'favorites' });
+}
+
+function openRingtoneSettings() {
+  void router.push({ name: 'ringtones' });
 }
 
 function openAddFriendPage() {
