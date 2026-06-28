@@ -229,6 +229,7 @@ const hiddenMessageIds = computed(() => store.hiddenMessageIdsForConversation(pr
 const chapterFloors = computed(() => getConversationFloors(offlineAllMessages.value).map((messages, index) => createChapterFloor(messages, index)));
 const latestOfflineMessage = computed(() => offlineAllMessages.value.filter((message) => message.replyVariantState !== 'inactive').at(-1));
 const canRegenerate = computed(() => latestOfflineMessage.value?.sender === 'char');
+const bottomRestoreDelays = [40, 120, 260, 520];
 const { captureKeyboardScrollAnchor, releaseKeyboardScrollGuard, startKeyboardScrollGuard, stopKeyboardScrollGuard } = useKeyboardScrollGuard(offlineScrollRef);
 
 interface ChapterFloor {
@@ -541,6 +542,23 @@ async function syncConversationState(id: string) {
   }
 }
 
+function scrollOfflineToBottomNow() {
+  const scrollElement = offlineScrollRef.value;
+  if (!scrollElement) return;
+  scrollElement.scrollTop = scrollElement.scrollHeight;
+}
+
+function restoreOfflineBottomAfterLayout() {
+  scrollOfflineToBottomNow();
+  window.requestAnimationFrame(scrollOfflineToBottomNow);
+  for (const delay of bottomRestoreDelays) window.setTimeout(scrollOfflineToBottomNow, delay);
+}
+
+async function scrollOfflineToBottom() {
+  await nextTick();
+  restoreOfflineBottomAfterLayout();
+}
+
 function messageIdsForFloor(floor: ChapterFloor) {
   const ids = new Set(floor.messages.map((message) => message.id));
   floor.messages.forEach((message) => {
@@ -711,7 +729,11 @@ onMounted(async () => {
   await store.hydrate();
   await syncConversationState(props.id);
   const focusId = focusedMessageId();
-  if (focusId) await scrollToFocusedFloor(focusId);
+  if (focusId) {
+    await scrollToFocusedFloor(focusId);
+  } else {
+    await scrollOfflineToBottom();
+  }
 });
 
 watch(() => props.id, (id) => {
@@ -727,7 +749,11 @@ watch(() => props.id, (id) => {
   void (async () => {
     await syncConversationState(id);
     const focusId = focusedMessageId();
-    if (focusId) await scrollToFocusedFloor(focusId);
+    if (focusId) {
+      await scrollToFocusedFloor(focusId);
+    } else {
+      await scrollOfflineToBottom();
+    }
   })();
 });
 

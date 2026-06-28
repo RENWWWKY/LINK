@@ -756,6 +756,12 @@ function scrollMessagesToBottomNow() {
   messageList.scrollTop = messageList.scrollHeight;
 }
 
+function restoreMessagesToBottomAfterLayout() {
+  scrollMessagesToBottomNow();
+  window.requestAnimationFrame(scrollMessagesToBottomNow);
+  for (const delay of bottomRestoreDelays) window.setTimeout(scrollMessagesToBottomNow, delay);
+}
+
 function focusComposerInput() {
   captureKeyboardScrollAnchor();
   composerRef.value?.focusInput();
@@ -770,11 +776,7 @@ function focusComposerInput() {
 }
 
 function queueMessagesToBottomAfterLayout() {
-  void nextTick(() => {
-    scrollMessagesToBottomNow();
-    window.requestAnimationFrame(scrollMessagesToBottomNow);
-    for (const delay of bottomRestoreDelays) window.setTimeout(scrollMessagesToBottomNow, delay);
-  });
+  void nextTick(restoreMessagesToBottomAfterLayout);
 }
 
 async function syncConversationState(id: string) {
@@ -787,7 +789,7 @@ async function syncConversationState(id: string) {
 
 async function scrollMessagesToBottom() {
   await nextTick();
-  scrollMessagesToBottomNow();
+  restoreMessagesToBottomAfterLayout();
 }
 
 function focusedMessageId() {
