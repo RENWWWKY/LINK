@@ -6,7 +6,7 @@ import type { AppSettings, AppSnapshot, CharacterProfile, CharacterProfileHistor
 import { createAccountId, createId } from '@/utils/id';
 import { getCharacterInitialProfile, getCharacterVoomAuthorName, normalizeCharacterMindStateLines, normalizeCharacterProfile } from '@/utils/character';
 import { normalizeUserProfile, normalizeVisualProfile } from '@/utils/profile';
-import { getImageGenerationSize, getImagePromptPresetForProvider, getSelectedImageModelOption, mergeVendorModels, normalizeAppSettings, normalizeChatModelOverrides } from '@/utils/settings';
+import { getImageGenerationSize, getImagePromptPresetForProvider, getSelectedImageModelOption, isImageModelSelectionDisabled, mergeVendorModels, normalizeAppSettings, normalizeChatModelOverrides } from '@/utils/settings';
 import { normalizeWorldBookEntry, normalizeWorldBooks } from '@/utils/worldBook';
 import { RECENT_STICKER_GROUP_NAME, createStickerFromDraft, createStickerGroup, isLegacyGanadiSticker, isLegacyGanadiStickerGroup, isRecentStickerGroupId, localizeStickerImageUrl, normalizeSticker, normalizeStickerGroup, shouldLocalizeStickerImageUrl, sortRecentStickers, type StickerImportDraft } from '@/utils/stickers';
 import { ageMemoryKind, buildMemoryAtomContext, createMemoryAtomsFromRecord, createMemoryRecord, estimateTokenCount, getConversationFloorCount, getHiddenMessageIds, getMemoryContext, getMemoryHiddenEndFloor, getMessageFloorMap, getMessagesInFloorRange, getNextSummaryRange, getVisibleMessages, mergeMemoryAtoms, normalizeConversationSettings, normalizeMemoryAtom, normalizeMemoryRecordEntries, renderCharacterMemoryPrompt, shouldCompressMemory } from '@/utils/memory';
@@ -4357,7 +4357,7 @@ export const useAppStore = defineStore('app', () => {
   async function generateChatImageCandidate(description: string) {
     const imageDescription = description.trim();
     const selectedModel = getSelectedImageModelOption(settings.value, 'onlineChat');
-    if (!imageDescription || !settings.value?.imageGenerationEnabled || !settings.value || !selectedModel) return null;
+    if (!imageDescription || !settings.value || !selectedModel) return null;
 
     const provider = selectedModel.provider;
     const promptPreset = getImagePromptPresetForProvider(settings.value, provider);
@@ -4453,7 +4453,7 @@ export const useAppStore = defineStore('app', () => {
     const existingMessage = messages.value.find((message) => message.id === normalizedMessageId);
     if (!existingMessage?.image || !imageDescription) return null;
     if (!getSelectedImageModelOption(settings.value, 'onlineChat')) {
-      showConfigAlert('请先在顶部切换按钮里选择一个已配置的生图模型。', '无法生成图片');
+      showConfigAlert('请先在生图模型切换里选择一个已配置的生图模型。', '无法生成图片');
       return null;
     }
     regeneratingChatImageMessageIds.add(normalizedMessageId);
@@ -4498,16 +4498,14 @@ export const useAppStore = defineStore('app', () => {
     const selectedModel = getSelectedImageModelOption(settings.value, 'voom');
     const imageDescription = description.trim();
     if (!post || !settings.value) return null;
-    if (!settings.value.imageGenerationEnabled) {
-      showConfigAlert('生图开关已关闭，VOOM 配图将以文字卡片形式显示。', '生图已关闭');
-      return null;
-    }
     if (!imageDescription) {
       showConfigAlert('请先填写 VOOM 配图描述。', '无法生成配图');
       return null;
     }
     if (!selectedModel) {
-      showConfigAlert('请先在顶部切换按钮里选择一个已配置的生图模型。', '无法生成配图');
+      showConfigAlert(isImageModelSelectionDisabled(settings.value.imageModelOverrides.voom)
+        ? 'VOOM 生图已关闭，请先在生图模型切换里改回可用模型。'
+        : '请先在生图模型切换里选择一个已配置的生图模型。', '无法生成配图');
       return null;
     }
 
@@ -4590,7 +4588,7 @@ export const useAppStore = defineStore('app', () => {
   async function generateVoomPostImageBeforePublish(post: VoomPost) {
     const selectedModel = getSelectedImageModelOption(settings.value, 'voom');
     const imageDescription = post.imageDescription?.trim() ?? '';
-    if (!settings.value?.imageGenerationEnabled || !settings.value || !selectedModel || !imageDescription) return post;
+    if (!settings.value || !selectedModel || !imageDescription) return post;
 
     regeneratingVoomImagePostIds.add(post.id);
     const provider = selectedModel.provider;

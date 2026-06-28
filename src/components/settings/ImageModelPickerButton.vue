@@ -12,6 +12,7 @@
           <span v-if="selectedModelMeta(scope.id)" class="model-select-vendor">{{ selectedModelMeta(scope.id)?.providerLabel }}</span>
           <select :value="selectionValueFor(scope.id)" :class="{ 'with-provider': selectedModelMeta(scope.id) }" @change="updateImageModel(scope.id, $event)">
             <option value="">跟随可用默认生图模型</option>
+            <option :value="disabledImageModelSelectionValue">关闭生图</option>
             <optgroup v-for="group in groupedImageModels" :key="`${scope.id}-${group.id}`" :label="group.label">
               <option v-for="option in group.options" :key="`${scope.id}-${option.key}`" :value="option.key">
                 {{ option.label }}{{ option.detail ? ` · ${option.detail}` : '' }}
@@ -35,7 +36,7 @@ import { SlidersHorizontal } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
 import { useAppStore } from '@/stores/appStore';
 import type { AppSettings, ImageModelScope } from '@/types/domain';
-import { createImageModelKey, getConfiguredImageModelOptions, getSelectedImageModelOption, type ConfiguredImageModelOption } from '@/utils/settings';
+import { createImageModelKey, disabledImageModelSelectionValue, getConfiguredImageModelOptions, getSelectedImageModelOption, isImageModelSelectionDisabled, type ConfiguredImageModelOption } from '@/utils/settings';
 
 withDefaults(defineProps<{
   showLabel?: boolean;
@@ -56,8 +57,12 @@ const imageModelScopes: Array<{ id: ImageModelScope; label: string }> = [
 
 const imageModelOptions = computed(() => getConfiguredImageModelOptions(store.settings));
 const selectedModel = computed(() => getSelectedImageModelOption(store.settings, 'voom'));
-const compactSelectedLabel = computed(() => selectedModel.value?.providerLabel ?? 'Image');
-const buttonLabel = computed(() => selectedModel.value ? `切换生图模型：${selectedModel.value.providerLabel} · ${selectedModel.value.label}` : '切换生图模型');
+const voomImageDisabled = computed(() => isImageModelSelectionDisabled(store.settings?.imageModelOverrides.voom));
+const compactSelectedLabel = computed(() => voomImageDisabled.value ? '已关闭' : selectedModel.value?.providerLabel ?? 'Image');
+const buttonLabel = computed(() => {
+  if (voomImageDisabled.value) return '切换生图模型：VOOM 已关闭生图';
+  return selectedModel.value ? `切换生图模型：${selectedModel.value.providerLabel} · ${selectedModel.value.label}` : '切换生图模型';
+});
 const groupedImageModels = computed(() => {
   const groups = new Map<string, { id: string; label: string; options: ConfiguredImageModelOption[] }>();
   for (const option of imageModelOptions.value) {
@@ -79,6 +84,7 @@ function rawSelectionFor(scope: ImageModelScope) {
 
 function selectionValueFor(scope: ImageModelScope) {
   const selection = rawSelectionFor(scope);
+  if (isImageModelSelectionDisabled(selection)) return disabledImageModelSelectionValue;
   const key = selection.provider ? createImageModelKey(selection.provider, selection.model) : '';
   return imageModelOptions.value.some((option) => option.key === key) ? key : '';
 }
@@ -93,21 +99,23 @@ async function updateImageModel(scope: ImageModelScope, event: Event) {
   if (!settings) return;
   const value = (event.target as HTMLSelectElement).value;
   const option = imageModelOptions.value.find((item) => item.key === value) ?? null;
+  const disabled = value === disabledImageModelSelectionValue;
 
   const nextSettings: AppSettings = {
     ...settings,
+    imageGenerationEnabled: true,
     imageModelOverrides: {
       ...settings.imageModelOverrides,
       [scope]: {
         provider: option?.provider ?? '',
-        model: option?.model ?? ''
+        model: disabled ? disabledImageModelSelectionValue : option?.model ?? ''
       }
     }
   };
 
-  if (scope === 'voom' && option) {
-    nextSettings.voomImageProvider = option.provider;
-    nextSettings.voomImageModel = option.model;
+  if (scope === 'voom') {
+    nextSettings.voomImageProvider = option?.provider ?? '';
+    nextSettings.voomImageModel = disabled ? disabledImageModelSelectionValue : option?.model ?? '';
   }
 
   if (!option) {

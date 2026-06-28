@@ -34,6 +34,8 @@ export interface ConfiguredImageModelOption {
   model: string;
 }
 
+export const disabledImageModelSelectionValue = '__disabled__';
+
 const imageProviderOrder: ImageProviderType[] = ['openai', 'novelai', 'pollinations'];
 const ttsProviderOrder: TtsProviderType[] = ['minimax', 'openai'];
 const openAiTtsAudioFormats: OpenAiTtsAudioFormat[] = ['mp3', 'opus', 'aac', 'flac', 'wav', 'pcm'];
@@ -312,6 +314,9 @@ function normalizeLegacyTtsVoice(voice: string | null | undefined) {
 }
 
 function normalizeImageModelSelection(selection: Partial<ImageModelSelection> | null | undefined, fallback?: Partial<ImageModelSelection> | null): ImageModelSelection {
+  if (isImageModelSelectionDisabled(selection)) {
+    return { provider: '', model: disabledImageModelSelectionValue };
+  }
   const provider = normalizeImageProvider(selection?.provider ?? fallback?.provider);
   return {
     provider,
@@ -319,7 +324,19 @@ function normalizeImageModelSelection(selection: Partial<ImageModelSelection> | 
   };
 }
 
+export function isImageModelSelectionDisabled(selection: Partial<ImageModelSelection> | null | undefined) {
+  return !normalizeImageProvider(selection?.provider) && String(selection?.model ?? '').trim() === disabledImageModelSelectionValue;
+}
+
 function normalizeImageModelOverrides(settings?: Partial<AppSettings> | null) {
+  if (settings?.imageGenerationEnabled === false) {
+    const disabledSelection = { provider: '', model: disabledImageModelSelectionValue } satisfies ImageModelSelection;
+    return {
+      worldBook: disabledSelection,
+      voom: disabledSelection,
+      onlineChat: disabledSelection
+    } satisfies Record<ImageModelScope, ImageModelSelection>;
+  }
   const legacySelection = {
     provider: settings?.voomImageProvider,
     model: settings?.voomImageModel
@@ -1191,6 +1208,7 @@ export function getConfiguredImageModelOptions(settings?: AppSettings | null): C
 export function getSelectedImageModelOption(settings?: AppSettings | null, scope: ImageModelScope = 'voom') {
   const options = getConfiguredImageModelOptions(settings);
   const scopedSelection = settings?.imageModelOverrides?.[scope];
+  if (isImageModelSelectionDisabled(scopedSelection)) return null;
   const selectedProvider = normalizeImageProvider(scopedSelection?.provider ?? settings?.voomImageProvider);
   const selectedModel = String(scopedSelection?.model ?? settings?.voomImageModel ?? '').trim();
   const selectedKey = selectedProvider ? createImageModelKey(selectedProvider, selectedModel) : '';

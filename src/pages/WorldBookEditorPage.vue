@@ -237,7 +237,7 @@ import { generateImageByProvider } from '@/services/ai';
 import { useAppStore } from '@/stores/appStore';
 import type { ImageProviderType, WorldBookEntry, WorldBookEntryActivation, WorldBookLoreEntry } from '@/types/domain';
 import { createId } from '@/utils/id';
-import { getImagePromptPresetForProvider, getSelectedImageModelOption, normalizeAppSettings } from '@/utils/settings';
+import { getImagePromptPresetForProvider, getSelectedImageModelOption, isImageModelSelectionDisabled, normalizeAppSettings } from '@/utils/settings';
 import { compressInlineImageDataUrl, readImageFileFromInput } from '@/utils/imageFile';
 import { createWorldBookLoreEntry, getWorldBookContentSummary, normalizeWorldBookEntry, resolveWorldBookCover } from '@/utils/worldBook';
 
@@ -568,15 +568,12 @@ function getCoverSizeLabel(provider: ImageProviderType) {
 
 async function generateCover() {
   if (coverState.value === 'loading') return;
-  if (!currentSettings.value.imageGenerationEnabled) {
-    coverState.value = 'error';
-    coverFeedback.value = '生图开关已关闭，请先在 Image 页面顶部开启生图。';
-    return;
-  }
   const selectedModel = getSelectedImageModelOption(currentSettings.value, 'worldBook');
   if (!selectedModel) {
     coverState.value = 'error';
-    coverFeedback.value = '请先在顶部切换按钮里选择一个已配置的生图模型。';
+    coverFeedback.value = isImageModelSelectionDisabled(currentSettings.value.imageModelOverrides.worldBook)
+      ? '世界书封面生图已关闭，请先在生图模型切换里改回可用模型。'
+      : '请先在生图模型切换里选择一个已配置的生图模型。';
     return;
   }
 
