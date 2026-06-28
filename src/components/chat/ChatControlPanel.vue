@@ -196,7 +196,7 @@
             <span>预览下一轮召回</span>
             <textarea v-model="recallPreviewQuery" rows="2" placeholder="输入可能发送的话，查看会命中哪些原子"></textarea>
           </label>
-          <div v-if="activeRecallTrace?.selectedAtoms.length" class="memory-debug-list">
+          <div v-if="activeRecallTrace?.selectedAtoms.length" class="memory-debug-list memory-scroll-panel">
             <article v-for="atom in memoryDebugPreview" :key="atom.id" class="memory-debug-row">
               <span>{{ memoryAtomTypeLabel(atom.type) }} · {{ memoryAtomStatusLabel(atom.status) }} · {{ atom.tokenCount }} tokens · {{ atom.score }}</span>
               <strong>{{ atom.subject }}</strong>
@@ -211,36 +211,50 @@
             <header class="merge-picker-head">
               <div>
                 <strong>原子记忆管理</strong>
-                <span>可固定、改状态、调权重或删除错误记忆。</span>
+                <span>优先显示固定和高重要度记忆；长内容可在卡片内滚动。</span>
               </div>
             </header>
-            <article v-for="atom in memoryAtomPreview" :key="atom.id" class="memory-atom-row">
-              <div class="memory-atom-head">
-                <span>{{ memoryAtomTypeLabel(atom.type) }} · {{ atom.subject }}</span>
-                <button class="tiny-action" type="button" @click="toggleAtomPinned(atom.id)">{{ atom.pinned ? '已固定' : '固定' }}</button>
-              </div>
-              <textarea :value="atom.content" rows="2" @change="updateAtomContent(atom, $event)"></textarea>
-              <div class="memory-atom-meta-grid">
-                <label><span>责任</span><input :value="atom.owner ?? ''" @change="updateAtomMeta(atom, 'owner', $event)" /></label>
-                <label><span>对象</span><input :value="atom.counterparty ?? ''" @change="updateAtomMeta(atom, 'counterparty', $event)" /></label>
-                <label><span>期限</span><input :value="atom.due ?? ''" @change="updateAtomMeta(atom, 'due', $event)" /></label>
-                <label><span>结果</span><input :value="atom.resolution ?? ''" @change="updateAtomMeta(atom, 'resolution', $event)" /></label>
-              </div>
-              <div class="memory-atom-controls">
-                <label>
-                  <span>状态</span>
-                  <select :value="atom.status" @change="updateAtomStatus(atom, $event)">
-                    <option v-for="status in memoryAtomStatusOptions" :key="status.value" :value="status.value">{{ status.label }}</option>
-                  </select>
+            <div class="memory-atom-scroll" role="list">
+              <article v-for="atom in memoryAtomPreview" :key="atom.id" class="memory-atom-row" :class="{ 'is-archived': atom.archivedAt }" role="listitem">
+                <header class="memory-atom-card-head">
+                  <div class="memory-atom-title">
+                    <span>{{ memoryAtomTypeLabel(atom.type) }}</span>
+                    <strong>{{ atom.subject }}</strong>
+                  </div>
+                  <button class="tiny-action" type="button" @click="requestToggleAtomPinned(atom)">{{ atom.pinned ? '取消固定' : '固定' }}</button>
+                </header>
+                <div class="memory-atom-badges">
+                  <span>{{ memoryAtomStatusLabel(atom.status) }}</span>
+                  <span>重要度 {{ atom.importance }}</span>
+                  <span v-if="atom.pinned">已固定</span>
+                  <span v-if="atom.archivedAt">已屏蔽</span>
+                </div>
+                <label class="memory-atom-content-field">
+                  <span>内容</span>
+                  <textarea :value="atom.content" rows="3" @change="updateAtomContent(atom, $event)"></textarea>
                 </label>
-                <label>
-                  <span>重要度</span>
-                  <input :value="atom.importance" min="1" max="5" type="number" @change="updateAtomImportance(atom, $event)" />
-                </label>
-                <button class="tiny-action" type="button" @click="toggleAtomArchived(atom)">{{ atom.archivedAt ? '取消屏蔽' : '屏蔽' }}</button>
-                <button class="danger-action" type="button" @click="requestDeleteAtom(atom.id)">删除</button>
-              </div>
-            </article>
+                <div class="memory-atom-meta-grid">
+                  <label><span>责任</span><input :value="atom.owner ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'owner', $event)" /></label>
+                  <label><span>对象</span><input :value="atom.counterparty ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'counterparty', $event)" /></label>
+                  <label><span>期限</span><input :value="atom.due ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'due', $event)" /></label>
+                  <label><span>结果</span><input :value="atom.resolution ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'resolution', $event)" /></label>
+                </div>
+                <div class="memory-atom-controls">
+                  <label>
+                    <span>状态</span>
+                    <select :value="atom.status" @change="updateAtomStatus(atom, $event)">
+                      <option v-for="status in memoryAtomStatusOptions" :key="status.value" :value="status.value">{{ status.label }}</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>重要度</span>
+                    <input :value="atom.importance" min="1" max="5" type="number" @change="updateAtomImportance(atom, $event)" />
+                  </label>
+                  <button class="tiny-action" type="button" @click="requestToggleAtomArchived(atom)">{{ atom.archivedAt ? '取消屏蔽' : '屏蔽' }}</button>
+                  <button class="danger-action" type="button" @click="requestDeleteAtom(atom.id)">删除</button>
+                </div>
+              </article>
+            </div>
           </section>
         </section>
 
@@ -794,8 +808,7 @@ const totalMemoryTokens = computed(() => store.nextReplyTokenCountForConversatio
 const openMemoryAtomCount = computed(() => memoryAtoms.value.filter((atom) => atom.status === 'open' && !atom.archivedAt).length);
 const memoryDebugPreview = computed(() => activeRecallTrace.value?.selectedAtoms.slice(0, 8) ?? []);
 const memoryAtomPreview = computed(() => [...memoryAtoms.value]
-  .sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.importance - left.importance || right.updatedAt - left.updatedAt)
-  .slice(0, 12));
+  .sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.importance - left.importance || right.updatedAt - left.updatedAt));
 const messageCount = computed(() => getConversationFloorCount(store.messagesForConversation(props.conversationId)));
 const hiddenFloorStatus = computed(() => {
   const hiddenRanges = getEffectiveHiddenFloorRanges(memories.value)
@@ -1360,8 +1373,21 @@ function requestDeleteMemory(memoryId: string) {
   });
 }
 
-function toggleAtomPinned(atomId: string) {
-  void store.toggleMemoryAtomPinned(atomId);
+function requestToggleAtomPinned(atom: ConversationMemoryAtom) {
+  openConfirmDialog({
+    eyebrow: 'Pin atom',
+    title: atom.pinned ? '取消固定这条原子记忆？' : '固定这条原子记忆？',
+    message: `${memoryAtomTypeLabel(atom.type)} · ${atom.subject}`,
+    details: [
+      atom.pinned ? '取消后，这条记忆会重新按重要度和时间排序。' : '固定后，这条记忆会优先保留，减少被后续总结覆盖的概率。',
+      atom.content
+    ],
+    confirmText: atom.pinned ? '取消固定' : '确认固定',
+    runningText: '处理中',
+    action: async () => {
+      await store.toggleMemoryAtomPinned(atom.id);
+    }
+  });
 }
 
 function updateAtomStatus(atom: ConversationMemoryAtom, event: Event) {
@@ -1386,8 +1412,22 @@ function updateAtomMeta(atom: ConversationMemoryAtom, field: MemoryAtomMetaField
   void store.updateMemoryAtom(atom.id, { [field]: value, pinned: true });
 }
 
-function toggleAtomArchived(atom: ConversationMemoryAtom) {
-  void store.updateMemoryAtom(atom.id, { archivedAt: atom.archivedAt ? undefined : Date.now(), pinned: true });
+function requestToggleAtomArchived(atom: ConversationMemoryAtom) {
+  openConfirmDialog({
+    eyebrow: atom.archivedAt ? 'Restore atom' : 'Archive atom',
+    title: atom.archivedAt ? '取消屏蔽这条原子记忆？' : '屏蔽这条原子记忆？',
+    message: `${memoryAtomTypeLabel(atom.type)} · ${atom.subject}`,
+    details: [
+      atom.archivedAt ? '取消屏蔽后，它会重新参与后续召回。' : '屏蔽后，它会保留在管理区，但不会参与后续召回。',
+      atom.content
+    ],
+    confirmText: atom.archivedAt ? '取消屏蔽' : '确认屏蔽',
+    runningText: '处理中',
+    tone: atom.archivedAt ? 'primary' : 'danger',
+    action: async () => {
+      await store.updateMemoryAtom(atom.id, { archivedAt: atom.archivedAt ? undefined : Date.now(), pinned: true });
+    }
+  });
 }
 
 function requestDeleteAtom(atomId: string) {
@@ -1739,6 +1779,17 @@ function applyEditedAvatar(value: string) {
   gap: 8px;
 }
 
+.memory-scroll-panel,
+.memory-atom-scroll {
+  min-height: 0;
+  max-height: min(38vh, 320px);
+  overflow-y: auto;
+  padding-right: 2px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
 .memory-recall-preview {
   display: grid;
   gap: 6px;
@@ -1780,6 +1831,7 @@ function applyEditedAvatar(value: string) {
   color: #746f70;
   font-size: 12px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .memory-debug-row strong {
@@ -1816,38 +1868,105 @@ function applyEditedAvatar(value: string) {
 .memory-atom-manager {
   display: grid;
   gap: 8px;
+  min-width: 0;
+}
+
+.memory-atom-scroll {
+  display: grid;
+  gap: 10px;
+  max-height: min(52vh, 430px);
 }
 
 .memory-atom-row {
   display: grid;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.68);
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(31, 107, 58, 0.06);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(248, 251, 249, 0.78));
+  box-shadow: 0 10px 24px rgba(21, 30, 26, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.92);
 }
 
-.memory-atom-head,
-.memory-atom-controls {
+.memory-atom-row.is-archived {
+  background: rgba(244, 246, 245, 0.72);
+  opacity: 0.82;
+}
+
+.memory-atom-card-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
 }
 
-.memory-atom-head span {
+.memory-atom-title {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.memory-atom-title span {
+  color: #6d8a73;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.memory-atom-title strong {
+  min-width: 0;
   overflow: hidden;
-  color: #24201e;
-  font-size: 13px;
-  font-weight: 900;
+  color: #17241d;
+  font-size: 14px;
+  font-weight: 950;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.memory-atom-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.memory-atom-badges span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(31, 107, 58, 0.08);
+  color: #326743;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.memory-atom-content-field {
+  display: grid;
+  gap: 5px;
+}
+
+.memory-atom-content-field > span {
+  color: #746f70;
+  font-size: 11px;
+  font-weight: 850;
+}
+
 .memory-atom-row textarea {
   width: 100%;
-  min-height: 52px;
-  resize: vertical;
+  min-height: 92px;
+  max-height: 132px;
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid rgba(76, 67, 62, 0.08);
+  border-radius: 14px;
+  outline: 0;
+  background: rgba(255, 255, 255, 0.78);
+  color: #24201e;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.5;
+  resize: none;
 }
 
 .memory-atom-meta-grid {
@@ -1874,13 +1993,17 @@ function applyEditedAvatar(value: string) {
 }
 
 .memory-atom-controls {
-  grid-template-columns: minmax(0, 1fr) 82px auto auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 8px;
 }
 
 .memory-atom-controls .danger-action,
 .memory-atom-controls .tiny-action {
   min-height: 34px;
   padding-inline: 12px;
+  width: 100%;
 }
 
 .memory-atom-controls label {
@@ -4574,10 +4697,17 @@ function applyEditedAvatar(value: string) {
 .memory-confirm-card ul {
   display: grid;
   gap: 7px;
+  max-height: min(32vh, 240px);
+  overflow-y: auto;
   margin: 0;
   padding: 10px 12px 10px 26px;
   border-radius: 16px;
   background: rgba(248, 251, 249, 0.92);
+  overscroll-behavior: contain;
+}
+
+.memory-confirm-card li {
+  overflow-wrap: anywhere;
 }
 
 .memory-confirm-card-danger > span {
@@ -4601,7 +4731,7 @@ function applyEditedAvatar(value: string) {
 .memory-panel .switch-card div span:not(.switch-track),
 .memory-panel .compact-field > span,
 .memory-panel .compact-field small,
-.memory-panel .memory-atom-head span,
+.memory-panel .memory-atom-title strong,
 .memory-panel .secondary-action,
 .memory-panel .danger-action,
 .memory-panel .summary-submit,

@@ -177,7 +177,7 @@
           <span>预览下一轮召回</span>
           <textarea v-model="recallPreviewQuery" rows="2" placeholder="输入可能发送的话，查看会命中哪些原子"></textarea>
         </label>
-        <div v-if="activeRecallTrace?.selectedAtoms.length" class="atom-list">
+        <div v-if="activeRecallTrace?.selectedAtoms.length" class="atom-list memory-scroll-panel">
           <article v-for="atom in memoryDebugPreview" :key="atom.id" class="atom-row compact-atom-row">
             <span>{{ memoryAtomTypeLabel(atom.type) }} · {{ memoryAtomStatusLabel(atom.status) }} · {{ atom.tokenCount }} tokens · {{ atom.score }}</span>
             <strong>{{ atom.subject }}</strong>
@@ -192,28 +192,42 @@
           <header class="picker-head">
             <div>
               <strong>原子记忆管理</strong>
-              <span>修正错误记忆后会自动固定，防止被后续总结覆盖。</span>
+              <span>优先显示固定和高重要度记忆；长内容可在卡片内滚动。</span>
             </div>
           </header>
-          <article v-for="atom in memoryAtomPreview" :key="atom.id" class="atom-row">
-            <div class="atom-row-head">
-              <span>{{ memoryAtomTypeLabel(atom.type) }} · {{ atom.subject }}</span>
-              <button class="tiny-pill" type="button" @click="toggleAtomPinned(atom.id)">{{ atom.pinned ? '已固定' : '固定' }}</button>
-            </div>
-            <textarea :value="atom.content" rows="2" @change="updateAtomContent(atom, $event)"></textarea>
-            <div class="atom-meta-grid">
-              <label><span>责任</span><input :value="atom.owner ?? ''" @change="updateAtomMeta(atom, 'owner', $event)" /></label>
-              <label><span>对象</span><input :value="atom.counterparty ?? ''" @change="updateAtomMeta(atom, 'counterparty', $event)" /></label>
-              <label><span>期限</span><input :value="atom.due ?? ''" @change="updateAtomMeta(atom, 'due', $event)" /></label>
-              <label><span>结果</span><input :value="atom.resolution ?? ''" @change="updateAtomMeta(atom, 'resolution', $event)" /></label>
-            </div>
-            <div class="atom-controls">
-              <label><span>状态</span><select :value="atom.status" @change="updateAtomStatus(atom, $event)"><option v-for="status in memoryAtomStatusOptions" :key="status.value" :value="status.value">{{ status.label }}</option></select></label>
-              <label><span>重要度</span><input :value="atom.importance" min="1" max="5" type="number" @change="updateAtomImportance(atom, $event)" /></label>
-              <button class="soft-pill" type="button" @click="toggleAtomArchived(atom)">{{ atom.archivedAt ? '取消屏蔽' : '屏蔽' }}</button>
-              <button class="danger-pill" type="button" @click="requestDeleteAtom(atom.id)">删除</button>
-            </div>
-          </article>
+          <div class="atom-scroll" role="list">
+            <article v-for="atom in memoryAtomPreview" :key="atom.id" class="atom-row" :class="{ 'is-archived': atom.archivedAt }" role="listitem">
+              <header class="atom-card-head">
+                <div class="atom-title">
+                  <span>{{ memoryAtomTypeLabel(atom.type) }}</span>
+                  <strong>{{ atom.subject }}</strong>
+                </div>
+                <button class="tiny-pill" type="button" @click="requestToggleAtomPinned(atom)">{{ atom.pinned ? '取消固定' : '固定' }}</button>
+              </header>
+              <div class="atom-badges">
+                <span>{{ memoryAtomStatusLabel(atom.status) }}</span>
+                <span>重要度 {{ atom.importance }}</span>
+                <span v-if="atom.pinned">已固定</span>
+                <span v-if="atom.archivedAt">已屏蔽</span>
+              </div>
+              <label class="atom-content-field">
+                <span>内容</span>
+                <textarea :value="atom.content" rows="3" @change="updateAtomContent(atom, $event)"></textarea>
+              </label>
+              <div class="atom-meta-grid">
+                <label><span>责任</span><input :value="atom.owner ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'owner', $event)" /></label>
+                <label><span>对象</span><input :value="atom.counterparty ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'counterparty', $event)" /></label>
+                <label><span>期限</span><input :value="atom.due ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'due', $event)" /></label>
+                <label><span>结果</span><input :value="atom.resolution ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'resolution', $event)" /></label>
+              </div>
+              <div class="atom-controls">
+                <label><span>状态</span><select :value="atom.status" @change="updateAtomStatus(atom, $event)"><option v-for="status in memoryAtomStatusOptions" :key="status.value" :value="status.value">{{ status.label }}</option></select></label>
+                <label><span>重要度</span><input :value="atom.importance" min="1" max="5" type="number" @change="updateAtomImportance(atom, $event)" /></label>
+                <button class="soft-pill" type="button" @click="requestToggleAtomArchived(atom)">{{ atom.archivedAt ? '取消屏蔽' : '屏蔽' }}</button>
+                <button class="danger-pill" type="button" @click="requestDeleteAtom(atom.id)">删除</button>
+              </div>
+            </article>
+          </div>
         </section>
       </section>
 
@@ -406,8 +420,7 @@ const totalMemoryTokens = computed(() => store.nextReplyTokenCountForConversatio
 const openMemoryAtomCount = computed(() => memoryAtoms.value.filter((atom) => atom.status === 'open' && !atom.archivedAt).length);
 const memoryDebugPreview = computed(() => activeRecallTrace.value?.selectedAtoms.slice(0, 8) ?? []);
 const memoryAtomPreview = computed(() => [...memoryAtoms.value]
-  .sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.importance - left.importance || right.updatedAt - left.updatedAt)
-  .slice(0, 12));
+  .sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.importance - left.importance || right.updatedAt - left.updatedAt));
 const messageCount = computed(() => getConversationFloorCount(store.messagesForConversation(props.conversationId)));
 const hiddenFloorStatus = computed(() => {
   const hiddenRanges = getEffectiveHiddenFloorRanges(memories.value).map((range) => `${range.start}-${range.end}楼`);
@@ -803,8 +816,21 @@ function formatSignedScore(value: number) {
   return rounded > 0 ? `+${rounded}` : String(rounded);
 }
 
-function toggleAtomPinned(atomId: string) {
-  void store.toggleMemoryAtomPinned(atomId);
+function requestToggleAtomPinned(atom: ConversationMemoryAtom) {
+  openConfirmDialog({
+    eyebrow: 'Pin atom',
+    title: atom.pinned ? '取消固定这条原子记忆？' : '固定这条原子记忆？',
+    message: `${memoryAtomTypeLabel(atom.type)} · ${atom.subject}`,
+    details: [
+      atom.pinned ? '取消后，这条记忆会重新按重要度和时间排序。' : '固定后，这条记忆会优先保留，减少被后续总结覆盖的概率。',
+      atom.content
+    ],
+    confirmText: atom.pinned ? '取消固定' : '确认固定',
+    runningText: '处理中',
+    action: async () => {
+      await store.toggleMemoryAtomPinned(atom.id);
+    }
+  });
 }
 
 function updateAtomStatus(atom: ConversationMemoryAtom, event: Event) {
@@ -829,8 +855,22 @@ function updateAtomMeta(atom: ConversationMemoryAtom, field: MemoryAtomMetaField
   void store.updateMemoryAtom(atom.id, { [field]: value, pinned: true });
 }
 
-function toggleAtomArchived(atom: ConversationMemoryAtom) {
-  void store.updateMemoryAtom(atom.id, { archivedAt: atom.archivedAt ? undefined : Date.now(), pinned: true });
+function requestToggleAtomArchived(atom: ConversationMemoryAtom) {
+  openConfirmDialog({
+    eyebrow: atom.archivedAt ? 'Restore atom' : 'Archive atom',
+    title: atom.archivedAt ? '取消屏蔽这条原子记忆？' : '屏蔽这条原子记忆？',
+    message: `${memoryAtomTypeLabel(atom.type)} · ${atom.subject}`,
+    details: [
+      atom.archivedAt ? '取消屏蔽后，它会重新参与后续召回。' : '屏蔽后，它会保留在管理区，但不会参与后续召回。',
+      atom.content
+    ],
+    confirmText: atom.archivedAt ? '取消屏蔽' : '确认屏蔽',
+    runningText: '处理中',
+    tone: atom.archivedAt ? 'primary' : 'danger',
+    action: async () => {
+      await store.updateMemoryAtom(atom.id, { archivedAt: atom.archivedAt ? undefined : Date.now(), pinned: true });
+    }
+  });
 }
 
 function requestDeleteAtom(atomId: string) {
@@ -1346,6 +1386,24 @@ function updateMemorySummary(memory: ConversationMemoryRecord, event: Event) {
 .atom-manager {
   display: grid;
   gap: 9px;
+  min-width: 0;
+}
+
+.memory-scroll-panel,
+.atom-scroll {
+  min-height: 0;
+  max-height: min(38vh, 320px);
+  overflow-y: auto;
+  padding-right: 2px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+.atom-scroll {
+  display: grid;
+  gap: 10px;
+  max-height: min(52vh, 430px);
 }
 
 .recall-preview-field {
@@ -1376,11 +1434,18 @@ function updateMemorySummary(memory: ConversationMemoryRecord, event: Event) {
 
 .atom-row {
   display: grid;
-  gap: 8px;
-  padding: 10px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.58);
-  box-shadow: inset 0 0 0 1px rgba(77, 58, 71, 0.04);
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(77, 58, 71, 0.06);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 250, 253, 0.72));
+  box-shadow: 0 10px 24px rgba(77, 58, 71, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.86);
+}
+
+.atom-row.is-archived {
+  background: rgba(244, 241, 244, 0.72);
+  opacity: 0.82;
 }
 
 .compact-atom-row span,
@@ -1390,10 +1455,11 @@ function updateMemorySummary(memory: ConversationMemoryRecord, event: Event) {
   font-size: 12px;
   font-weight: 750;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .compact-atom-row strong,
-.atom-row-head span {
+.atom-title strong {
   overflow: hidden;
   color: #211d21;
   font-size: 13px;
@@ -1422,17 +1488,66 @@ function updateMemorySummary(memory: ConversationMemoryRecord, event: Event) {
   color: #9a4f5b;
 }
 
-.atom-row-head,
-.atom-controls {
+.atom-card-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
 }
 
+.atom-title {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.atom-title span {
+  color: #a07282;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.atom-title strong {
+  color: #211d21;
+  font-size: 14px;
+  font-weight: 950;
+  line-height: 1.25;
+}
+
+.atom-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.atom-badges span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(178, 139, 153, 0.12);
+  color: #8a596d;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.atom-content-field {
+  display: grid;
+  gap: 5px;
+}
+
+.atom-content-field > span {
+  color: #746a72;
+  font-size: 11px;
+  font-weight: 850;
+}
+
 .atom-row textarea {
   width: 100%;
-  min-height: 52px;
+  min-height: 92px;
+  max-height: 132px;
+  overflow-y: auto;
   padding: 10px;
   border: 1px solid rgba(77, 58, 71, 0.06);
   border-radius: 14px;
@@ -1441,8 +1556,8 @@ function updateMemorySummary(memory: ConversationMemoryRecord, event: Event) {
   color: #211d21;
   font-size: 12px;
   font-weight: 800;
-  line-height: 1.45;
-  resize: vertical;
+  line-height: 1.5;
+  resize: none;
 }
 
 .atom-meta-grid {
@@ -1474,7 +1589,10 @@ function updateMemorySummary(memory: ConversationMemoryRecord, event: Event) {
 }
 
 .atom-controls {
-  grid-template-columns: minmax(0, 1fr) 76px auto auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 8px;
 }
 
 .atom-controls label {
@@ -1504,6 +1622,7 @@ function updateMemorySummary(memory: ConversationMemoryRecord, event: Event) {
 .atom-controls .soft-pill {
   min-height: 34px;
   padding-inline: 12px;
+  width: 100%;
 }
 
 .compact-empty {
@@ -1629,17 +1748,24 @@ function updateMemorySummary(memory: ConversationMemoryRecord, event: Event) {
 .memory-confirm-sheet ul {
   display: grid;
   gap: 7px;
+  max-height: min(32vh, 240px);
+  overflow-y: auto;
   margin: 0;
   padding: 10px 12px 10px 26px;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.58);
+  overscroll-behavior: contain;
+}
+
+.memory-confirm-sheet li {
+  overflow-wrap: anywhere;
 }
 
 .offline-memory-page .toggle-tile strong,
 .offline-memory-page .toggle-copy small,
 .offline-memory-page .offline-field > span,
 .offline-memory-page .offline-field small,
-.offline-memory-page .atom-row-head span,
+.offline-memory-page .atom-title strong,
 .offline-memory-page .primary-pill,
 .offline-memory-page .soft-pill,
 .offline-memory-page .danger-pill,
