@@ -247,7 +247,7 @@ export const useAppStore = defineStore('app', () => {
       conversationSettings: snapshot.conversationSettings.map((entry) => normalizeConversationSettings({
         ...entry,
         characterStickerGroupIds: entry.characterStickerGroupIds.filter((id) => !isRecentStickerGroupId(id) && !stickerLibrary.removedGroupIds.includes(id))
-      }, entry.conversationId)),
+      }, entry.conversationId, snapshot.conversations.find((conversation) => conversation.id === entry.conversationId)?.activeMode)),
       conversationMemories: normalizedConversationMemories,
       conversationMemoryAtoms: normalizedMemoryAtoms,
       generatedImages: normalizeGeneratedImages(snapshot.generatedImages ?? []),
@@ -380,7 +380,7 @@ export const useAppStore = defineStore('app', () => {
     conversationSettings.value = snapshot.conversationSettings.map((entry) => normalizeConversationSettings({
       ...entry,
       characterStickerGroupIds: entry.characterStickerGroupIds.filter((id) => !isRecentStickerGroupId(id) && !stickerLibrary.removedGroupIds.includes(id))
-    }, entry.conversationId));
+    }, entry.conversationId, snapshot.conversations.find((conversation) => conversation.id === entry.conversationId)?.activeMode));
     conversationMemories.value = await removeDuplicateConversationMemories(snapshot.conversationMemories.map((memory) => ({
       ...memory,
       kind: ageMemoryKind(memory.createdAt),
@@ -454,10 +454,10 @@ export const useAppStore = defineStore('app', () => {
 
   function settingsForConversation(id: string) {
     const existing = conversationSettings.value.find((entry) => entry.conversationId === id);
-    if (existing) return normalizeConversationSettings(existing, id);
     const conversation = conversationById(id);
+    if (existing) return normalizeConversationSettings(existing, id, conversation?.activeMode);
     const character = conversation ? characterById(conversation.charId) : null;
-    return normalizeConversationSettings({ voomFrequency: character?.voomFrequency }, id);
+    return normalizeConversationSettings({ voomFrequency: character?.voomFrequency }, id, conversation?.activeMode);
   }
 
   function memoriesForConversation(id: string) {
@@ -695,7 +695,7 @@ export const useAppStore = defineStore('app', () => {
       .map((entry) => normalizeConversationSettings({
         ...entry,
         modelOverrides: emptyOverrides
-      }, entry.conversationId));
+      }, entry.conversationId, conversationById(entry.conversationId)?.activeMode));
 
     if (!updates.length) return;
 
@@ -1683,12 +1683,12 @@ export const useAppStore = defineStore('app', () => {
   }
 
   async function saveConversationSettings(nextSettings: ConversationSettings) {
-    const normalizedSettings = normalizeConversationSettings(nextSettings, nextSettings.conversationId);
+    const conversation = conversationById(nextSettings.conversationId);
+    const normalizedSettings = normalizeConversationSettings(nextSettings, nextSettings.conversationId, conversation?.activeMode);
     const index = conversationSettings.value.findIndex((entry) => entry.conversationId === normalizedSettings.conversationId);
     if (index >= 0) conversationSettings.value[index] = normalizedSettings;
     else conversationSettings.value.push(normalizedSettings);
 
-    const conversation = conversationById(normalizedSettings.conversationId);
     const character = conversation ? characterById(conversation.charId) : null;
     if (character && character.voomFrequency !== normalizedSettings.voomFrequency) {
       const normalizedCharacter = normalizeCharacterProfile({ ...character, voomFrequency: normalizedSettings.voomFrequency }, character.boundUserId);

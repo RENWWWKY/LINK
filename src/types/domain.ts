@@ -144,6 +144,8 @@ export interface ChatMemorySettings {
   enabled: boolean;
   autoSummarize: boolean;
   summarizeEvery: number;
+  onlineSummarizeEvery: number;
+  offlineSummarizeEvery: number;
   summaryModel: string;
   summaryPrompt: string;
   mergeSummaryPrompt: string;
@@ -151,6 +153,8 @@ export interface ChatMemorySettings {
   hideSummarizedMessages: boolean;
   atomWriterEnabled: boolean;
   atomWriterEvery: number;
+  onlineAtomWriterEvery: number;
+  offlineAtomWriterEvery: number;
   autoMergeEnabled: boolean;
   autoMergeThreshold: number;
   autoMergeBatchSize: number;
