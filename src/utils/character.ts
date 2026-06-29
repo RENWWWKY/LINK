@@ -32,8 +32,16 @@ export function getCharacterDisplayName(character: Pick<CharacterProfile, 'userN
   return String(character.userNote ?? '').trim() || String(character.nickname ?? '').trim() || String(character.name ?? '').trim() || 'new.friend';
 }
 
-export function getCharacterVoomAuthorName(character: Pick<CharacterProfile, 'userNote' | 'nickname'>) {
-  return String(character.userNote ?? '').trim() || String(character.nickname ?? '').trim() || 'new.friend';
+export function getCharacterAiName(character: Pick<CharacterProfile, 'name' | 'nickname'>) {
+  return String(character.name ?? '').trim() || String(character.nickname ?? '').trim() || '角色';
+}
+
+export function getCharacterVoomAuthorName(character: Pick<CharacterProfile, 'nickname' | 'name'>) {
+  return String(character.nickname ?? '').trim() || String(character.name ?? '').trim() || 'new.friend';
+}
+
+export function getCharacterVoomDisplayName(character: Pick<CharacterProfile, 'userNote' | 'nickname' | 'name'>) {
+  return getCharacterDisplayName(character);
 }
 
 function normalizeCharacterInitialProfile(initialProfile: Partial<CharacterInitialProfile> | null | undefined, fallback: CharacterInitialProfile) {

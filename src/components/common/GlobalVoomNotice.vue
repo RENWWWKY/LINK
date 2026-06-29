@@ -13,7 +13,7 @@
       </figure>
       <section v-if="voomNoticeComments.length" class="voom-notice-comments" aria-label="VOOM 全部评论">
         <p v-for="comment in voomNoticeComments" :key="comment.id">
-          <strong>{{ comment.authorName }}</strong>
+          <strong>{{ voomNoticeAuthorName(comment) }}</strong>
           <template v-if="voomNoticeReplyTargetName(comment.parentId)">
             <em>回复</em>
             <strong>{{ voomNoticeReplyTargetName(comment.parentId) }}</strong>
@@ -36,6 +36,7 @@ import { X } from 'lucide-vue-next';
 import { useAppStore } from '@/stores/appStore';
 import { playRingtone } from '@/services/ringtone';
 import type { VoomComment, VoomPost } from '@/types/domain';
+import { getCharacterVoomAuthorName, getCharacterVoomDisplayName } from '@/utils/character';
 import { formatContentWithChineseTranslation } from '@/utils/translation';
 import { stripVoomCommentReplyPrefix } from '@/utils/voom';
 
@@ -44,12 +45,22 @@ const seenStorageKey = 'link:global-voom-notices:seen-posts';
 const store = useAppStore();
 const router = useRouter();
 const activePost = ref<VoomPost | null>(null);
+const activeNoticeKey = ref('');
 const seenPostIds = ref<Set<string>>(new Set());
 const initialized = ref(false);
 
-const characterVoomPosts = computed(() => store.sortedVoomPosts.filter((post) => post.authorType !== 'user'));
-const voomNoticeTitle = computed(() => activePost.value ? `${activePost.value.authorName} 发布了 VOOM` : 'VOOM 有新动态');
-const voomNoticeBody = computed(() => activePost.value ? formatContentWithChineseTranslation(activePost.value.content, activePost.value.contentTranslation) : '');
+const noticeableVoomPosts = computed(() => store.sortedVoomPosts.filter((post) => post.authorType !== 'user' || latestCharacterComment(post)));
+const activeNoticeComment = computed(() => activePost.value && activeNoticeKey.value.startsWith('comment:') ? latestCharacterComment(activePost.value) : null);
+const voomNoticeTitle = computed(() => {
+  if (!activePost.value) return 'VOOM 有新动态';
+  if (activeNoticeComment.value) return `${voomNoticeAuthorName(activeNoticeComment.value)} 评论了 VOOM`;
+  return `${voomNoticePostAuthorName(activePost.value)} 发布了 VOOM`;
+});
+const voomNoticeBody = computed(() => {
+  if (!activePost.value) return '';
+  if (activeNoticeComment.value) return formatContentWithChineseTranslation(activeNoticeComment.value.content, activeNoticeComment.value.contentTranslation);
+  return formatContentWithChineseTranslation(activePost.value.content, activePost.value.contentTranslation);
+});
 const voomNoticeImage = computed(() => activePost.value?.image?.trim() || '');
 const voomNoticeImageDescription = computed(() => activePost.value?.imageDescription?.trim() || '配图描述暂未保存。');
 const voomNoticeComments = computed(() => activePost.value?.comments ?? []);
@@ -68,25 +79,29 @@ function persistSeenPostIds() {
 }
 
 function markCurrentPostsSeen() {
-  seenPostIds.value = new Set([...seenPostIds.value, ...characterVoomPosts.value.map((post) => post.id)]);
+  seenPostIds.value = new Set([...seenPostIds.value, ...noticeableVoomPosts.value.flatMap((post) => currentVoomNoticeKeys(post))]);
   persistSeenPostIds();
 }
 
 function showNextVoomNotice() {
   if (activePost.value) return;
-  const nextPost = characterVoomPosts.value.find((post) => !seenPostIds.value.has(post.id));
+  const nextPost = noticeableVoomPosts.value.find((post) => !seenPostIds.value.has(voomNoticeKey(post)));
   if (nextPost) {
     activePost.value = nextPost;
+    activeNoticeKey.value = voomNoticeKey(nextPost);
     void playRingtone(store.settings, 'voom', nextPost.charId);
   }
 }
 
 function closeVoomNotice() {
   if (activePost.value) {
-    seenPostIds.value = new Set([...seenPostIds.value, activePost.value.id]);
+    const nextSeenKeys = new Set([...seenPostIds.value, activeNoticeKey.value || voomNoticeKey(activePost.value)]);
+    if (activeNoticeKey.value.startsWith('post:')) currentVoomNoticeCommentKey(activePost.value) && nextSeenKeys.add(currentVoomNoticeCommentKey(activePost.value)!);
+    seenPostIds.value = nextSeenKeys;
     persistSeenPostIds();
   }
   activePost.value = null;
+  activeNoticeKey.value = '';
   showNextVoomNotice();
 }
 
@@ -97,19 +112,92 @@ function openVoomPage() {
 
 function voomNoticeReplyTargetName(parentId?: string) {
   if (!parentId) return '';
-  return voomNoticeComments.value.find((comment) => comment.id === parentId)?.authorName ?? '';
+  const target = voomNoticeComments.value.find((comment) => comment.id === parentId);
+  return target ? voomNoticeAuthorName(target) : '';
+}
+
+function normalizeAuthorKey(name = '') {
+  return name.trim().toLocaleLowerCase();
+}
+
+function isCurrentUserVoomComment(comment: VoomComment) {
+  const currentUser = store.user;
+  if (!currentUser) return false;
+  if (comment.authorId && comment.authorId === currentUser.id) return true;
+  const authorName = normalizeAuthorKey(comment.authorName);
+  return [currentUser.nickname, currentUser.name]
+    .map(normalizeAuthorKey)
+    .filter(Boolean)
+    .includes(authorName);
+}
+
+function latestCharacterComment(post: VoomPost) {
+  return [...post.comments].reverse().find((comment) => !isCurrentUserVoomComment(comment)) ?? null;
+}
+
+function voomPostNoticeKey(post: VoomPost) {
+  return `post:${post.id}`;
+}
+
+function voomCommentNoticeKey(post: VoomPost, comment: VoomComment) {
+  return `comment:${post.id}:${comment.id}`;
+}
+
+function currentVoomNoticeCommentKey(post: VoomPost) {
+  const latestComment = latestCharacterComment(post);
+  return latestComment ? voomCommentNoticeKey(post, latestComment) : '';
+}
+
+function currentVoomNoticeKeys(post: VoomPost) {
+  return [voomPostNoticeKey(post), currentVoomNoticeCommentKey(post)].filter(Boolean);
+}
+
+function voomNoticeKey(post: VoomPost) {
+  const postKey = voomPostNoticeKey(post);
+  if (post.authorType !== 'user' && !seenPostIds.value.has(postKey)) return postKey;
+  const latestComment = latestCharacterComment(post);
+  if (latestComment) return voomCommentNoticeKey(post, latestComment);
+  return postKey;
+}
+
+function voomNoticePostAuthorName(post: VoomPost) {
+  const character = store.characterById(post.charId);
+  return character ? getCharacterVoomDisplayName(character) : post.authorName;
+}
+
+function voomNoticeAuthorName(comment: VoomComment) {
+  const authorId = comment.authorId?.trim() ?? '';
+  const authorName = normalizeAuthorKey(comment.authorName);
+  const character = store.characters.find((item) => {
+    if (authorId && item.id === authorId) return true;
+    return [item.userNote, item.name, item.nickname, getCharacterVoomAuthorName(item)]
+      .map(normalizeAuthorKey)
+      .filter(Boolean)
+      .includes(authorName);
+  });
+  return character ? getCharacterVoomDisplayName(character) : comment.authorName;
 }
 
 function voomCommentDisplayContent(comment: VoomComment) {
   const targetName = voomNoticeReplyTargetName(comment.parentId);
+  const rawTargetName = voomNoticeRawReplyTargetName(comment.parentId);
+  const content = stripVoomCommentReplyPrefix(stripVoomCommentReplyPrefix(comment.content, rawTargetName), targetName);
+  const contentTranslation = comment.contentTranslation
+    ? stripVoomCommentReplyPrefix(stripVoomCommentReplyPrefix(comment.contentTranslation, rawTargetName), targetName)
+    : comment.contentTranslation;
   return formatContentWithChineseTranslation(
-    stripVoomCommentReplyPrefix(comment.content, targetName),
-    comment.contentTranslation ? stripVoomCommentReplyPrefix(comment.contentTranslation, targetName) : comment.contentTranslation
+    content,
+    contentTranslation
   );
 }
 
+function voomNoticeRawReplyTargetName(parentId?: string) {
+  if (!parentId) return '';
+  return voomNoticeComments.value.find((comment) => comment.id === parentId)?.authorName ?? '';
+}
+
 watch(
-  () => [store.ready, characterVoomPosts.value.map((post) => post.id).join('|')],
+  () => [store.ready, noticeableVoomPosts.value.map((post) => voomNoticeKey(post)).join('|')],
   ([ready]) => {
     if (!ready) return;
     if (!initialized.value) {

@@ -49,7 +49,7 @@
             <div>
               <span>Automation</span>
               <strong>记忆策略</strong>
-              <small class="memory-section-note">推荐保持默认：200 楼自动总结、每 20 次回复写入原子、8 条摘要触发合并。想省调用时，可继续调高写入频率。</small>
+              <small class="memory-section-note">推荐保持默认：50 楼自动总结、每次回复写入原子、8 条摘要触发合并。想省调用时，只调高写入频率即可。</small>
             </div>
           </header>
           <div class="memory-strategy-stack">
@@ -71,7 +71,7 @@
                 <label class="field compact-field">
                   <span>每多少楼总结</span>
                   <input :value="memoryNumberDraft.summarizeEvery" inputmode="numeric" min="1" step="1" type="number" @input="updateMemoryNumberDraft('summarizeEvery', $event)" @change="commitMemoryNumberDraft('summarizeEvery', $event)" @blur="commitMemoryNumberDraft('summarizeEvery', $event)" @keydown.enter.prevent="commitMemoryNumberDraft('summarizeEvery', $event)" />
-                  <small>线上默认 200；可按需要填写任意正整数。</small>
+                  <small>默认 50；可按需要填写任意正整数。</small>
                 </label>
                 <label class="switch-card strategy-wide-control">
                   <input v-model="draft.memory.hideSummarizedMessages" type="checkbox" @change="saveDraft" />
@@ -109,8 +109,8 @@
                 </label>
                 <label class="field compact-field strategy-wide-control">
                   <span>每几次回复写入</span>
-                  <input :value="memoryNumberDraft.atomWriterEvery" inputmode="numeric" min="1" :max="maxMemoryAtomWriterEvery" type="number" @input="updateMemoryNumberDraft('atomWriterEvery', $event)" @change="commitMemoryNumberDraft('atomWriterEvery', $event)" @blur="commitMemoryNumberDraft('atomWriterEvery', $event)" @keydown.enter.prevent="commitMemoryNumberDraft('atomWriterEvery', $event)" />
-                  <small>线上默认 20；数值越大，越省总结模型调用。</small>
+                  <input :value="memoryNumberDraft.atomWriterEvery" inputmode="numeric" min="1" max="10" type="number" @input="updateMemoryNumberDraft('atomWriterEvery', $event)" @change="commitMemoryNumberDraft('atomWriterEvery', $event)" @blur="commitMemoryNumberDraft('atomWriterEvery', $event)" @keydown.enter.prevent="commitMemoryNumberDraft('atomWriterEvery', $event)" />
+                  <small>1 最稳；2 更省总结模型调用。</small>
                 </label>
               </div>
             </div>
@@ -167,95 +167,6 @@
               </label>
             </div>
           </div>
-        </section>
-
-        <section class="settings-block memory-debug-block">
-          <header class="section-header record-header">
-            <div>
-              <span>Recall trace</span>
-              <strong>本轮召回</strong>
-              <small class="memory-section-note">这里展示下一次回复前会塞给 AI 的记忆。预算 tokens 是“记忆上下文”的上限，防止记忆挤掉聊天正文。</small>
-            </div>
-            <em>{{ memoryAtoms.length }} 原子</em>
-          </header>
-          <div class="memory-merge-dashboard memory-debug-stats">
-            <span>
-              <strong>{{ openMemoryAtomCount }}</strong>
-              <small>开放事项</small>
-            </span>
-            <span>
-              <strong>{{ activeRecallTrace?.selectedAtoms.length ?? 0 }}</strong>
-              <small>{{ recallPreviewTrace ? '预览命中' : '命中条目' }}</small>
-            </span>
-            <span>
-              <strong>{{ activeRecallTrace ? `${activeRecallTrace.selectedTokenCount}/${activeRecallTrace.tokenBudget}` : '0/0' }}</strong>
-              <small>预算 tokens</small>
-            </span>
-          </div>
-          <label class="memory-recall-preview">
-            <span>预览下一轮召回</span>
-            <textarea v-model="recallPreviewQuery" rows="2" placeholder="输入可能发送的话，查看会命中哪些原子"></textarea>
-          </label>
-          <div v-if="activeRecallTrace?.selectedAtoms.length" class="memory-debug-list memory-scroll-panel">
-            <article v-for="atom in memoryDebugPreview" :key="atom.id" class="memory-debug-row">
-              <span>{{ memoryAtomTypeLabel(atom.type) }} · {{ memoryAtomStatusLabel(atom.status) }} · {{ atom.tokenCount }} tokens · {{ atom.score }}</span>
-              <strong>{{ atom.subject }}</strong>
-              <p>{{ atom.content }}</p>
-              <div v-if="atom.scoreBreakdown?.length" class="score-breakdown">
-                <span v-for="part in atom.scoreBreakdown.slice(0, 7)" :key="`${atom.id}-${part.label}`" :class="{ negative: part.value < 0 }">{{ part.label }} {{ formatSignedScore(part.value) }}</span>
-              </div>
-            </article>
-          </div>
-          <div v-else class="empty-note compact-empty-note">还没有召回记录。发送消息、生成回复或输入预览文本后，这里会显示系统挑中了哪些记忆。</div>
-          <section v-if="memoryAtoms.length" class="memory-atom-manager">
-            <header class="merge-picker-head">
-              <div>
-                <strong>原子记忆管理</strong>
-                <span>优先显示固定和高重要度记忆；长内容可在卡片内滚动。</span>
-              </div>
-            </header>
-            <div class="memory-atom-scroll" role="list">
-              <article v-for="atom in memoryAtomPreview" :key="atom.id" class="memory-atom-row" :class="{ 'is-archived': atom.archivedAt }" role="listitem">
-                <header class="memory-atom-card-head">
-                  <div class="memory-atom-title">
-                    <span>{{ memoryAtomTypeLabel(atom.type) }}</span>
-                    <strong>{{ atom.subject }}</strong>
-                  </div>
-                  <button class="tiny-action" type="button" @click="requestToggleAtomPinned(atom)">{{ atom.pinned ? '取消固定' : '固定' }}</button>
-                </header>
-                <div class="memory-atom-badges">
-                  <span>{{ memoryAtomStatusLabel(atom.status) }}</span>
-                  <span>重要度 {{ atom.importance }}</span>
-                  <span v-if="atom.pinned">已固定</span>
-                  <span v-if="atom.archivedAt">已屏蔽</span>
-                </div>
-                <label class="memory-atom-content-field">
-                  <span>内容</span>
-                  <textarea :value="atom.content" rows="3" @change="updateAtomContent(atom, $event)"></textarea>
-                </label>
-                <div class="memory-atom-meta-grid">
-                  <label><span>责任</span><input :value="atom.owner ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'owner', $event)" /></label>
-                  <label><span>对象</span><input :value="atom.counterparty ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'counterparty', $event)" /></label>
-                  <label><span>期限</span><input :value="atom.due ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'due', $event)" /></label>
-                  <label><span>结果</span><input :value="atom.resolution ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'resolution', $event)" /></label>
-                </div>
-                <div class="memory-atom-controls">
-                  <label>
-                    <span>状态</span>
-                    <select :value="atom.status" @change="updateAtomStatus(atom, $event)">
-                      <option v-for="status in memoryAtomStatusOptions" :key="status.value" :value="status.value">{{ status.label }}</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>重要度</span>
-                    <input :value="atom.importance" min="1" max="5" type="number" @change="updateAtomImportance(atom, $event)" />
-                  </label>
-                  <button class="tiny-action" type="button" @click="requestToggleAtomArchived(atom)">{{ atom.archivedAt ? '取消屏蔽' : '屏蔽' }}</button>
-                  <button class="danger-action" type="button" @click="requestDeleteAtom(atom.id)">删除</button>
-                </div>
-              </article>
-            </div>
-          </section>
         </section>
 
         <section class="memory-records settings-block">
@@ -334,6 +245,83 @@
             </div>
           </article>
           <div v-if="!memories.length" class="empty-note memory-empty-note">记忆空间暂时空着。达到楼层或点击手动总结后，新的书页会收进这里。</div>
+        </section>
+      </section>
+
+      <section v-else-if="activeTab === 'atoms'" class="panel-section atoms-panel">
+        <section class="memory-hero atom-hero">
+          <div>
+            <span>Atom Memory</span>
+            <strong>{{ memoryAtoms.length }} 条原子</strong>
+            <p>管理会被长期保留的事实、承诺、冲突和关系变化。固定项会一直保留；屏蔽、作废和低价值已解决项会随楼层推进自动清理。</p>
+          </div>
+        </section>
+
+        <section class="settings-block memory-atom-manager atom-manager-page">
+          <header class="section-header record-header">
+            <div>
+              <span>Atom Library</span>
+              <strong>原子记忆管理</strong>
+              <small class="memory-section-note">优先显示固定和高重要度记忆；修改内容、状态或重要度后会自动固定。屏蔽项不参与召回，过旧后会自动删除。</small>
+            </div>
+            <em>{{ memoryAtoms.length }} 条</em>
+          </header>
+          <div class="memory-merge-dashboard atom-dashboard">
+            <span>
+              <strong>{{ openMemoryAtomCount }}</strong>
+              <small>待处理</small>
+            </span>
+            <span>
+              <strong>{{ pinnedMemoryAtomCount }}</strong>
+              <small>已固定</small>
+            </span>
+            <span>
+              <strong>{{ archivedMemoryAtomCount }}</strong>
+              <small>已屏蔽</small>
+            </span>
+          </div>
+          <div v-if="memoryAtoms.length" class="memory-atom-list" role="list">
+            <article v-for="atom in memoryAtomPreview" :key="atom.id" class="memory-atom-row" :class="{ 'is-archived': atom.archivedAt }" role="listitem">
+              <header class="memory-atom-card-head">
+                <div class="memory-atom-title">
+                  <span>{{ memoryAtomTypeLabel(atom.type) }}</span>
+                  <strong>{{ atom.subject }}</strong>
+                </div>
+                <button class="tiny-action" type="button" @click="requestToggleAtomPinned(atom)">{{ atom.pinned ? '取消固定' : '固定' }}</button>
+              </header>
+              <div class="memory-atom-badges">
+                <span>{{ memoryAtomStatusLabel(atom.status) }}</span>
+                <span>重要度 {{ atom.importance }}</span>
+                <span v-if="atom.pinned">已固定</span>
+                <span v-if="atom.archivedAt">已屏蔽</span>
+              </div>
+              <label class="memory-atom-content-field">
+                <span>内容</span>
+                <textarea :value="atom.content" rows="3" @change="updateAtomContent(atom, $event)"></textarea>
+              </label>
+              <div class="memory-atom-meta-grid">
+                <label><span>责任</span><input :value="atom.owner ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'owner', $event)" /></label>
+                <label><span>对象</span><input :value="atom.counterparty ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'counterparty', $event)" /></label>
+                <label><span>期限</span><input :value="atom.due ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'due', $event)" /></label>
+                <label><span>结果</span><input :value="atom.resolution ?? ''" placeholder="未设置" @change="updateAtomMeta(atom, 'resolution', $event)" /></label>
+              </div>
+              <div class="memory-atom-controls">
+                <label>
+                  <span>状态</span>
+                  <select :value="atom.status" @change="updateAtomStatus(atom, $event)">
+                    <option v-for="status in memoryAtomStatusOptions" :key="status.value" :value="status.value">{{ status.label }}</option>
+                  </select>
+                </label>
+                <label>
+                  <span>重要度</span>
+                  <input :value="atom.importance" min="1" max="5" type="number" @change="updateAtomImportance(atom, $event)" />
+                </label>
+                <button class="tiny-action" type="button" @click="requestToggleAtomArchived(atom)">{{ atom.archivedAt ? '取消屏蔽' : '屏蔽' }}</button>
+                <button class="danger-action" type="button" @click="requestDeleteAtom(atom.id)">删除</button>
+              </div>
+            </article>
+          </div>
+          <div v-else class="empty-note memory-empty-note">还没有原子记忆。开启每轮原子写入后，回复会逐步提炼可管理的小颗粒记忆。</div>
         </section>
       </section>
 
@@ -714,7 +702,7 @@ import AvatarCropperModal from '@/components/image/AvatarCropperModal.vue';
 import { useAppStore } from '@/stores/appStore';
 import type { CharacterProfile, ChatAppearanceSettings, ConversationMemoryAtom, ConversationMemoryEntryStatus, ConversationMemoryRecord, ConversationSettings } from '@/types/domain';
 import { readImageFileFromInput } from '@/utils/imageFile';
-import { estimateTokenCount, getConversationFloorCount, getEffectiveHiddenFloorRanges, getMemoryHiddenEndFloor, maxMemoryAtomWriterEvery, normalizeConversationSettings } from '@/utils/memory';
+import { estimateTokenCount, getConversationFloorCount, getEffectiveHiddenFloorRanges, getMemoryHiddenEndFloor, normalizeConversationSettings } from '@/utils/memory';
 import { defaultProfileAvatar } from '@/utils/profile';
 import { normalizeChatModelOverrides } from '@/utils/settings';
 import { normalizeVoomFrequency, voomFrequencyOptions } from '@/utils/voom';
@@ -754,7 +742,7 @@ const props = defineProps<{
 }>();
 
 const store = useAppStore();
-export type PanelTab = 'memory' | 'beauty' | 'profile' | 'other';
+export type PanelTab = 'memory' | 'atoms' | 'beauty' | 'profile' | 'other';
 
 const activeTab = computed(() => props.activeTab);
 const summarizing = ref(false);
@@ -765,12 +753,11 @@ const showStickerGroupPicker = ref(false);
 const showAvatarEditor = ref(false);
 const avatarEditorSource = ref('');
 const backgroundImageUrlDraft = ref('');
-const recallPreviewQuery = ref('');
 const selectedMergeIds = ref<string[]>([]);
 const draft = reactive<ConversationSettings>(normalizeConversationSettings(null, props.conversationId, 'online'));
 const memoryNumberDraft = reactive<Record<MemoryNumberField, string>>({
-  summarizeEvery: String(draft.memory.onlineSummarizeEvery),
-  atomWriterEvery: String(draft.memory.onlineAtomWriterEvery),
+  summarizeEvery: String(draft.memory.summarizeEvery),
+  atomWriterEvery: String(draft.memory.atomWriterEvery),
   autoMergeThreshold: String(draft.memory.autoMergeThreshold),
   autoMergeBatchSize: String(draft.memory.autoMergeBatchSize)
 });
@@ -796,17 +783,13 @@ const manualSummary = reactive({
 
 const memories = computed(() => store.memoriesForConversation(props.conversationId));
 const memoryAtoms = computed(() => store.memoryAtomsForConversation(props.conversationId));
-const memoryDebugTrace = computed(() => store.memoryDebugTraceForConversation(props.conversationId));
-const recallPreviewTrace = computed(() => recallPreviewQuery.value.trim()
-  ? store.previewMemoryRecallForConversation(props.conversationId, recallPreviewQuery.value)
-  : null);
-const activeRecallTrace = computed(() => recallPreviewTrace.value ?? memoryDebugTrace.value);
 const currentConversationSettings = computed(() => store.settingsForConversation(props.conversationId));
 const localModelOverrides = computed(() => store.modelOverridesForConversation(props.conversationId));
 const summaryModelValue = computed(() => localModelOverrides.value.summary.trim() || store.settings?.modelOverrides.summary?.trim() || '');
 const totalMemoryTokens = computed(() => store.nextReplyTokenCountForConversation(props.conversationId));
 const openMemoryAtomCount = computed(() => memoryAtoms.value.filter((atom) => atom.status === 'open' && !atom.archivedAt).length);
-const memoryDebugPreview = computed(() => activeRecallTrace.value?.selectedAtoms.slice(0, 8) ?? []);
+const pinnedMemoryAtomCount = computed(() => memoryAtoms.value.filter((atom) => atom.pinned).length);
+const archivedMemoryAtomCount = computed(() => memoryAtoms.value.filter((atom) => atom.archivedAt).length);
 const memoryAtomPreview = computed(() => [...memoryAtoms.value]
   .sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.importance - left.importance || right.updatedAt - left.updatedAt));
 const messageCount = computed(() => getConversationFloorCount(store.messagesForConversation(props.conversationId)));
@@ -940,8 +923,8 @@ function saveDraft() {
 }
 
 function syncMemoryNumberDraft() {
-  memoryNumberDraft.summarizeEvery = String(draft.memory.onlineSummarizeEvery);
-  memoryNumberDraft.atomWriterEvery = String(draft.memory.onlineAtomWriterEvery);
+  memoryNumberDraft.summarizeEvery = String(draft.memory.summarizeEvery);
+  memoryNumberDraft.atomWriterEvery = String(draft.memory.atomWriterEvery);
   memoryNumberDraft.autoMergeThreshold = String(draft.memory.autoMergeThreshold);
   memoryNumberDraft.autoMergeBatchSize = String(draft.memory.autoMergeBatchSize);
 }
@@ -952,8 +935,8 @@ function updateMemoryNumberDraft(field: MemoryNumberField, event: Event) {
 
 function memoryNumberLimits(field: MemoryNumberField) {
   return {
-    summarizeEvery: { min: 1, max: Number.MAX_SAFE_INTEGER, fallback: draft.memory.onlineSummarizeEvery },
-    atomWriterEvery: { min: 1, max: maxMemoryAtomWriterEvery, fallback: draft.memory.onlineAtomWriterEvery },
+    summarizeEvery: { min: 1, max: Number.MAX_SAFE_INTEGER, fallback: draft.memory.summarizeEvery },
+    atomWriterEvery: { min: 1, max: 10, fallback: draft.memory.atomWriterEvery },
     autoMergeThreshold: { min: 3, max: 30, fallback: draft.memory.autoMergeThreshold },
     autoMergeBatchSize: { min: 2, max: 20, fallback: draft.memory.autoMergeBatchSize }
   }[field];
@@ -965,18 +948,8 @@ function commitMemoryNumberDraft(field: MemoryNumberField, event?: Event) {
   const numericValue = Number(memoryNumberDraft[field]);
   const nextValue = Math.min(limits.max, Math.max(limits.min, Math.round(Number.isFinite(numericValue) ? numericValue : limits.fallback)));
   memoryNumberDraft[field] = String(nextValue);
-  if (field === 'summarizeEvery') {
-    if (draft.memory.onlineSummarizeEvery === nextValue) return;
-    draft.memory.onlineSummarizeEvery = nextValue;
-    draft.memory.summarizeEvery = nextValue;
-  } else if (field === 'atomWriterEvery') {
-    if (draft.memory.onlineAtomWriterEvery === nextValue) return;
-    draft.memory.onlineAtomWriterEvery = nextValue;
-    draft.memory.atomWriterEvery = nextValue;
-  } else {
-    if (draft.memory[field] === nextValue) return;
-    draft.memory[field] = nextValue;
-  }
+  if (draft.memory[field] === nextValue) return;
+  draft.memory[field] = nextValue;
   saveDraft();
 }
 
@@ -1168,11 +1141,6 @@ function memoryAtomStatusLabel(status: string) {
     superseded: '已取代',
     cancelled: '已取消'
   }[status] ?? '有效';
-}
-
-function formatSignedScore(value: number) {
-  const rounded = Number(value.toFixed(2));
-  return rounded > 0 ? `+${rounded}` : String(rounded);
 }
 
 function toggleMergePicker() {
@@ -1775,100 +1743,6 @@ function applyEditedAvatar(value: string) {
   align-items: stretch;
 }
 
-.memory-debug-block {
-  display: grid;
-  gap: 10px;
-}
-
-.memory-debug-stats strong {
-  font-size: 15px;
-}
-
-.memory-debug-list {
-  display: grid;
-  gap: 8px;
-}
-
-.memory-scroll-panel,
-.memory-atom-scroll {
-  min-height: 0;
-  max-height: min(38vh, 320px);
-  overflow-y: auto;
-  padding-right: 2px;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  -webkit-overflow-scrolling: touch;
-}
-
-.memory-recall-preview {
-  display: grid;
-  gap: 6px;
-}
-
-.memory-recall-preview span {
-  color: #746f70;
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.memory-recall-preview textarea {
-  width: 100%;
-  min-height: 58px;
-  padding: 10px;
-  border: 1px solid rgba(76, 67, 62, 0.08);
-  border-radius: 14px;
-  outline: 0;
-  background: rgba(255, 255, 255, 0.74);
-  color: #24201e;
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 1.45;
-  resize: vertical;
-}
-
-.memory-debug-row {
-  display: grid;
-  gap: 4px;
-  padding: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.66);
-}
-
-.memory-debug-row span,
-.memory-debug-row p {
-  margin: 0;
-  color: #746f70;
-  font-size: 12px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.memory-debug-row strong {
-  color: #24201e;
-  font-size: 13px;
-}
-
-.score-breakdown {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.score-breakdown span {
-  padding: 4px 7px;
-  border-radius: 999px;
-  background: rgba(128, 152, 116, 0.12);
-  color: #52644a;
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.score-breakdown span.negative {
-  background: rgba(180, 95, 105, 0.12);
-  color: #9a4f5b;
-}
-
 .memory-run-action {
   min-height: 54px;
   border-radius: 18px;
@@ -1877,14 +1751,25 @@ function applyEditedAvatar(value: string) {
 
 .memory-atom-manager {
   display: grid;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
 }
 
-.memory-atom-scroll {
+.atom-hero {
+  align-items: flex-start;
+}
+
+.atom-manager-page {
+  gap: 14px;
+}
+
+.atom-dashboard strong {
+  font-size: 17px;
+}
+
+.memory-atom-list {
   display: grid;
   gap: 10px;
-  max-height: min(52vh, 430px);
 }
 
 .memory-atom-row {
@@ -1965,8 +1850,6 @@ function applyEditedAvatar(value: string) {
 .memory-atom-row textarea {
   width: 100%;
   min-height: 92px;
-  max-height: 132px;
-  overflow-y: auto;
   padding: 10px;
   border: 1px solid rgba(76, 67, 62, 0.08);
   border-radius: 14px;
@@ -1976,7 +1859,7 @@ function applyEditedAvatar(value: string) {
   font-size: 12px;
   font-weight: 800;
   line-height: 1.5;
-  resize: none;
+  resize: vertical;
 }
 
 .memory-atom-meta-grid {

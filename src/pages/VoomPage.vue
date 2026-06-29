@@ -32,14 +32,14 @@
         class="story-button"
         :class="{ active: selectedVoomCharacterId === character.id }"
         type="button"
-        :aria-label="`只看 ${getCharacterVoomAuthorName(character)} 的 VOOM 动态`"
+        :aria-label="`只看 ${getCharacterVoomDisplayName(character)} 的 VOOM 动态`"
         @click="selectCharacterVoomFeed(character.id)"
       >
         <span class="story-avatar">
           <img :src="character.avatar" alt="" aria-hidden="true" />
           <i v-if="hasUnreadVoomForCharacter(character.id)" class="story-unread" aria-hidden="true"></i>
         </span>
-        <span class="story-name">{{ getCharacterVoomAuthorName(character) }}</span>
+        <span class="story-name">{{ getCharacterVoomDisplayName(character) }}</span>
       </button>
     </section>
 
@@ -55,6 +55,8 @@
       :key="post.id"
       :post="post"
       :author-name="voomAuthorNameForPost(post)"
+      :character-display-names="characterVoomDisplayNames"
+      :character-author-aliases="characterVoomAuthorAliases"
       :current-user-name="store.user?.nickname"
       :can-regenerate-image="canRegenerateVoomImage"
       :regenerating-image="regeneratingImagePostIds.includes(post.id)"
@@ -252,7 +254,7 @@ import AppModal from '@/components/common/AppModal.vue';
 import VoomPostCard from '@/components/voom/VoomPostCard.vue';
 import { useAppStore } from '@/stores/appStore';
 import type { VoomPost, VoomPostVisibility } from '@/types/domain';
-import { getCharacterDisplayName, getCharacterVoomAuthorName } from '@/utils/character';
+import { getCharacterDisplayName, getCharacterVoomAuthorName, getCharacterVoomDisplayName } from '@/utils/character';
 import { readChatImageFile } from '@/utils/imageFile';
 import { getSelectedImageModelOption } from '@/utils/settings';
 
@@ -319,6 +321,20 @@ const visibleVoomPosts = computed(() => visibleVoomPostState.value.posts);
 const hasMoreVoomPosts = computed(() => visibleVoomPostState.value.hasMore);
 const hasFilteredVoomPosts = computed(() => visibleVoomPostState.value.hasAny);
 const accountHasUnreadVoom = computed(() => voomStoryCharacters.value.some((character) => hasUnreadVoomForCharacter(character.id)));
+const characterVoomDisplayNames = computed(() => Object.fromEntries(store.characters.map((character) => [character.id, getCharacterVoomDisplayName(character)])));
+const characterVoomAuthorAliases = computed(() => {
+  const aliases: Record<string, string> = {};
+  store.characters.forEach((character) => {
+    const displayName = getCharacterVoomDisplayName(character);
+    [character.userNote, character.name, character.nickname, getCharacterVoomAuthorName(character)]
+      .map((name) => name.trim().toLocaleLowerCase())
+      .filter(Boolean)
+      .forEach((name) => {
+        aliases[name] = displayName;
+      });
+  });
+  return aliases;
+});
 
 const voomPostLoadStep = 8;
 const voomLoadThreshold = 320;
@@ -355,7 +371,7 @@ const canSubmitUserVoomPost = computed(() => {
 
 function voomAuthorNameForPost(post: VoomPost) {
   const character = store.characterById(post.charId);
-  return character ? getCharacterVoomAuthorName(character) : post.authorName;
+  return character ? getCharacterVoomDisplayName(character) : post.authorName;
 }
 
 function voomReadAtForCharacter(characterId: string) {

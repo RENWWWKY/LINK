@@ -46,7 +46,7 @@
     <div v-if="post.comments.length" class="comments">
       <p v-for="comment in post.comments" :key="comment.id">
         <button class="comment-line" type="button" @click="openCommentComposer(comment.id)">
-          <strong>{{ comment.authorName }}</strong>
+          <strong>{{ displayAuthorName(comment.authorName, comment.authorId) }}</strong>
           <template v-if="replyTargetName(comment.parentId)">
             <em>回复</em>
             <strong>{{ replyTargetName(comment.parentId) }}</strong>
@@ -125,6 +125,8 @@ const props = defineProps<{
   post: VoomPost;
   authorName?: string;
   currentUserName?: string;
+  characterDisplayNames?: Record<string, string>;
+  characterAuthorAliases?: Record<string, string>;
   canRegenerateImage?: boolean;
   regeneratingImage?: boolean;
   replyingThread?: boolean;
@@ -160,7 +162,7 @@ let likeMeasureFrame = 0;
 const resolvedAuthorName = computed(() => props.authorName || props.post.authorName);
 const likedByMe = computed(() => Boolean(props.currentUserName && props.post.likes.includes(props.currentUserName)));
 const replyTarget = computed(() => props.post.comments.find((comment) => comment.id === replyParentId.value));
-const commentPlaceholder = computed(() => replyTarget.value ? `回复 ${replyTarget.value.authorName}` : '评论这条 VOOM');
+const commentPlaceholder = computed(() => replyTarget.value ? `回复 ${displayAuthorName(replyTarget.value.authorName, replyTarget.value.authorId)}` : '评论这条 VOOM');
 const visualDescription = computed(() => props.post.imageDescription || '配图描述暂未保存。');
 const hasVisualContent = computed(() => Boolean(props.post.image || props.post.imageDescription?.trim()));
 const visualCandidates = computed(() => {
@@ -187,20 +189,36 @@ const visualAspectRatio = computed(() => {
 });
 const visualStyle = computed(() => ({ '--voom-image-ratio': visualAspectRatio.value }));
 const postDisplayContent = computed(() => formatContentWithChineseTranslation(props.post.content, props.post.contentTranslation));
-const fullLikeSummary = computed(() => props.post.likes.length ? `${props.post.likes.join('、')} 赞了` : '还没有点赞');
+const displayLikeNames = computed(() => props.post.likes.map((name) => displayAuthorName(name)));
+const fullLikeSummary = computed(() => displayLikeNames.value.length ? `${displayLikeNames.value.join('、')} 赞了` : '还没有点赞');
 const shortLikeSummary = computed(() => {
-  const firstLike = props.post.likes[0];
+  const firstLike = displayLikeNames.value[0];
   if (!firstLike) return '还没有点赞';
-  return props.post.likes.length > 1 ? `${firstLike} 等${props.post.likes.length}人赞过` : `${firstLike} 赞过`;
+  return displayLikeNames.value.length > 1 ? `${firstLike} 等${displayLikeNames.value.length}人赞过` : `${firstLike} 赞过`;
 });
 const displayedLikeSummary = computed(() => compactLikeSummary.value ? shortLikeSummary.value : fullLikeSummary.value);
 
 function commentDisplayContent(comment: VoomPost['comments'][number]) {
   const targetName = replyTargetName(comment.parentId);
+  const rawTargetName = rawReplyTargetName(comment.parentId);
+  const content = stripVoomCommentReplyPrefix(stripVoomCommentReplyPrefix(comment.content, rawTargetName), targetName);
+  const contentTranslation = comment.contentTranslation
+    ? stripVoomCommentReplyPrefix(stripVoomCommentReplyPrefix(comment.contentTranslation, rawTargetName), targetName)
+    : comment.contentTranslation;
   return formatContentWithChineseTranslation(
-    stripVoomCommentReplyPrefix(comment.content, targetName),
-    comment.contentTranslation ? stripVoomCommentReplyPrefix(comment.contentTranslation, targetName) : comment.contentTranslation
+    content,
+    contentTranslation
   );
+}
+
+function normalizeAuthorKey(name = '') {
+  return name.trim().toLocaleLowerCase();
+}
+
+function displayAuthorName(authorName = '', authorId = '') {
+  const idDisplayName = authorId ? props.characterDisplayNames?.[authorId] : '';
+  if (idDisplayName) return idDisplayName;
+  return props.characterAuthorAliases?.[normalizeAuthorKey(authorName)] || authorName;
 }
 
 function openCommentComposer(parentId = '') {
@@ -275,6 +293,12 @@ function submitComment() {
 }
 
 function replyTargetName(parentId?: string) {
+  if (!parentId) return '';
+  const target = props.post.comments.find((comment) => comment.id === parentId);
+  return target ? displayAuthorName(target.authorName, target.authorId) : '';
+}
+
+function rawReplyTargetName(parentId?: string) {
   if (!parentId) return '';
   return props.post.comments.find((comment) => comment.id === parentId)?.authorName ?? '';
 }

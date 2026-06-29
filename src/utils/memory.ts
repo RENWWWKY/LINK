@@ -7,41 +7,18 @@ import { normalizeVoomFrequency } from './voom';
 export const defaultChatMemorySettings: ChatMemorySettings = {
   enabled: true,
   autoSummarize: true,
-  summarizeEvery: 200,
-  onlineSummarizeEvery: 200,
-  offlineSummarizeEvery: 10,
+  summarizeEvery: 50,
   summaryModel: '',
   summaryPrompt: '请把下面聊天楼层整理成可长期读取的结构化记忆，以{{char}}的第三人称视角。必须先校验旧记忆：后文已经解决、撤销、推翻或过期的事项，不要继续写成未解决。按固定格式输出，每条一行：- [类型|状态|重要度1-5|主体|证据楼层] 内容。类型只能用 fact/preference/promise/conflict/plot/relationship/boundary/emotion/world；状态只能用 active/open/resolved/superseded/cancelled。只把仍会影响后续扮演的内容写入；resolved 只保留会影响情绪或关系余波的事项；去重、合并同义项，不要评价用户；用中文输出。',
   mergeSummaryPrompt: '请把下面多段结构化记忆合并成更高层级的长期记忆，以{{char}}的第三人称视角。必须去重并执行生命周期更新：已解决的 promise/conflict 标为 resolved，后文推翻旧事实时旧事实标为 superseded 或直接移除；只保留稳定事实、长期关系变化、重要偏好、仍开放承诺、仍开放冲突和关键剧情节点。按固定格式输出，每条一行：- [类型|状态|重要度1-5|主体|证据楼层] 内容。类型只能用 fact/preference/promise/conflict/plot/relationship/boundary/emotion/world；状态只能用 active/open/resolved/superseded/cancelled。用中文输出。',
   vectorMemoryEnabled: true,
   hideSummarizedMessages: true,
   atomWriterEnabled: true,
-  atomWriterEvery: 20,
-  onlineAtomWriterEvery: 20,
-  offlineAtomWriterEvery: 2,
+  atomWriterEvery: 1,
   autoMergeEnabled: true,
   autoMergeThreshold: 8,
   autoMergeBatchSize: 6
 };
-
-export const maxMemoryAtomWriterEvery = 100;
-const legacyDefaultSummarizeEvery = 50;
-const legacyDefaultAtomWriterEvery = 1;
-
-export function defaultChatMemorySettingsForMode(mode: ChatMode = 'online'): ChatMemorySettings {
-  if (mode === 'offline') {
-    return {
-      ...defaultChatMemorySettings,
-      summarizeEvery: defaultChatMemorySettings.offlineSummarizeEvery,
-      atomWriterEvery: defaultChatMemorySettings.offlineAtomWriterEvery
-    };
-  }
-  return {
-    ...defaultChatMemorySettings,
-    summarizeEvery: defaultChatMemorySettings.onlineSummarizeEvery,
-    atomWriterEvery: defaultChatMemorySettings.onlineAtomWriterEvery
-  };
-}
 
 function normalizeMemoryPrompt(value: unknown, fallback: string) {
   const prompt = String(value ?? '').trim();
@@ -49,39 +26,6 @@ function normalizeMemoryPrompt(value: unknown, fallback: string) {
   const isLegacyDefaultPrompt = prompt.includes('保留人物关系变化、承诺、偏好、冲突和未解决事项')
     || prompt.includes('保留稳定事实、长期关系变化、重要承诺、偏好、冲突和未解决事项');
   return isLegacyDefaultPrompt ? fallback : prompt;
-}
-
-function normalizeMemoryCadenceValue(value: unknown, fallback: number, max = Number.MAX_SAFE_INTEGER) {
-  return Math.min(max, Math.max(1, Math.round(Number(value) || fallback)));
-}
-
-function scopedMemoryDefault(field: 'summarizeEvery' | 'atomWriterEvery', mode: ChatMode) {
-  if (field === 'summarizeEvery') {
-    return mode === 'offline' ? defaultChatMemorySettings.offlineSummarizeEvery : defaultChatMemorySettings.onlineSummarizeEvery;
-  }
-  return mode === 'offline' ? defaultChatMemorySettings.offlineAtomWriterEvery : defaultChatMemorySettings.onlineAtomWriterEvery;
-}
-
-function legacyCadenceForScope(value: unknown, field: 'summarizeEvery' | 'atomWriterEvery', scope: ChatMode, activeMode: ChatMode) {
-  if (scope !== activeMode) return scopedMemoryDefault(field, scope);
-  const numericValue = Number(value);
-  const fallback = scopedMemoryDefault(field, scope);
-  if (!Number.isFinite(numericValue)) return fallback;
-  const roundedValue = Math.round(numericValue);
-  if (field === 'summarizeEvery') {
-    if (roundedValue === legacyDefaultSummarizeEvery) return fallback;
-    if (roundedValue === scopedMemoryDefault('summarizeEvery', scope === 'offline' ? 'online' : 'offline')) return fallback;
-  }
-  if (field === 'atomWriterEvery') {
-    if (roundedValue === legacyDefaultAtomWriterEvery) return fallback;
-    if (roundedValue === scopedMemoryDefault('atomWriterEvery', scope === 'offline' ? 'online' : 'offline')) return fallback;
-  }
-  return roundedValue;
-}
-
-function resolveScopedMemoryCadence(value: unknown, legacyValue: unknown, field: 'summarizeEvery' | 'atomWriterEvery', scope: ChatMode, activeMode: ChatMode, max = Number.MAX_SAFE_INTEGER) {
-  const fallback = scopedMemoryDefault(field, scope);
-  return normalizeMemoryCadenceValue(value ?? legacyCadenceForScope(legacyValue, field, scope, activeMode), fallback, max);
 }
 
 export const defaultOfflineWritingStylePresets: OfflinePromptPreset[] = [
@@ -292,7 +236,7 @@ export const defaultConversationSettings: Omit<ConversationSettings, 'conversati
 };
 
 export function normalizeConversationSettings(settings: Partial<ConversationSettings> | null | undefined, conversationId: string, mode: ChatMode = 'online'): ConversationSettings {
-  const memoryDefaults = defaultChatMemorySettingsForMode(mode);
+  const memoryDefaults = defaultChatMemorySettings;
   const memory = settings?.memory ?? memoryDefaults;
   const appearance = settings?.appearance ?? defaultConversationSettings.appearance;
   const modelOverrides = normalizeChatModelOverrides(settings?.modelOverrides ?? defaultConversationSettings.modelOverrides);
@@ -313,12 +257,7 @@ export function normalizeConversationSettings(settings: Partial<ConversationSett
   ].map((image) => String(image ?? '').trim()).filter(Boolean);
   const voomFrequency = normalizeVoomFrequency(settings?.voomFrequency, defaultConversationSettings.voomFrequency);
   const proactiveReply = settings?.proactiveReply ?? defaultConversationSettings.proactiveReply;
-  const onlineSummarizeEvery = resolveScopedMemoryCadence(memory.onlineSummarizeEvery, memory.summarizeEvery, 'summarizeEvery', 'online', mode);
-  const offlineSummarizeEvery = resolveScopedMemoryCadence(memory.offlineSummarizeEvery, memory.summarizeEvery, 'summarizeEvery', 'offline', mode);
-  const onlineAtomWriterEvery = resolveScopedMemoryCadence(memory.onlineAtomWriterEvery, memory.atomWriterEvery, 'atomWriterEvery', 'online', mode, maxMemoryAtomWriterEvery);
-  const offlineAtomWriterEvery = resolveScopedMemoryCadence(memory.offlineAtomWriterEvery, memory.atomWriterEvery, 'atomWriterEvery', 'offline', mode, maxMemoryAtomWriterEvery);
-  const summarizeEvery = mode === 'offline' ? offlineSummarizeEvery : onlineSummarizeEvery;
-  const atomWriterEvery = mode === 'offline' ? offlineAtomWriterEvery : onlineAtomWriterEvery;
+  const summarizeEvery = Math.max(1, Math.round(Number(memory.summarizeEvery) || memoryDefaults.summarizeEvery));
 
   return {
     conversationId,
@@ -326,17 +265,13 @@ export function normalizeConversationSettings(settings: Partial<ConversationSett
       enabled: true,
       autoSummarize: memory.autoSummarize ?? memoryDefaults.autoSummarize,
       summarizeEvery,
-      onlineSummarizeEvery,
-      offlineSummarizeEvery,
       summaryModel,
       summaryPrompt: normalizeMemoryPrompt(memory.summaryPrompt, memoryDefaults.summaryPrompt),
       mergeSummaryPrompt: normalizeMemoryPrompt(memory.mergeSummaryPrompt, memoryDefaults.mergeSummaryPrompt),
       vectorMemoryEnabled: memory.vectorMemoryEnabled ?? memoryDefaults.vectorMemoryEnabled,
       hideSummarizedMessages: memory.hideSummarizedMessages ?? memoryDefaults.hideSummarizedMessages,
       atomWriterEnabled: memory.atomWriterEnabled ?? memoryDefaults.atomWriterEnabled,
-      atomWriterEvery,
-      onlineAtomWriterEvery,
-      offlineAtomWriterEvery,
+      atomWriterEvery: Math.min(10, Math.max(1, Math.round(Number(memory.atomWriterEvery) || memoryDefaults.atomWriterEvery))),
       autoMergeEnabled: memory.autoMergeEnabled ?? memoryDefaults.autoMergeEnabled,
       autoMergeThreshold: Math.min(30, Math.max(3, Math.round(Number(memory.autoMergeThreshold) || memoryDefaults.autoMergeThreshold))),
       autoMergeBatchSize: Math.min(20, Math.max(2, Math.round(Number(memory.autoMergeBatchSize) || memoryDefaults.autoMergeBatchSize)))

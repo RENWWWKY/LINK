@@ -610,9 +610,9 @@ export function buildPrompt(context: PromptContext) {
     .slice(-24)
     .map((message) => {
       const speaker = message.sender === 'user'
-        ? context.boundUser.nickname
+        ? context.boundUser.name || context.boundUser.nickname
         : message.sender === 'char'
-          ? context.character.nickname
+          ? context.character.name || context.character.nickname
           : '系统';
       const quoteText = message.quote
         ? `引用 ${message.quote.authorName}: ${getMessageText(message.quote)}\n`
@@ -687,5 +687,6 @@ function renderRecentVoomDiversityPrompt(context: PromptContext) {
 }
 
 export function buildMomentPrompt(context: PromptContext) {
-  return `${buildPrompt(context)}\n\n${renderRecentVoomDiversityPrompt(context)}\n\n现在生成角色要发布的一条 LINK VOOM / 朋友圈动态，以及这条动态自然产生的点赞和评论区。只输出 JSON，不要输出 Markdown，不要输出 JSON 以外的任何文字。\n\n本次 VOOM 作者固定是：${context.character.nickname || context.character.name}（角色ID：${context.character.id}）。所有点赞和评论区 NPC 都只能来自这个角色自己的社交圈。\n\n格式：\n{\n  "content": "朋友圈正文",\n  "contentTranslation": "只在 content 是非中文外语或粤语时填写简体中文译文，否则留空",\n  "imageDescription": "这条动态会同时发布的一张配图的文字描述",\n  "likes": ["NPC在社交软件上的网名"],\n  "comments": [\n    { "id": "c1", "authorName": "NPC在社交软件上的网名", "content": "评论内容", "contentTranslation": "只在 content 是非中文外语或粤语时填写简体中文译文，否则留空", "parentId": "被回复评论的 id，可留空" },\n    { "id": "c2", "authorName": "${context.character.nickname}", "content": "回复内容", "contentTranslation": "", "parentId": "c1" }\n  ]\n}\n\n要求：\n1. content 是角色真正发出去的动态文字，像社交软件朋友圈正文，可以短，可以日常，不要解释设定。\n2. contentTranslation 和每条 comment.contentTranslation 只翻译非中文外语或粤语；中文内容留空。译文必须是自然简体中文，不要加“翻译：”前缀。\n3. imageDescription 是配图画面描述，不是生图提示词，不要写英文标签、相机参数、画质词或模型术语。\n4. 配图内容由角色性格、对话历史、动态正文、最近经历和生活状态决定，不固定题材；可以是自拍、随手拍、物品、街景、餐食、房间、作业、工作现场等任何合理画面。\n5. imageDescription 描述“画面里有什么”和“看起来是什么氛围”，注意环境场景、时间、图片视角、角色设定形象，构图组成部分等，控制在 40-140 个中文字符。\n6. likes 和 comments 来自本角色真实社交圈里的 NPC，不要包含{{user}}，也不要使用“NPC”这种占位名字。\n7. 禁止把其他角色设定里的朋友、同事、家人、同学、粉丝、熟人、NPC网名或评论区常客搬到本角色动态下；不确定归属时就少写或生成符合本角色设定的新网名。\n8. comments 控制在 2-6 条，内容要像社交软件评论区里会出现的真实评论；id 是本次评论的临时 id，parentId 留空表示新评论，填写前面某条评论的 id 表示回复该评论。\n9. 角色本人可以回复别人评论；如果 content 写成“回复某某：……”，也必须同时填写对应 parentId，不要只把回复对象写进文字里。\n10. 每条 VOOM 都必须独一无二：不要产出和近期 VOOM 内容相似、话题相似、画面相似或情绪模板相似的动态。`;
+  const characterName = context.character.name || context.character.nickname || '角色';
+  return `${buildPrompt(context)}\n\n${renderRecentVoomDiversityPrompt(context)}\n\n现在生成角色要发布的一条 LINK VOOM / 朋友圈动态，以及这条动态自然产生的点赞和评论区。只输出 JSON，不要输出 Markdown，不要输出 JSON 以外的任何文字。\n\n本次 VOOM 作者固定是：${characterName}（角色ID：${context.character.id}）。所有点赞和评论区 NPC 都只能来自这个角色自己的社交圈。\n\n格式：\n{\n  "content": "朋友圈正文",\n  "contentTranslation": "只在 content 是非中文外语或粤语时填写简体中文译文，否则留空",\n  "imageDescription": "这条动态会同时发布的一张配图的文字描述",\n  "likes": ["NPC在社交软件上的网名"],\n  "comments": [\n    { "id": "c1", "authorName": "NPC在社交软件上的网名", "content": "评论内容", "contentTranslation": "只在 content 是非中文外语或粤语时填写简体中文译文，否则留空", "parentId": "被回复评论的 id，可留空" },\n    { "id": "c2", "authorName": "${characterName}", "content": "回复内容", "contentTranslation": "", "parentId": "c1" }\n  ]\n}\n\n要求：\n1. content 是角色真正发出去的动态文字，像社交软件朋友圈正文，可以短，可以日常，不要解释设定。\n2. contentTranslation 和每条 comment.contentTranslation 只翻译非中文外语或粤语；中文内容留空。译文必须是自然简体中文，不要加“翻译：”前缀。\n3. imageDescription 是配图画面描述，不是生图提示词，不要写英文标签、相机参数、画质词或模型术语。\n4. 配图内容由角色性格、对话历史、动态正文、最近经历和生活状态决定，不固定题材；可以是自拍、随手拍、物品、街景、餐食、房间、作业、工作现场等任何合理画面。\n5. imageDescription 描述“画面里有什么”和“看起来是什么氛围”，注意环境场景、时间、图片视角、角色设定形象，构图组成部分等，控制在 40-140 个中文字符。\n6. likes 和 comments 来自本角色真实社交圈里的 NPC，不要包含{{user}}，也不要使用“NPC”这种占位名字。\n7. 禁止把其他角色设定里的朋友、同事、家人、同学、粉丝、熟人、NPC网名或评论区常客搬到本角色动态下；不确定归属时就少写或生成符合本角色设定的新网名。\n8. comments 控制在 2-6 条，内容要像社交软件评论区里会出现的真实评论；id 是本次评论的临时 id，parentId 留空表示新评论，填写前面某条评论的 id 表示回复该评论。\n9. 角色本人可以回复别人评论；如果 content 写成“回复某某：……”，也必须同时填写对应 parentId，不要只把回复对象写进文字里。\n10. 每条 VOOM 都必须独一无二：不要产出和近期 VOOM 内容相似、话题相似、画面相似或情绪模板相似的动态。`;
 }

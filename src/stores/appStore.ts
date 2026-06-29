@@ -4,7 +4,7 @@ import { deleteEntity, loadSnapshot, putEntity, replaceSnapshot, scheduleStartup
 import { defaultSettings } from '@/data/seed';
 import type { AppSettings, AppSnapshot, CharacterProfile, CharacterProfileHistoryEntry, CharacterProfileHistoryField, ChatImageAttachment, ChatImageCandidate, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatMode, ChatModelOverrides, ChatModelScope, ChatOfflineInvitationAttachment, ChatOfflineInvitationStatus, ChatTransferAttachment, ChatTransferStatus, ChatVoiceAttachment, Conversation, ConversationMemoryAtom, ConversationMemoryDebugTrace, ConversationMemoryRecord, ConversationSettings, FavoriteMessageKind, FavoriteMessageRecord, GeneratedImageRecord, ImageModuleId, MusicCommentThread, MusicTrack, Sticker, StickerGroup, UserProfile, VisualProfile, VoomComment, VoomFrequency, VoomImageCandidate, VoomPost, VoomPostVisibility, WorldBookEntry } from '@/types/domain';
 import { createAccountId, createId } from '@/utils/id';
-import { getCharacterInitialProfile, getCharacterVoomAuthorName, normalizeCharacterMindStateLines, normalizeCharacterProfile } from '@/utils/character';
+import { getCharacterAiName, getCharacterInitialProfile, getCharacterVoomAuthorName, getCharacterVoomDisplayName, normalizeCharacterMindStateLines, normalizeCharacterProfile } from '@/utils/character';
 import { normalizeUserProfile, normalizeVisualProfile } from '@/utils/profile';
 import { getImageGenerationSize, getImagePromptPresetForProvider, getSelectedImageModelOption, isImageModelSelectionDisabled, mergeVendorModels, normalizeAppSettings, normalizeChatModelOverrides } from '@/utils/settings';
 import { normalizeWorldBookEntry, normalizeWorldBooks } from '@/utils/worldBook';
@@ -59,9 +59,41 @@ function formatMemoryTimelineTime(timestamp: number) {
   return memoryTimelineTimeFormatter.format(timestamp);
 }
 
+function formatMemoryTimelineTimeRange(timestamps: number[]) {
+  const sortedTimestamps = timestamps
+    .filter((timestamp) => Number.isFinite(timestamp) && timestamp > 0)
+    .sort((left, right) => left - right);
+  if (!sortedTimestamps.length) return '未知时间';
+  const startText = formatMemoryTimelineTime(sortedTimestamps[0]);
+  const endText = formatMemoryTimelineTime(sortedTimestamps[sortedTimestamps.length - 1]);
+  return startText === endText ? startText : `${startText} 至 ${endText}`;
+}
+
+function compactMemoryTimelineText(text: string, maxLength = 90) {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return '无文本内容';
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function getTimelineMessagePreview(message: ChatMessage) {
+  if (message.sticker) return `[Sticker] ${message.sticker.description}`.trim();
+  if (message.image) return `[图片] ${message.image.description}`.trim();
+  if (message.voice) return `[语音] ${message.voice.transcript}`.trim();
+  if (message.location) return `[位置] ${message.location.name || message.location.address || message.location.distance || ''}`.trim();
+  if (message.transfer) return `[转账] ${message.transfer.amount || ''} ${message.transfer.note || ''}`.trim();
+  if (message.offlineInvitation) return `[离线邀请] ${message.offlineInvitation.prompt || message.offlineInvitation.status || ''}`.trim();
+  return message.content.trim();
+}
+
+function getTimelineSenderLabel(message: ChatMessage) {
+  if (message.sender === 'user') return '用户';
+  if (message.sender === 'char') return '角色';
+  return '系统';
+}
+
 function renderMessageTimelineContext(messages: ChatMessage[], floorMap: Map<string, number>, fallbackFloor: number) {
   return messages
-    .map((message) => `${floorMap.get(message.id) ?? fallbackFloor}楼：${formatMemoryTimelineTime(message.createdAt)}`)
+    .map((message) => `${floorMap.get(message.id) ?? fallbackFloor}楼｜${formatMemoryTimelineTime(message.createdAt)}｜${getTimelineSenderLabel(message)}｜${compactMemoryTimelineText(getTimelineMessagePreview(message))}`)
     .join('\n');
 }
 
@@ -487,6 +519,49 @@ export const useAppStore = defineStore('app', () => {
       && !atom.sourceMessageIds.some((messageId) => excludedIds.has(messageId)));
   }
 
+  function memoryStatusTimelineLabel(status: ConversationMemoryAtom['status']) {
+    return {
+      active: '有效',
+      open: '开放',
+      resolved: '已解决',
+      superseded: '已覆盖',
+      cancelled: '已取消'
+    }[status];
+  }
+
+  function memoryAtomFloorText(atom: ConversationMemoryAtom) {
+    const floors = [...new Set(atom.evidenceFloors.filter((floor) => Number.isFinite(floor) && floor > 0))].sort((left, right) => left - right);
+    if (floors.length) return `${floors.join('/')}楼`;
+    return `${atom.lastTouchedFloor || 1}楼`;
+  }
+
+  function renderSelectedMemoryTimelineContext(conversationId: string, atoms: ConversationMemoryAtom[], selectedAtomIds: string[], maxEntries = 12) {
+    const selectedIds = new Set(selectedAtomIds);
+    if (!selectedIds.size) return '';
+    const messageById = new Map(messagesForConversation(conversationId)
+      .filter((message) => message.replyVariantState !== 'inactive')
+      .map((message) => [message.id, message]));
+    const selectedAtoms = mergeMemoryAtoms(atoms)
+      .filter((atom) => atom.conversationId === conversationId && selectedIds.has(atom.id))
+      .sort((left, right) => left.lastTouchedFloor - right.lastTouchedFloor || left.updatedAt - right.updatedAt)
+      .slice(0, Math.min(16, Math.max(6, Math.floor(maxEntries))));
+    return selectedAtoms.map((atom) => {
+      const sourceMessages = atom.sourceMessageIds.map((messageId) => messageById.get(messageId)).filter((message): message is ChatMessage => Boolean(message));
+      const sourceTimeText = sourceMessages.length
+        ? formatMemoryTimelineTimeRange(sourceMessages.map((message) => message.createdAt))
+        : `记忆写入 ${formatMemoryTimelineTime(atom.createdAt)}`;
+      return `- ${memoryAtomFloorText(atom)}｜${sourceTimeText}｜${memoryStatusTimelineLabel(atom.status)}｜${atom.subject}：${compactMemoryTimelineText(atom.content, 110)}`;
+    }).join('\n');
+  }
+
+  function appendMemoryTimelineForTimeAwareness(conversationId: string, memoryText: string, atoms: ConversationMemoryAtom[], selectedAtomIds: string[], fallbackMemories: ConversationMemoryRecord[], maxEntries?: number) {
+    if (!settingsForConversation(conversationId).timeAwareness.enabled) return memoryText;
+    const atomTimeline = renderSelectedMemoryTimelineContext(conversationId, atoms, selectedAtomIds, maxEntries ?? 12);
+    const fallbackTimeline = atomTimeline || renderMemoryRangeTimelineContext(fallbackMemories);
+    if (!fallbackTimeline.trim()) return memoryText;
+    return [memoryText.trim(), `【记忆时间线】\n${fallbackTimeline}`].filter(Boolean).join('\n\n');
+  }
+
   function memoryAtomsForConversation(id: string) {
     return filterRecallableMemoryAtoms(id, conversationMemoryAtoms.value)
       .filter((atom) => atom.conversationId === id)
@@ -546,7 +621,9 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function memoryContextForConversation(id: string, queryText = '', options: { includeResolved?: boolean; maxTokens?: number; maxEntries?: number; storeDebug?: boolean; excludeSourceMessageIds?: string[] } = {}) {
-    const { text, debug } = buildMemoryAtomContext(filterRecallableMemoryAtoms(id, conversationMemoryAtoms.value, options.excludeSourceMessageIds), {
+    const recallableAtoms = filterRecallableMemoryAtoms(id, conversationMemoryAtoms.value, options.excludeSourceMessageIds);
+    const recallableMemories = filterRecallableMemories(id, memoriesForConversation(id), options.excludeSourceMessageIds);
+    const { text, debug } = buildMemoryAtomContext(recallableAtoms, {
       conversationId: id,
       queryText,
       maxEntries: options.maxEntries ?? (queryText.trim() ? 18 : 28),
@@ -555,13 +632,16 @@ export const useAppStore = defineStore('app', () => {
       excludeSourceMessageIds: options.excludeSourceMessageIds
     });
     if (options.storeDebug !== false) memoryDebugTraces.value = { ...memoryDebugTraces.value, [id]: debug };
-    if (text.trim()) return text;
-    return getMemoryContext(filterRecallableMemories(id, memoriesForConversation(id), options.excludeSourceMessageIds), {
+    if (text.trim()) {
+      return appendMemoryTimelineForTimeAwareness(id, text, recallableAtoms, debug.selectedAtoms.map((atom) => atom.id), recallableMemories, options.maxEntries);
+    }
+    const fallbackText = getMemoryContext(recallableMemories, {
       queryText,
       maxEntries: options.maxEntries ?? (queryText.trim() ? 18 : 28),
       includeResolved: options.includeResolved,
       excludeSourceMessageIds: options.excludeSourceMessageIds
     });
+    return appendMemoryTimelineForTimeAwareness(id, fallbackText, recallableAtoms, [], recallableMemories, options.maxEntries);
   }
 
   async function memoryQueryVectorForConversation(id: string, queryText: string, modelOverride = '') {
@@ -579,7 +659,9 @@ export const useAppStore = defineStore('app', () => {
 
   async function memoryContextForConversationAsync(id: string, queryText = '', options: { includeResolved?: boolean; maxTokens?: number; maxEntries?: number; storeDebug?: boolean; modelOverride?: string; queryVector?: number[]; excludeSourceMessageIds?: string[] } = {}) {
     const queryVector = options.queryVector ?? await memoryQueryVectorForConversation(id, queryText, options.modelOverride);
-    const { text, debug } = buildMemoryAtomContext(filterRecallableMemoryAtoms(id, conversationMemoryAtoms.value, options.excludeSourceMessageIds), {
+    const recallableAtoms = filterRecallableMemoryAtoms(id, conversationMemoryAtoms.value, options.excludeSourceMessageIds);
+    const recallableMemories = filterRecallableMemories(id, memoriesForConversation(id), options.excludeSourceMessageIds);
+    const { text, debug } = buildMemoryAtomContext(recallableAtoms, {
       conversationId: id,
       queryText,
       queryVector,
@@ -589,13 +671,16 @@ export const useAppStore = defineStore('app', () => {
       excludeSourceMessageIds: options.excludeSourceMessageIds
     });
     if (options.storeDebug !== false) memoryDebugTraces.value = { ...memoryDebugTraces.value, [id]: debug };
-    if (text.trim()) return text;
-    return getMemoryContext(filterRecallableMemories(id, memoriesForConversation(id), options.excludeSourceMessageIds), {
+    if (text.trim()) {
+      return appendMemoryTimelineForTimeAwareness(id, text, recallableAtoms, debug.selectedAtoms.map((atom) => atom.id), recallableMemories, options.maxEntries);
+    }
+    const fallbackText = getMemoryContext(recallableMemories, {
       queryText,
       maxEntries: options.maxEntries ?? (queryText.trim() ? 18 : 28),
       includeResolved: options.includeResolved,
       excludeSourceMessageIds: options.excludeSourceMessageIds
     });
+    return appendMemoryTimelineForTimeAwareness(id, fallbackText, recallableAtoms, [], recallableMemories, options.maxEntries);
   }
 
   function nextReplyTokenCountForConversation(id: string) {
@@ -787,24 +872,6 @@ export const useAppStore = defineStore('app', () => {
     });
   }
 
-  function formatVoomCommentEvent(comment: VoomComment, comments: VoomComment[]) {
-    const parentName = comment.parentId ? comments.find((entry) => entry.id === comment.parentId)?.authorName : '';
-    const content = formatContentWithChineseTranslation(comment.content, comment.contentTranslation);
-    return parentName
-      ? `【VOOM 评论】${comment.authorName} 回复 ${parentName}: ${content}`
-      : `【VOOM 评论】${comment.authorName}: ${content}`;
-  }
-
-  function voomAuthorNameForPost(post: VoomPost) {
-    const character = characterById(post.charId);
-    return character ? getCharacterVoomAuthorName(character) : post.authorName;
-  }
-
-  function notificationPreview(content: string, fallback: string) {
-    const normalizedContent = content.replace(/\s+/g, ' ').trim() || fallback;
-    return normalizedContent.length > 120 ? `${normalizedContent.slice(0, 117)}...` : normalizedContent;
-  }
-
   function characterForVoomComment(comment: VoomComment) {
     const authorId = String(comment.authorId ?? '').trim();
     const authorName = comment.authorName.trim().toLocaleLowerCase();
@@ -814,6 +881,52 @@ export const useAppStore = defineStore('app', () => {
         .map((name) => name.trim().toLocaleLowerCase())
         .includes(authorName);
     }) ?? null;
+  }
+
+  function voomCommentAiAuthorName(comment: VoomComment) {
+    const character = characterForVoomComment(comment);
+    return character ? getCharacterAiName(character) : comment.authorName;
+  }
+
+  function characterForVoomDisplayComment(comment: VoomComment) {
+    const authorId = String(comment.authorId ?? '').trim();
+    const authorName = comment.authorName.trim().toLocaleLowerCase();
+    return characters.value.find((character) => {
+      if (authorId && character.id === authorId) return true;
+      return [character.userNote, character.nickname, character.name, getCharacterVoomAuthorName(character)]
+        .map((name) => name.trim().toLocaleLowerCase())
+        .includes(authorName);
+    }) ?? null;
+  }
+
+  function voomCommentDisplayName(comment: VoomComment) {
+    const character = characterForVoomDisplayComment(comment);
+    return character ? getCharacterVoomDisplayName(character) : comment.authorName;
+  }
+
+  function formatVoomCommentEvent(comment: VoomComment, comments: VoomComment[]) {
+    const parentComment = comment.parentId ? comments.find((entry) => entry.id === comment.parentId) : undefined;
+    const parentName = parentComment ? voomCommentAiAuthorName(parentComment) : '';
+    const authorName = voomCommentAiAuthorName(comment);
+    const content = formatContentWithChineseTranslation(comment.content, comment.contentTranslation);
+    return parentName
+      ? `【VOOM 评论】${authorName} 回复 ${parentName}: ${content}`
+      : `【VOOM 评论】${authorName}: ${content}`;
+  }
+
+  function voomAuthorNameForPost(post: VoomPost) {
+    const character = characterById(post.charId);
+    return character ? getCharacterVoomDisplayName(character) : post.authorName;
+  }
+
+  function voomAiAuthorNameForPost(post: VoomPost) {
+    const character = characterById(post.charId);
+    return character ? getCharacterAiName(character) : post.authorName;
+  }
+
+  function notificationPreview(content: string, fallback: string) {
+    const normalizedContent = content.replace(/\s+/g, ' ').trim() || fallback;
+    return normalizedContent.length > 120 ? `${normalizedContent.slice(0, 117)}...` : normalizedContent;
   }
 
   function isCurrentUserVoomComment(comment: VoomComment) {
@@ -829,7 +942,7 @@ export const useAppStore = defineStore('app', () => {
 
   function notifyCharacterMessages(conversation: Conversation, charMessages: ChatMessage[]) {
     const character = characterById(conversation.charId);
-    const displayName = character?.nickname || character?.name || conversation.title || '角色';
+    const displayName = character ? getCharacterVoomDisplayName(character) : conversation.title || '角色';
     const latestMessage = charMessages[charMessages.length - 1];
     const body = notificationPreview(
       charMessages.map((message) => messageReadableContent(message)).join('\n'),
@@ -867,10 +980,11 @@ export const useAppStore = defineStore('app', () => {
     const characterComments = comments.filter((comment) => !isCurrentUserVoomComment(comment));
     if (!characterComments.length) return;
     const latestComment = characterComments[characterComments.length - 1];
-    const character = characterForVoomComment(latestComment) ?? (conversation?.charId ? characterById(conversation.charId) : null);
+    const character = characterForVoomDisplayComment(latestComment) ?? (conversation?.charId ? characterById(conversation.charId) : null);
+    const latestCommentDisplayName = voomCommentDisplayName(latestComment);
     const title = characterComments.length > 1
-      ? `${latestComment.authorName} 等评论了 VOOM`
-      : `${latestComment.authorName} 评论了 VOOM`;
+      ? `${latestCommentDisplayName} 等评论了 VOOM`
+      : `${latestCommentDisplayName} 评论了 VOOM`;
     const body = notificationPreview(formatContentWithChineseTranslation(latestComment.content, latestComment.contentTranslation), '有新的 VOOM 评论');
     void playRingtone(settings.value, 'voom', character?.id || conversation?.charId || post.charId);
     void showLinkNotification(settings.value?.keepAlive, {
@@ -1164,7 +1278,7 @@ export const useAppStore = defineStore('app', () => {
     const conversation = conversationById(message.conversationId);
     if (message.sender === 'char') {
       const character = conversation ? characterById(conversation.charId) : null;
-      return character?.nickname || character?.name || '角色';
+      return character ? getCharacterAiName(character) : '角色';
     }
     if (message.sender === 'user') {
       const character = conversation ? characterById(conversation.charId) : null;
@@ -1212,7 +1326,7 @@ export const useAppStore = defineStore('app', () => {
       authorName,
       authorAvatar,
       characterId: character?.id,
-      characterName: character?.nickname || character?.name,
+      characterName: character ? getCharacterAiName(character) : undefined,
       characterAvatar: character?.avatar,
       userId: boundUser?.id,
       userName: boundUser?.nickname || boundUser?.name,
@@ -1431,7 +1545,7 @@ export const useAppStore = defineStore('app', () => {
   async function recordVoomPostEvents(post: VoomPost, mode?: ChatMode) {
     const targetConversations = conversationsForVoomPost(post);
     if (!targetConversations.length) return;
-    const authorName = voomAuthorNameForPost(post);
+    const authorName = voomAiAuthorNameForPost(post);
     const imageEventText = post.imageDescription ? `配图：${post.imageDescription}` : post.image ? '配图：本地图片' : '';
 
     for (const targetConversation of targetConversations) {
@@ -2011,7 +2125,7 @@ export const useAppStore = defineStore('app', () => {
     const relatedMessages = conversationId ? messages.value.filter((message) => message.conversationId === conversationId) : [];
     const relatedMemories = conversationId ? conversationMemories.value.filter((memory) => memory.conversationId === conversationId) : [];
     const relatedMemoryAtoms = conversationId ? conversationMemoryAtoms.value.filter((atom) => atom.conversationId === conversationId) : [];
-    const characterNameKeys = new Set([character.id, character.nickname, character.name, character.userNote, getCharacterVoomAuthorName(character)]
+    const characterNameKeys = new Set([character.id, character.nickname, character.name, getCharacterVoomAuthorName(character)]
       .map((name) => name.trim().toLocaleLowerCase())
       .filter(Boolean));
     const postsToDelete: VoomPost[] = [];
@@ -2947,7 +3061,7 @@ export const useAppStore = defineStore('app', () => {
 
     try {
       const character = characterById(conversation.charId);
-      const characterName = character?.nickname || character?.name || '角色';
+      const characterName = character ? getCharacterAiName(character) : '角色';
       const boundUser = character ? userById(character.boundUserId) ?? user.value : user.value;
       const userSenderName = boundUser?.name || boundUser?.nickname || '我';
       const modelOverride = getConversationTextModelOverride(chatSettings, 'summary', conversation.activeMode);
@@ -2956,7 +3070,7 @@ export const useAppStore = defineStore('app', () => {
       const summary = await generateConversationSummary({
         messages: range.sourceMessages.map((message) => {
           const floor = floorMap.get(message.id) ?? range.startFloor;
-          const sender = message.sender === 'user' ? userSenderName : message.sender === 'char' ? character?.nickname || '角色' : '系统';
+          const sender = message.sender === 'user' ? userSenderName : message.sender === 'char' ? characterName : '系统';
           const sentAtText = includeTimeline ? `（发送时间：${formatMemoryTimelineTime(message.createdAt)}）` : '';
           return `${floor}楼 ${sender}${sentAtText}: ${message.content}`;
         }).join('\n'),
@@ -3248,7 +3362,7 @@ export const useAppStore = defineStore('app', () => {
 
     const chatSettings = settingsForConversation(conversationId);
     const character = characterById(conversation.charId);
-    const characterName = character?.nickname || character?.name || '角色';
+    const characterName = character ? getCharacterAiName(character) : '角色';
     const modelOverride = getConversationTextModelOverride(chatSettings, 'summary', conversation.activeMode);
     const protectedAtoms = protectedAtomsForMemoryMerge(memories.map((memory) => memory.id));
     const promptOverride = [
@@ -3332,7 +3446,7 @@ export const useAppStore = defineStore('app', () => {
     if (!oldMemories.length) return;
     const conversation = conversationById(conversationId);
     const character = conversation ? characterById(conversation.charId) : null;
-    const characterName = character?.nickname || character?.name || '角色';
+    const characterName = character ? getCharacterAiName(character) : '角色';
     const chatSettings = settingsForConversation(conversationId);
     await Promise.all(oldMemories.map(async (memory) => {
       const modelOverride = getConversationTextModelOverride(chatSettings, 'summary', memory.mode);
@@ -3414,22 +3528,69 @@ export const useAppStore = defineStore('app', () => {
 
   async function maintainMemoryAtoms(conversationId?: string) {
     const now = Date.now();
-    const supersededArchiveAgeMs = 7 * 24 * 60 * 60 * 1000;
-    const resolvedSoftenAgeMs = 30 * 24 * 60 * 60 * 1000;
+    const supersededArchiveAfterFloors = 8;
+    const supersededDeleteAfterFloors = 24;
+    const resolvedSoftenAfterFloors = 10;
+    const resolvedHardSoftenAfterFloors = 20;
+    const resolvedArchiveAfterFloors = 30;
+    const resolvedDeleteAfterFloors = 45;
+    const archivedDeleteAfterFloors = 60;
+    const floorCountCache = new Map<string, number>();
+    const currentFloorForAtom = (atom: ConversationMemoryAtom) => {
+      const cacheKey = `${atom.conversationId}:${atom.mode}`;
+      const cached = floorCountCache.get(cacheKey);
+      if (cached !== undefined) return cached;
+      const floorCount = getConversationFloorCount(messagesForConversation(atom.conversationId)
+        .filter((message) => message.mode === atom.mode && message.replyVariantState !== 'inactive'));
+      const normalizedFloorCount = Math.max(floorCount, atom.lastTouchedFloor);
+      floorCountCache.set(cacheKey, normalizedFloorCount);
+      return normalizedFloorCount;
+    };
     const targetAtoms = conversationId
       ? conversationMemoryAtoms.value.filter((atom) => atom.conversationId === conversationId)
       : conversationMemoryAtoms.value;
-    const maintainedAtoms = mergeMemoryAtoms(targetAtoms).map((atom) => {
+    const mergedTargetAtoms = mergeMemoryAtoms(targetAtoms);
+    const shouldDeleteStaleAtom = (atom: ConversationMemoryAtom, floorAge: number) => {
+      if (atom.pinned) return false;
+      if ((atom.status === 'superseded' || atom.status === 'cancelled') && floorAge >= supersededDeleteAfterFloors) return true;
+      if (atom.status === 'resolved' && atom.archivedAt && atom.importance <= 1 && floorAge >= resolvedDeleteAfterFloors) return true;
+      return Boolean(atom.archivedAt && floorAge >= archivedDeleteAfterFloors && atom.importance <= 2);
+    };
+    const maintainedAtoms = mergedTargetAtoms.flatMap((atom) => {
       if (atom.pinned) return atom;
-      if ((atom.status === 'superseded' || atom.status === 'cancelled') && !atom.archivedAt && now - atom.updatedAt > supersededArchiveAgeMs) {
-        return { ...atom, archivedAt: now, updatedAt: now };
+      const floorAge = Math.max(0, currentFloorForAtom(atom) - atom.lastTouchedFloor);
+      if (shouldDeleteStaleAtom(atom, floorAge)) return [];
+      if ((atom.status === 'superseded' || atom.status === 'cancelled') && !atom.archivedAt && floorAge >= supersededArchiveAfterFloors) {
+        return [{ ...atom, archivedAt: now, updatedAt: now }];
       }
-      if (atom.status === 'resolved' && now - atom.updatedAt > resolvedSoftenAgeMs && atom.importance > 2) {
-        return { ...atom, importance: Math.max(1, atom.importance - 1), confidence: Math.max(0.35, atom.confidence - 0.1), updatedAt: now };
+      if (atom.status === 'resolved') {
+        const targetImportance = floorAge >= resolvedHardSoftenAfterFloors
+          ? Math.min(atom.importance, 1)
+          : floorAge >= resolvedSoftenAfterFloors
+            ? Math.min(atom.importance, 2)
+            : atom.importance;
+        const targetConfidence = floorAge >= resolvedHardSoftenAfterFloors
+          ? Math.min(atom.confidence, 0.35)
+          : floorAge >= resolvedSoftenAfterFloors
+            ? Math.min(atom.confidence, 0.5)
+            : atom.confidence;
+        const shouldArchive = !atom.archivedAt && floorAge >= resolvedArchiveAfterFloors && targetImportance <= 1;
+        if (targetImportance !== atom.importance || targetConfidence !== atom.confidence || shouldArchive) {
+          const nextAtom = {
+            ...atom,
+            importance: targetImportance,
+            confidence: targetConfidence,
+            archivedAt: shouldArchive ? now : atom.archivedAt,
+            updatedAt: now
+          };
+          return shouldDeleteStaleAtom(nextAtom, floorAge) ? [] : [nextAtom];
+        }
       }
-      return atom;
+      return [atom];
     });
     const maintainedMap = new Map(maintainedAtoms.map((atom) => [atom.id, atom]));
+    const maintainedIds = new Set(maintainedAtoms.map((atom) => atom.id));
+    const deletedAtoms = mergedTargetAtoms.filter((atom) => !maintainedIds.has(atom.id));
     const nextAtoms = conversationId
       ? conversationMemoryAtoms.value.filter((atom) => atom.conversationId !== conversationId).concat(maintainedAtoms)
       : maintainedAtoms;
@@ -3438,7 +3599,10 @@ export const useAppStore = defineStore('app', () => {
       return existing && JSON.stringify(existing) !== JSON.stringify(atom);
     });
     conversationMemoryAtoms.value = mergeMemoryAtoms(nextAtoms);
-    await Promise.all(changedAtoms.map((atom) => putEntity('conversationMemoryAtoms', maintainedMap.get(atom.id) ?? atom)));
+    await Promise.all([
+      ...changedAtoms.map((atom) => putEntity('conversationMemoryAtoms', maintainedMap.get(atom.id) ?? atom)),
+      ...deletedAtoms.map((atom) => deleteEntity('conversationMemoryAtoms', atom.id))
+    ]);
   }
 
   function selectMemoryAtomsForAudit(conversationId: string, queryText: string, queryVector: number[]) {
@@ -3508,7 +3672,7 @@ export const useAppStore = defineStore('app', () => {
       if (charMessagesSinceLastWrite < writerEvery) return;
     }
     const character = characterById(conversation.charId);
-    const characterName = character?.nickname || character?.name || '角色';
+    const characterName = character ? getCharacterAiName(character) : '角色';
     const boundUser = character ? userById(character.boundUserId) ?? user.value : user.value;
     const modelOverride = getConversationTextModelOverride(chatSettings, 'summary', conversation.activeMode);
     if (!hasConfiguredTextModel(modelOverride)) return;
@@ -3634,7 +3798,7 @@ export const useAppStore = defineStore('app', () => {
         replyInstruction: options?.replyInstruction
           ? options.replyInstruction
           : options?.proactive
-          ? `这不是用户刚发来的新消息，而是${character.nickname || character.name}在自己的生活节奏里主动联系${boundUser.nickname || boundUser.name}。请基于最近对话、关系状态、时间流逝和角色当前生活，生成一组自然的主动消息；不要假装用户刚说了什么，也不要替用户发言。`
+          ? `这不是用户刚发来的新消息，而是${getCharacterAiName(character)}在自己的生活节奏里主动联系${boundUser.name || boundUser.nickname}。请基于最近对话、关系状态、时间流逝和角色当前生活，生成一组自然的主动消息；不要假装用户刚说了什么，也不要替用户发言。`
           : undefined,
         availableStickers: availableCharacterStickers.map((sticker) => ({
           stickerId: sticker.id,
@@ -4362,9 +4526,15 @@ export const useAppStore = defineStore('app', () => {
         settings.value ?? undefined,
         modelOverride
       );
-      const post: VoomPost = { ...moment, id: createId('voom'), conversationId: conversation.id, authorName: getCharacterVoomAuthorName(character), authorAvatar: character.avatar, createdAt: Date.now() };
+      const characterVoomAuthorName = getCharacterVoomAuthorName(character);
+      const characterAuthorAliases = new Set([character.id, character.name, character.nickname, getCharacterAiName(character), characterVoomAuthorName]
+        .map((name) => name.trim().toLocaleLowerCase())
+        .filter(Boolean));
+      const post: VoomPost = { ...moment, id: createId('voom'), conversationId: conversation.id, authorName: characterVoomAuthorName, authorAvatar: character.avatar, createdAt: Date.now() };
       post.comments = post.comments.map((comment, index) => ({
         ...comment,
+        authorName: characterAuthorAliases.has(comment.authorName.trim().toLocaleLowerCase()) ? characterVoomAuthorName : comment.authorName,
+        authorId: characterAuthorAliases.has(comment.authorName.trim().toLocaleLowerCase()) ? character.id : comment.authorId,
         createdAt: post.createdAt + post.likes.length + index + 1
       }));
       const resolvedPost = await generateVoomPostImageBeforePublish(post);
@@ -4869,6 +5039,11 @@ export const useAppStore = defineStore('app', () => {
       const userComments = post.comments
         .filter((comment) => comment.authorId === boundUser.id || comment.authorName === boundUser.nickname || comment.authorName === boundUser.name)
         .slice(-4);
+      const aiPost: VoomPost = {
+        ...post,
+        authorName: voomAiAuthorNameForPost(post),
+        comments: post.comments.map((comment) => ({ ...comment, authorName: voomCommentAiAuthorName(comment) }))
+      };
       const replies = await generateVoomCommentReplies({
         context: {
           user: boundUser,
@@ -4884,7 +5059,7 @@ export const useAppStore = defineStore('app', () => {
           stickerVisionEnabled: chatSettings.stickerVisionEnabled,
           timeAwareness: chatSettings.timeAwareness
         },
-        post,
+        post: aiPost,
         userComments,
         settings: settings.value ?? undefined,
         modelOverride
@@ -4897,7 +5072,7 @@ export const useAppStore = defineStore('app', () => {
       const generatedIds = replies.map(() => createId('comment'));
       const generatedIdByDraftId = new Map(replies.flatMap((reply, index) => reply.draftId ? [[reply.draftId, generatedIds[index]]] : []));
       const characterVoomAuthorName = getCharacterVoomAuthorName(character);
-      const characterAuthorAliases = new Set([character.nickname, character.name, post.authorName, characterVoomAuthorName]
+      const characterAuthorAliases = new Set([character.id, character.nickname, character.name, getCharacterAiName(character), post.authorName, characterVoomAuthorName]
         .map((name) => name.trim().toLocaleLowerCase())
         .filter(Boolean));
       const replyAuthorNameForIndex = (index: number) => {
@@ -4920,6 +5095,7 @@ export const useAppStore = defineStore('app', () => {
         return {
           id: generatedIds[index],
           authorName: replyAuthorNameForIndex(index),
+          authorId: characterAuthorAliases.has((replies[index]?.authorName.trim() ?? '').toLocaleLowerCase()) ? character.id : undefined,
           content: stripVoomCommentReplyPrefix(reply.content, parentName),
           contentTranslation: reply.contentTranslation ? stripVoomCommentReplyPrefix(reply.contentTranslation, parentName) : undefined,
           parentId: resolvedParentId && resolvedParentId !== generatedIds[index] ? resolvedParentId : undefined,
