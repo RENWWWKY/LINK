@@ -222,13 +222,15 @@ export const defaultConversationSettings: Omit<ConversationSettings, 'conversati
   narrationModeEnabled: true,
   autoGenerateVoom: true,
   voomFrequency: 'medium',
+  autoGenerateTheater: true,
+  theaterFrequency: 'medium',
   stickerVisionEnabled: true,
   stickerSuggestionsEnabled: true,
   offlineInvitationEnabled: true,
   characterStickerGroupIds: defaultCharacterStickerGroupIds,
   timeAwareness: defaultTimeAwarenessSettings,
   proactiveReply: {
-    enabled: true,
+    enabled: false,
     frequency: 'medium',
     lastTriggeredAt: 0
   },
@@ -256,6 +258,7 @@ export function normalizeConversationSettings(settings: Partial<ConversationSett
     ...(Array.isArray(appearance.backgroundImages) ? appearance.backgroundImages : [])
   ].map((image) => String(image ?? '').trim()).filter(Boolean);
   const voomFrequency = normalizeVoomFrequency(settings?.voomFrequency, defaultConversationSettings.voomFrequency);
+  const theaterFrequency = normalizeVoomFrequency(settings?.theaterFrequency, defaultConversationSettings.theaterFrequency);
   const proactiveReply = settings?.proactiveReply ?? defaultConversationSettings.proactiveReply;
   const summarizeEvery = Math.max(1, Math.round(Number(memory.summarizeEvery) || memoryDefaults.summarizeEvery));
 
@@ -299,6 +302,8 @@ export function normalizeConversationSettings(settings: Partial<ConversationSett
     narrationModeEnabled: isLegacySettings ? defaultConversationSettings.narrationModeEnabled : settings?.narrationModeEnabled ?? defaultConversationSettings.narrationModeEnabled,
     autoGenerateVoom: settings?.autoGenerateVoom ?? defaultConversationSettings.autoGenerateVoom,
     voomFrequency,
+    autoGenerateTheater: settings?.autoGenerateTheater ?? defaultConversationSettings.autoGenerateTheater,
+    theaterFrequency,
     stickerVisionEnabled: settings?.stickerVisionEnabled ?? defaultConversationSettings.stickerVisionEnabled,
     stickerSuggestionsEnabled: settings?.stickerSuggestionsEnabled ?? defaultConversationSettings.stickerSuggestionsEnabled,
     offlineInvitationEnabled: settings?.offlineInvitationEnabled ?? defaultConversationSettings.offlineInvitationEnabled,

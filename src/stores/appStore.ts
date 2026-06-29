@@ -2,16 +2,17 @@ import { computed, ref, toRaw } from 'vue';
 import { defineStore } from 'pinia';
 import { deleteEntity, loadSnapshot, putEntity, replaceSnapshot, scheduleStartupStorageMaintenance } from '@/data/db';
 import { defaultSettings } from '@/data/seed';
-import type { AppSettings, AppSnapshot, CharacterProfile, CharacterProfileHistoryEntry, CharacterProfileHistoryField, ChatImageAttachment, ChatImageCandidate, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatMode, ChatModelOverrides, ChatModelScope, ChatOfflineInvitationAttachment, ChatOfflineInvitationStatus, ChatTransferAttachment, ChatTransferStatus, ChatVoiceAttachment, Conversation, ConversationMemoryAtom, ConversationMemoryDebugTrace, ConversationMemoryRecord, ConversationSettings, FavoriteMessageKind, FavoriteMessageRecord, GeneratedImageRecord, ImageModuleId, MusicCommentThread, MusicTrack, Sticker, StickerGroup, UserProfile, VisualProfile, VoomComment, VoomFrequency, VoomImageCandidate, VoomPost, VoomPostVisibility, WorldBookEntry } from '@/types/domain';
+import type { AppSettings, AppSnapshot, CharacterProfile, CharacterProfileHistoryEntry, CharacterProfileHistoryField, ChatImageAttachment, ChatImageCandidate, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatMode, ChatModelOverrides, ChatModelScope, ChatOfflineInvitationAttachment, ChatOfflineInvitationStatus, ChatTransferAttachment, ChatTransferStatus, ChatVoiceAttachment, Conversation, ConversationMemoryAtom, ConversationMemoryDebugTrace, ConversationMemoryRecord, ConversationSettings, FavoriteMessageKind, FavoriteMessageRecord, GeneratedImageRecord, ImageModuleId, MusicCommentThread, MusicTrack, SmallTheater, SmallTheaterTopic, Sticker, StickerGroup, UserProfile, VisualProfile, VoomComment, VoomFrequency, VoomImageCandidate, VoomPost, VoomPostVisibility, WorldBookEntry } from '@/types/domain';
 import { createAccountId, createId } from '@/utils/id';
 import { getCharacterAiName, getCharacterInitialProfile, getCharacterVoomAuthorName, getCharacterVoomDisplayName, normalizeCharacterMindStateLines, normalizeCharacterProfile } from '@/utils/character';
 import { normalizeUserProfile, normalizeVisualProfile } from '@/utils/profile';
 import { getImageGenerationSize, getImagePromptPresetForProvider, getSelectedImageModelOption, isImageModelSelectionDisabled, mergeVendorModels, normalizeAppSettings, normalizeChatModelOverrides } from '@/utils/settings';
 import { normalizeWorldBookEntry, normalizeWorldBooks } from '@/utils/worldBook';
+import { createDefaultSmallTheaterTopics, normalizeSmallTheaterTopic } from '@/utils/smallTheater';
 import { RECENT_STICKER_GROUP_NAME, createStickerFromDraft, createStickerGroup, isLegacyGanadiSticker, isLegacyGanadiStickerGroup, isRecentStickerGroupId, localizeStickerImageUrl, normalizeSticker, normalizeStickerGroup, shouldLocalizeStickerImageUrl, sortRecentStickers, type StickerImportDraft } from '@/utils/stickers';
 import { ageMemoryKind, buildMemoryAtomContext, createMemoryAtomsFromRecord, createMemoryRecord, estimateTokenCount, getConversationFloorCount, getHiddenMessageIds, getMemoryContext, getMemoryHiddenEndFloor, getMessageFloorMap, getMessagesInFloorRange, getNextSummaryRange, getVisibleMessages, mergeMemoryAtoms, normalizeConversationSettings, normalizeMemoryAtom, normalizeMemoryRecordEntries, renderCharacterMemoryPrompt, shouldCompressMemory } from '@/utils/memory';
 import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
-import { estimateRoleplayReplyInputTokens, fetchVendorModels, generateConversationSummary, generateEmbeddingVector, generateImageByProvider, generateMemoryAtomAudit, generateRoleplayReply, generateUserVoomComments, generateVoomCommentReplies, generateVoomPost, hasTextGenerationConfig, shouldAutoGenerateMoment, type MemoryAtomAuditUpdate, type RoleplayReplyResult, type RoleplayReplySegment } from '@/services/ai';
+import { estimateRoleplayReplyInputTokens, fetchVendorModels, generateConversationSummary, generateEmbeddingVector, generateImageByProvider, generateMemoryAtomAudit, generateRoleplayReply, generateSmallTheater, generateUserVoomComments, generateVoomCommentReplies, generateVoomPost, hasTextGenerationConfig, shouldAutoGenerateMoment, type MemoryAtomAuditUpdate, type RoleplayReplyResult, type RoleplayReplySegment } from '@/services/ai';
 import { GitHubBackupError, downloadGitHubBackup, downloadGitHubBackupVersion, ensureGitHubBackupRepository, formatGitHubBackupError, listGitHubBackupHistory, uploadGitHubBackup } from '@/services/githubBackup';
 import { showLinkNotification } from '@/services/keepAlive';
 import { playRingtone } from '@/services/ringtone';
@@ -32,7 +33,7 @@ interface CreateUserVoomPostPayload {
 type ConversationSummaryResultStatus = 'created' | 'updated' | 'existing' | 'busy';
 
 export type DataCleanupAction = 'generated-images' | 'message-media' | 'sticker-local-cache' | 'image-candidates' | 'voice-audio' | 'memory-vectors';
-export type ClearableDataSection = 'messages' | 'voomPosts' | 'music' | 'worldBooks' | 'stickers' | 'conversationSettings' | 'conversationMemories' | 'conversationMemoryAtoms' | 'generatedImages';
+export type ClearableDataSection = 'messages' | 'voomPosts' | 'smallTheaters' | 'music' | 'worldBooks' | 'stickers' | 'conversationSettings' | 'conversationMemories' | 'conversationMemoryAtoms' | 'generatedImages';
 
 interface ConversationSummaryResult {
   record: ConversationMemoryRecord;
@@ -140,6 +141,7 @@ export const useAppStore = defineStore('app', () => {
   const writingMemoryAtomConversationIds = new Set<string>();
   const autoMergingConversationIds = new Set<string>();
   const generatingMomentConversationIds = new Set<string>();
+  const generatingSmallTheaterConversationIds = new Set<string>();
   const regeneratingChatImageMessageIds = new Set<string>();
   const regeneratingVoomImagePostIds = new Set<string>();
   const replyingConversationIds = ref<string[]>([]);
@@ -152,6 +154,8 @@ export const useAppStore = defineStore('app', () => {
   const activeConversationId = ref<string | null>(null);
   const messages = ref<ChatMessage[]>([]);
   const voomPosts = ref<VoomPost[]>([]);
+  const smallTheaterTopics = ref<SmallTheaterTopic[]>([]);
+  const smallTheaters = ref<SmallTheater[]>([]);
   const musicFavoriteTracks = ref<MusicTrack[]>([]);
   const musicCommentThreads = ref<MusicCommentThread[]>([]);
   const worldBooks = ref<WorldBookEntry[]>([]);
@@ -180,6 +184,7 @@ export const useAppStore = defineStore('app', () => {
   });
   const sortedConversations = computed(() => [...conversationsForActiveUser.value].sort((a, b) => b.updatedAt - a.updatedAt));
   const sortedVoomPosts = computed(() => [...voomPosts.value].sort((a, b) => b.createdAt - a.createdAt));
+  const sortedSmallTheaters = computed(() => [...smallTheaters.value].sort((a, b) => b.createdAt - a.createdAt));
   const sortedStickerGroups = computed(() => [...stickerGroups.value].sort((a, b) => {
     const orderDiff = (a.sortOrder ?? a.createdAt) - (b.sortOrder ?? b.createdAt);
     if (orderDiff) return orderDiff;
@@ -271,6 +276,8 @@ export const useAppStore = defineStore('app', () => {
       conversations: snapshot.conversations,
       messages: snapshot.messages,
       voomPosts: snapshot.voomPosts,
+      smallTheaterTopics: snapshot.smallTheaterTopics ?? [],
+      smallTheaters: snapshot.smallTheaters ?? [],
       musicFavoriteTracks: snapshot.musicFavoriteTracks ?? [],
       musicCommentThreads: snapshot.musicCommentThreads ?? [],
       worldBooks: normalizeWorldBooks(snapshot.worldBooks),
@@ -370,6 +377,8 @@ export const useAppStore = defineStore('app', () => {
     conversations.value = snapshot.conversations;
     messages.value = snapshot.messages;
     voomPosts.value = snapshot.voomPosts;
+    smallTheaterTopics.value = snapshot.smallTheaterTopics ?? [];
+    smallTheaters.value = snapshot.smallTheaters ?? [];
     musicFavoriteTracks.value = snapshot.musicFavoriteTracks ?? [];
     musicCommentThreads.value = snapshot.musicCommentThreads ?? [];
     worldBooks.value = snapshot.worldBooks;
@@ -396,6 +405,8 @@ export const useAppStore = defineStore('app', () => {
     conversations.value = snapshot.conversations;
     messages.value = snapshot.messages;
     voomPosts.value = snapshot.voomPosts;
+    smallTheaterTopics.value = snapshot.smallTheaterTopics ?? [];
+    smallTheaters.value = snapshot.smallTheaters ?? [];
     musicFavoriteTracks.value = snapshot.musicFavoriteTracks ?? [];
     musicCommentThreads.value = snapshot.musicCommentThreads ?? [];
     worldBooks.value = snapshot.worldBooks;
@@ -751,7 +762,8 @@ export const useAppStore = defineStore('app', () => {
       online: characterOverrides.online || legacyConversationOverrides.online,
       offline: characterOverrides.offline || legacyConversationOverrides.offline,
       summary: characterOverrides.summary || legacyConversationOverrides.summary,
-      voom: characterOverrides.voom || legacyConversationOverrides.voom
+      voom: characterOverrides.voom || legacyConversationOverrides.voom,
+      theater: characterOverrides.theater || legacyConversationOverrides.theater
     });
   }
 
@@ -2068,6 +2080,8 @@ export const useAppStore = defineStore('app', () => {
 
     const conversation = conversations.value.find((entry) => entry.charId === characterId);
     const relatedPosts = voomPosts.value.filter((post) => post.charId === characterId || post.conversationId === conversation?.id);
+    const relatedTheaterTopics = smallTheaterTopics.value.filter((topic) => topic.charId === characterId);
+    const relatedTheaters = smallTheaters.value.filter((theater) => theater.charId === characterId || theater.conversationId === conversation?.id);
     const relatedMessages = conversation ? messages.value.filter((message) => message.conversationId === conversation.id) : [];
     const relatedLocalWorldBooks = worldBooks.value.filter((book) => book.scope === 'local' && character.localWorldBookIds.includes(book.id));
     const owner = userById(character.boundUserId);
@@ -2078,6 +2092,8 @@ export const useAppStore = defineStore('app', () => {
       messages.value = messages.value.filter((message) => message.conversationId !== conversation.id);
     }
     voomPosts.value = voomPosts.value.filter((post) => post.charId !== characterId && post.conversationId !== conversation?.id);
+    smallTheaterTopics.value = smallTheaterTopics.value.filter((topic) => topic.charId !== characterId);
+    smallTheaters.value = smallTheaters.value.filter((theater) => theater.charId !== characterId && theater.conversationId !== conversation?.id);
     worldBooks.value = worldBooks.value.filter((book) => !relatedLocalWorldBooks.some((relatedBook) => relatedBook.id === book.id));
 
     if (relatedLocalWorldBooks.length) {
@@ -2111,6 +2127,8 @@ export const useAppStore = defineStore('app', () => {
       ...(conversation ? [deleteEntity('conversations', conversation.id)] : []),
       ...relatedMessages.map((message) => deleteEntity('messages', message.id)),
       ...relatedPosts.map((post) => deleteEntity('voomPosts', post.id)),
+      ...relatedTheaterTopics.map((topic) => deleteEntity('smallTheaterTopics', topic.id)),
+      ...relatedTheaters.map((theater) => deleteEntity('smallTheaters', theater.id)),
       ...relatedLocalWorldBooks.map((book) => deleteEntity('worldBooks', book.id))
     ]);
   }
@@ -2693,6 +2711,7 @@ export const useAppStore = defineStore('app', () => {
       { id: 'conversations', label: '会话索引', count: conversations.value.length, bytes: estimateJsonBytes(conversations.value), protected: true },
       { id: 'messages', label: '聊天消息', count: messages.value.length, bytes: estimateJsonBytes(messages.value), clearable: true },
       { id: 'voomPosts', label: 'VOOM 动态', count: voomPosts.value.length, bytes: estimateJsonBytes(voomPosts.value), clearable: true },
+      { id: 'smallTheaters', label: '小剧场', count: smallTheaterTopics.value.length + smallTheaters.value.length, bytes: estimateJsonBytes([smallTheaterTopics.value, smallTheaters.value]), clearable: true },
       { id: 'music', label: '音乐收藏与评论', count: musicFavoriteTracks.value.length + musicCommentThreads.value.length, bytes: estimateJsonBytes([musicFavoriteTracks.value, musicCommentThreads.value]), clearable: true },
       { id: 'worldBooks', label: '世界书', count: worldBooks.value.length, bytes: estimateJsonBytes(worldBooks.value), clearable: true },
       { id: 'stickers', label: '贴纸库', count: stickerGroups.value.length + stickers.value.length, bytes: estimateJsonBytes([stickerGroups.value, stickers.value]), clearable: true },
@@ -2804,6 +2823,17 @@ export const useAppStore = defineStore('app', () => {
       voomPosts.value = [];
       await Promise.all(posts.map((post) => deleteEntity('voomPosts', post.id)));
       changed += posts.length;
+    }
+    if (sectionSet.has('smallTheaters')) {
+      const topics = [...smallTheaterTopics.value];
+      const theaters = [...smallTheaters.value];
+      smallTheaterTopics.value = [];
+      smallTheaters.value = [];
+      await Promise.all([
+        ...topics.map((topic) => deleteEntity('smallTheaterTopics', topic.id)),
+        ...theaters.map((theater) => deleteEntity('smallTheaters', theater.id))
+      ]);
+      changed += topics.length + theaters.length;
     }
     if (sectionSet.has('music')) {
       const tracks = [...musicFavoriteTracks.value];
@@ -4180,6 +4210,12 @@ export const useAppStore = defineStore('app', () => {
 
       void maybeAutoSummarizeConversation(conversationId);
 
+      if (chatSettings.autoGenerateTheater && shouldAutoGenerateMoment(chatSettings.theaterFrequency)) {
+        void createSmallTheaterFromConversation(conversationId, undefined, { silent: true }).catch((error) => {
+          console.error(error);
+        });
+      }
+
       const shouldGenerateMoment = options?.generateMoment || (chatSettings.autoGenerateVoom && shouldAutoGenerateMoment(chatSettings.voomFrequency));
       if (shouldGenerateMoment) {
         finishConversationReply(conversationId);
@@ -4546,6 +4582,178 @@ export const useAppStore = defineStore('app', () => {
       return resolvedPost;
     } finally {
       generatingMomentConversationIds.delete(conversationId);
+    }
+  }
+
+  function smallTheaterTopicsForCharacter(characterId: string) {
+    return smallTheaterTopics.value
+      .filter((topic) => topic.charId === characterId)
+      .sort((first, second) => first.createdAt - second.createdAt);
+  }
+
+  function smallTheatersForCharacter(characterId: string) {
+    return smallTheaters.value
+      .filter((theater) => theater.charId === characterId)
+      .sort((first, second) => second.createdAt - first.createdAt);
+  }
+
+  function smallTheaterById(theaterId: string) {
+    return smallTheaters.value.find((theater) => theater.id === theaterId) ?? null;
+  }
+
+  async function markSmallTheaterDefaultsInitialized(characterId: string, timestamp: number) {
+    if (!settings.value) return;
+    const initialized = settings.value.smallTheaterTopicDefaultsInitialized ?? {};
+    if (initialized[characterId]) return;
+    settings.value = normalizeAppSettings({
+      ...settings.value,
+      smallTheaterTopicDefaultsInitialized: {
+        ...initialized,
+        [characterId]: timestamp
+      }
+    });
+    await putEntity('settings', settings.value, 'main');
+  }
+
+  async function ensureSmallTheaterTopicsForCharacter(characterId: string) {
+    const normalizedCharacterId = characterId.trim();
+    if (!normalizedCharacterId) return [];
+    const existingTopics = smallTheaterTopicsForCharacter(normalizedCharacterId);
+    if (existingTopics.length || settings.value?.smallTheaterTopicDefaultsInitialized?.[normalizedCharacterId]) return existingTopics;
+
+    const timestamp = Date.now();
+    const defaultTopics = createDefaultSmallTheaterTopics(normalizedCharacterId, timestamp);
+    smallTheaterTopics.value.push(...defaultTopics);
+    await Promise.all(defaultTopics.map((topic) => putEntity('smallTheaterTopics', topic)));
+    await markSmallTheaterDefaultsInitialized(normalizedCharacterId, timestamp);
+    return smallTheaterTopicsForCharacter(normalizedCharacterId);
+  }
+
+  async function createSmallTheaterTopic(payload: Pick<SmallTheaterTopic, 'charId' | 'title' | 'prompt'> & Partial<Pick<SmallTheaterTopic, 'enabled'>>) {
+    const now = Date.now();
+    const topic = normalizeSmallTheaterTopic({
+      ...payload,
+      enabled: payload.enabled !== false,
+      builtIn: false,
+      createdAt: now,
+      updatedAt: now
+    }, payload.charId);
+    if (!topic) {
+      showConfigAlert('请填写小剧场题材标题。', '无法保存题材');
+      return null;
+    }
+
+    smallTheaterTopics.value.push(topic);
+    await putEntity('smallTheaterTopics', topic);
+    return topic;
+  }
+
+  async function saveSmallTheaterTopic(topic: SmallTheaterTopic) {
+    const normalizedTopic = normalizeSmallTheaterTopic({
+      ...topic,
+      updatedAt: Date.now()
+    }, topic.charId);
+    if (!normalizedTopic) {
+      showConfigAlert('请填写小剧场题材标题。', '无法保存题材');
+      return null;
+    }
+
+    const index = smallTheaterTopics.value.findIndex((entry) => entry.id === normalizedTopic.id);
+    if (index >= 0) smallTheaterTopics.value[index] = normalizedTopic;
+    else smallTheaterTopics.value.push(normalizedTopic);
+    await putEntity('smallTheaterTopics', normalizedTopic);
+    return normalizedTopic;
+  }
+
+  async function deleteSmallTheaterTopic(topicId: string) {
+    const topic = smallTheaterTopics.value.find((entry) => entry.id === topicId);
+    if (!topic) return false;
+    smallTheaterTopics.value = smallTheaterTopics.value.filter((entry) => entry.id !== topicId);
+    await deleteEntity('smallTheaterTopics', topicId);
+    return true;
+  }
+
+  async function deleteSmallTheater(theaterId: string) {
+    const theater = smallTheaters.value.find((entry) => entry.id === theaterId);
+    if (!theater) return false;
+    smallTheaters.value = smallTheaters.value.filter((entry) => entry.id !== theaterId);
+    await deleteEntity('smallTheaters', theaterId);
+    return true;
+  }
+
+  async function createSmallTheaterFromConversation(conversationId: string, topicId?: string, options?: { silent?: boolean }) {
+    const conversation = conversationById(conversationId);
+    if (generatingSmallTheaterConversationIds.has(conversationId)) return null;
+    if (!conversation) return null;
+    const character = characterById(conversation.charId);
+    if (!character) return null;
+    const boundUser = userById(character.boundUserId) ?? user.value;
+    if (!boundUser) return null;
+    const chatSettings = settingsForConversation(conversationId);
+    const modelOverride = getConversationTextModelOverride(chatSettings, 'theater');
+    if (!hasConfiguredTextModel(modelOverride)) {
+      if (!options?.silent) showConfigAlert('请先在聊天菜单里配置小剧场模型，或在设置里配置全局默认 API 模型。', '需要配置 API 模型');
+      return null;
+    }
+
+    const topics = await ensureSmallTheaterTopicsForCharacter(character.id);
+    const selectedTopic = topicId
+      ? topics.find((topic) => topic.id === topicId)
+      : (() => {
+          const enabledTopics = topics.filter((topic) => topic.enabled);
+          return enabledTopics[Math.floor(Math.random() * enabledTopics.length)] ?? null;
+        })();
+    if (!selectedTopic) {
+      if (!options?.silent) showConfigAlert('请先开启或新增一个小剧场题材。', '无法生成小剧场');
+      return null;
+    }
+
+    generatingSmallTheaterConversationIds.add(conversationId);
+    try {
+      const visibleMessages = visibleMessagesForConversation(conversationId);
+      const recentVoomPosts = voomPosts.value
+        .filter((post) => post.authorType !== 'user' && (post.charId === character.id || post.conversationId === conversationId || post.conversationIds?.includes(conversationId)))
+        .sort((first, second) => second.createdAt - first.createdAt)
+        .slice(0, 16);
+      const result = await generateSmallTheater({
+        context: {
+          user: boundUser,
+          character,
+          boundUser,
+          mode: conversation.activeMode,
+          messages: visibleMessages,
+          recentVoomPosts,
+          worldBooks: worldBooks.value,
+          conversationSummary: conversation.summary,
+          memorySummary: await memoryContextForConversationAsync(conversationId, visibleMessages.slice(-8).map((message) => messageReadableContent(message)).join('\n'), {
+            modelOverride: getConversationTextModelOverride(chatSettings, 'summary', conversation.activeMode)
+          }),
+          stickerVisionEnabled: chatSettings.stickerVisionEnabled,
+          timeAwareness: chatSettings.timeAwareness
+        },
+        topic: selectedTopic,
+        settings: settings.value ?? undefined,
+        modelOverride
+      });
+      const theater: SmallTheater = {
+        id: createId('theater'),
+        charId: character.id,
+        conversationId: conversation.id,
+        topicId: selectedTopic.id,
+        topicTitle: selectedTopic.title,
+        authorName: getCharacterVoomAuthorName(character),
+        authorAvatar: character.avatar,
+        title: result.title,
+        summary: result.summary,
+        html: result.html,
+        model: result.model,
+        createdAt: Date.now()
+      };
+      smallTheaters.value.unshift(theater);
+      await putEntity('smallTheaters', theater);
+      return theater;
+    } finally {
+      generatingSmallTheaterConversationIds.delete(conversationId);
     }
   }
 
@@ -5143,9 +5351,12 @@ export const useAppStore = defineStore('app', () => {
     unreadConversationCount,
     messages,
     voomPosts,
+    smallTheaterTopics,
+    smallTheaters,
     musicFavoriteTracks,
     musicCommentThreads,
     sortedVoomPosts,
+    sortedSmallTheaters,
     favorites,
     sortedFavorites,
     worldBooks,
@@ -5166,6 +5377,9 @@ export const useAppStore = defineStore('app', () => {
     conversationById,
     setActiveConversation,
     messagesForConversation,
+    smallTheaterTopicsForCharacter,
+    smallTheatersForCharacter,
+    smallTheaterById,
     generatedImagesForProvider,
     settingsForConversation,
     modelOverridesForConversation,
@@ -5267,6 +5481,12 @@ export const useAppStore = defineStore('app', () => {
     applyChatMessageImageCandidate,
     createUserVoomPost,
     createMomentFromConversation,
+    ensureSmallTheaterTopicsForCharacter,
+    createSmallTheaterTopic,
+    saveSmallTheaterTopic,
+    deleteSmallTheaterTopic,
+    createSmallTheaterFromConversation,
+    deleteSmallTheater,
     regenerateVoomPostImage,
     applyVoomPostImageCandidate,
     addVoomComment,

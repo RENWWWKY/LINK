@@ -29,6 +29,8 @@ const snapshotArrayKeys: Array<keyof Omit<AppSnapshot, 'settings'>> = [
   'conversations',
   'messages',
   'voomPosts',
+  'smallTheaterTopics',
+  'smallTheaters',
   'musicFavoriteTracks',
   'musicCommentThreads',
   'worldBooks',

@@ -114,7 +114,8 @@ export function normalizeChatModelOverrides(overrides?: Partial<ChatModelOverrid
     online: String(overrides?.online ?? '').trim(),
     offline: String(overrides?.offline ?? '').trim(),
     summary: String(overrides?.summary ?? '').trim(),
-    voom: String(overrides?.voom ?? '').trim()
+    voom: String(overrides?.voom ?? '').trim(),
+    theater: String(overrides?.theater ?? '').trim()
   };
 }
 
@@ -268,6 +269,7 @@ export const defaultAppSettings: AppSettings = {
   voomImageProvider: '',
   voomImageModel: '',
   voomReadAtByUser: {},
+  smallTheaterTopicDefaultsInitialized: {},
   keepAlive: createDefaultKeepAliveSettings(),
   ringtoneSettings: createDefaultRingtoneSettings(),
   themeSettings: createDefaultThemeSettings(),
@@ -366,6 +368,18 @@ function normalizeVoomReadAtByUser(input: unknown): Record<string, Record<string
     if (Object.keys(normalizedCharacterMap).length) normalized[normalizedUserId] = normalizedCharacterMap;
   }
 
+  return normalized;
+}
+
+function normalizeTimestampRecord(input: unknown): Record<string, number> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+
+  const normalized: Record<string, number> = {};
+  for (const [key, value] of Object.entries(input)) {
+    const normalizedKey = key.trim();
+    const timestamp = Math.max(0, Number(value) || 0);
+    if (normalizedKey && timestamp > 0) normalized[normalizedKey] = timestamp;
+  }
   return normalized;
 }
 
@@ -1289,6 +1303,7 @@ export function normalizeAppSettings(settings?: Partial<AppSettings> | null): Ap
         : ''
     }),
     voomReadAtByUser: normalizeVoomReadAtByUser(settings?.voomReadAtByUser),
+    smallTheaterTopicDefaultsInitialized: normalizeTimestampRecord(settings?.smallTheaterTopicDefaultsInitialized),
     keepAlive: normalizeKeepAliveSettings(settings?.keepAlive),
     ringtoneSettings: normalizeRingtoneSettings(settings?.ringtoneSettings),
     themeSettings: normalizeThemeSettings(settings?.themeSettings),

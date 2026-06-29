@@ -1,6 +1,7 @@
 <template>
   <MobileShell />
   <GlobalVoomNotice />
+  <GlobalSmallTheaterNotice />
   <FirstRunDisclaimer v-if="showDisclaimer" :model-value="showDisclaimer" @complete="handleDisclaimerComplete" />
   <AppModal v-model="store.configAlert.open" :title="store.configAlert.title">
     <section class="config-alert">
@@ -15,6 +16,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import MobileShell from '@/components/layout/MobileShell.vue';
 import AppModal from '@/components/common/AppModal.vue';
 import FirstRunDisclaimer from '@/components/common/FirstRunDisclaimer.vue';
+import GlobalSmallTheaterNotice from '@/components/common/GlobalSmallTheaterNotice.vue';
 import GlobalVoomNotice from '@/components/common/GlobalVoomNotice.vue';
 import { syncKeepAlive } from '@/services/keepAlive';
 import { useAppStore } from '@/stores/appStore';

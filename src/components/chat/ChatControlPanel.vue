@@ -626,6 +626,28 @@
         <section class="settings-block">
           <header class="section-header">
             <div>
+              <span>Theater</span>
+              <strong>小剧场生成</strong>
+            </div>
+          </header>
+          <label class="switch-card wide">
+            <input :checked="draft.autoGenerateTheater" type="checkbox" @change="updateAutoGenerateTheater" />
+            <span class="switch-track"></span>
+            <div>
+              <strong>允许角色主动生成小剧场</strong>
+              <span>生成独立番外 HTML 页面，不写入聊天楼层，也不会作为后续 AI 记忆读取。</span>
+            </div>
+          </label>
+          <label class="field frequency-field">
+            <span>小剧场生成频率</span>
+            <select :value="draft.theaterFrequency" :disabled="!draft.autoGenerateTheater" @change="updateTheaterFrequency">
+              <option v-for="option in voomFrequencyOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+          </label>
+        </section>
+        <section class="settings-block">
+          <header class="section-header">
+            <div>
               <span>Initiative</span>
               <strong>主动消息</strong>
             </div>
@@ -1014,6 +1036,16 @@ function updateAutoGenerateVoom(event: Event) {
 
 function updateVoomFrequency(event: Event) {
   draft.voomFrequency = normalizeVoomFrequency((event.target as HTMLSelectElement).value, draft.voomFrequency);
+  saveDraft();
+}
+
+function updateAutoGenerateTheater(event: Event) {
+  draft.autoGenerateTheater = (event.target as HTMLInputElement).checked;
+  saveDraft();
+}
+
+function updateTheaterFrequency(event: Event) {
+  draft.theaterFrequency = normalizeVoomFrequency((event.target as HTMLSelectElement).value, draft.theaterFrequency);
   saveDraft();
 }
 

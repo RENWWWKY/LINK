@@ -114,13 +114,14 @@ export interface CharacterProfile {
 
 export type VoomFrequency = 'very-low' | 'low' | 'medium' | 'high' | 'very-high' | 'always';
 
-export type ChatModelScope = 'online' | 'offline' | 'summary' | 'voom';
+export type ChatModelScope = 'online' | 'offline' | 'summary' | 'voom' | 'theater';
 
 export interface ChatModelOverrides {
   online: string;
   offline: string;
   summary: string;
   voom: string;
+  theater: string;
 }
 
 export interface ChatAppearanceSettings {
@@ -205,6 +206,8 @@ export interface ConversationSettings {
   narrationModeEnabled: boolean;
   autoGenerateVoom: boolean;
   voomFrequency: VoomFrequency;
+  autoGenerateTheater: boolean;
+  theaterFrequency: VoomFrequency;
   stickerVisionEnabled: boolean;
   stickerSuggestionsEnabled: boolean;
   offlineInvitationEnabled: boolean;
@@ -511,6 +514,32 @@ export interface VoomComment {
   authorId?: string;
   parentId?: string;
   createdAt?: number;
+}
+
+export interface SmallTheaterTopic {
+  id: string;
+  charId: string;
+  title: string;
+  prompt: string;
+  enabled: boolean;
+  builtIn?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SmallTheater {
+  id: string;
+  charId: string;
+  conversationId?: string;
+  topicId?: string;
+  topicTitle: string;
+  authorName: string;
+  authorAvatar: string;
+  title: string;
+  summary: string;
+  html: string;
+  model?: string;
+  createdAt: number;
 }
 
 export type MusicSource = 'netease' | 'kuwo' | 'joox' | 'tencent' | 'tidal' | 'qobuz' | 'bilibili' | 'apple' | 'ytmusic' | 'spotify';
@@ -859,6 +888,7 @@ export interface AppSettings {
   voomImageProvider: ImageProviderType | '';
   voomImageModel: string;
   voomReadAtByUser: Record<string, Record<string, number>>;
+  smallTheaterTopicDefaultsInitialized: Record<string, number>;
   keepAlive: AppKeepAliveSettings;
   ringtoneSettings: AppRingtoneSettings;
   themeSettings: AppThemeSettings;
@@ -873,6 +903,8 @@ export interface AppSnapshot {
   conversations: Conversation[];
   messages: ChatMessage[];
   voomPosts: VoomPost[];
+  smallTheaterTopics: SmallTheaterTopic[];
+  smallTheaters: SmallTheater[];
   musicFavoriteTracks: MusicTrack[];
   musicCommentThreads: MusicCommentThread[];
   worldBooks: WorldBookEntry[];
@@ -893,6 +925,7 @@ export interface PromptContext {
   mode: ChatMode;
   messages: ChatMessage[];
   recentVoomPosts?: VoomPost[];
+  recentSmallTheaters?: SmallTheater[];
   worldBooks: WorldBookEntry[];
   conversationSummary: string;
   memorySummary?: string;

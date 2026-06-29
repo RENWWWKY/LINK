@@ -1,5 +1,5 @@
 import { unzipSync } from 'fflate';
-import type { ApiVendor, AppSettings, CharacterProfile, ConversationMemoryAtom, ConversationMemoryEntryStatus, ConversationMemoryEntryType, ConversationTimeAwarenessSettings, GenerateReplyInput, ImageProviderType, MusicComment, MusicTrack, NovelAiModelOption, PollinationsModelOption, PromptContext, UserProfile, VoomComment, VoomFrequency, VoomPost } from '@/types/domain';
+import type { ApiVendor, AppSettings, CharacterProfile, ConversationMemoryAtom, ConversationMemoryEntryStatus, ConversationMemoryEntryType, ConversationTimeAwarenessSettings, GenerateReplyInput, ImageProviderType, MusicComment, MusicTrack, NovelAiModelOption, PollinationsModelOption, PromptContext, SmallTheater, SmallTheaterTopic, UserProfile, VoomComment, VoomFrequency, VoomPost } from '@/types/domain';
 import { createId } from '@/utils/id';
 import { getCharacterAiName, getCharacterVoomAuthorName } from '@/utils/character';
 import { defaultNovelAiModels, defaultPollinationsModels, getResolvedApiConfig, getResolvedOpenAiImageConfig, novelAiOfficialApiUrl, novelAiProxyApiUrl } from '@/utils/settings';
@@ -94,6 +94,13 @@ export interface MemoryAtomAuditResult {
 }
 
 export type UserVoomCommentResult = Pick<VoomComment, 'authorName' | 'authorId' | 'content' | 'contentTranslation' | 'parentId'>;
+
+export interface SmallTheaterGenerationResult {
+  title: string;
+  summary: string;
+  html: string;
+  model?: string;
+}
 
 export interface ImageGenerationOverrides {
   positivePrompt?: string;
@@ -2107,6 +2114,115 @@ export async function generateVoomPost(context: PromptContext, settings?: AppSet
     imageDescription,
     likes,
     comments: resolvedComments
+  };
+}
+
+function extractHtmlCodeBlock(content: string) {
+  const trimmed = content.trim();
+  const fenced = trimmed.match(/```(?:html)?\s*([\s\S]*?)\s*```/i);
+  const rawHtml = (fenced?.[1] ?? trimmed).trim();
+  const htmlStart = rawHtml.search(/<!doctype\s+html|<html[\s>]/i);
+  return (htmlStart >= 0 ? rawHtml.slice(htmlStart) : rawHtml).trim();
+}
+
+function ensureCompleteHtmlDocument(content: string, fallbackTitle: string) {
+  const html = extractHtmlCodeBlock(content);
+  if (!html) return '';
+  if (/<html[\s>]/i.test(html)) return html;
+
+  const title = escapeHtmlText(fallbackTitle || '小剧场');
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>${title}</title>
+</head>
+<body>
+${html}
+</body>
+</html>`;
+}
+
+function escapeHtmlText(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function decodeHtmlText(value: string) {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+function compactHtmlText(value: string, maxLength: number) {
+  const normalized = decodeHtmlText(value.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
+}
+
+function extractSmallTheaterTitle(html: string, fallback: string) {
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
+    ?? html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)
+    ?? html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i);
+  return compactHtmlText(titleMatch?.[1] ?? '', 36) || fallback;
+}
+
+function extractSmallTheaterSummary(html: string, fallback: string) {
+  const metaMatch = html.match(/<meta\s+name=["']description["']\s+content=["']([^"']+)["'][^>]*>/i)
+    ?? html.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+  return compactHtmlText(metaMatch?.[1] ?? '', 90) || fallback;
+}
+
+function buildSmallTheaterPrompt(input: { context: PromptContext; topic: SmallTheaterTopic; recentTheaters?: SmallTheater[] }) {
+  const characterName = getCharacterAiName(input.context.character);
+  const topicPrompt = input.topic.prompt.trim() || input.topic.title;
+  return [
+    buildPrompt(input.context),
+    '现在生成一个「小剧场」独立番外页面。它可以读取上面的角色设定、世界书、记忆手册、最近对话和当前时间上下文，但它绝对不是聊天消息、不是 VOOM、不是记忆写入内容，也不会被 AI 后续读取。',
+    '生成结果必须是正文之外的番外小页面：不要把内容写成角色已在当前会话里发送、发布或注入楼层；不要输出聊天事件、VOOM JSON、朋友圈、系统旁白或任何需要写回对话的内容。',
+    `本次角色：${characterName}（角色ID：${input.context.character.id}）`,
+    `本次小剧场题材：${input.topic.title}\n题材扩展：${topicPrompt}`,
+    `输出格式：只输出一个完整 HTML 文件代码块，形如：\n\`\`\`html\n<!doctype html>...\n\`\`\`。不要输出解释、JSON、Markdown 标题或代码块之外的文字。`,
+    `HTML 要求：
+1. 必须包含 <!doctype html>、<html>、<head>、<meta charset="UTF-8">、<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">、<title>、完整 <style> 和 <script>。
+2. 页面必须适配手机端 320px-480px 宽度，考虑安全区、竖屏滚动、触控目标、按钮状态、长文本换行和深浅色视觉对比。
+3. 有互动性：至少包含 3 个可点击/可切换/可展开/可选择/可拖动/可输入的交互点，交互由原生 JavaScript 实现，并且不依赖网络。
+4. 不允许加载外部 JS/CSS/字体/图片/接口；图片只能用 CSS、emoji、渐变、内嵌 SVG data URL 或纯 HTML/CSS 视觉替代。
+5. 小剧场要像一个完整可玩的移动网页，而不是静态文章：可以使用论坛楼层、问答折叠、群聊切换、相册翻页、时间线、卡牌、投票、抽签、小游戏、档案抽屉等形式。
+6. 内容必须遵守信息边界：NPC 只来自当前角色设定、世界书、记忆或合理新生成的当前角色社交圈；禁止借用其他角色的 NPC、关系和评论区常客。
+7. 标题、正文、按钮文案和交互反馈要自然、有代入感；不要在页面里解释“这是功能”“这是 HTML/CSS/JS”“如何使用本应用”。
+8. 这是番外，不改变正文事实；如果写平行世界、传闻、论坛猜测或匿名爆料，必须在页面语气里自然体现它不是既定事实。
+9. JavaScript 必须健壮：使用 DOMContentLoaded 或脚本放在 body 末尾，选择器存在性要检查，交互不能因为缺少元素报错。
+10. 视觉要完整：有明确层级、背景、卡片/列表/控件状态、空状态或完成状态，避免文字溢出、重叠、按钮过小或页面横向滚动。`
+  ].join('\n\n');
+}
+
+export async function generateSmallTheater(input: {
+  context: PromptContext;
+  topic: SmallTheaterTopic;
+  recentTheaters?: SmallTheater[];
+  settings?: AppSettings;
+  modelOverride?: string;
+}): Promise<SmallTheaterGenerationResult> {
+  requireTextGenerationConfig(input.settings, input.modelOverride, '小剧场生成');
+  const prompt = buildSmallTheaterPrompt({ context: input.context, topic: input.topic, recentTheaters: input.recentTheaters });
+  const apiReply = await callTextApi(input.settings, prompt, input.modelOverride);
+  const html = ensureCompleteHtmlDocument(apiReply, input.topic.title);
+  if (!html) throw new Error('小剧场模型没有返回 HTML 内容。');
+
+  const fallbackSummary = `由「${input.topic.title}」生成的互动番外小剧场。`;
+  return {
+    title: extractSmallTheaterTitle(html, input.topic.title),
+    summary: extractSmallTheaterSummary(html, fallbackSummary),
+    html,
+    model: getResolvedTextApiConfig(input.settings, input.modelOverride).model
   };
 }
 

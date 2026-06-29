@@ -5,6 +5,8 @@ const ChatsPage = () => import('@/pages/ChatsPage.vue');
 const ChatSettingsPage = () => import('@/pages/ChatSettingsPage.vue');
 const ChatSearchPage = () => import('@/pages/ChatSearchPage.vue');
 const ChatRoomPage = () => import('@/pages/ChatRoomPage.vue');
+const SmallTheaterPage = () => import('@/pages/SmallTheaterPage.vue');
+const SmallTheaterDetailPage = () => import('@/pages/SmallTheaterDetailPage.vue');
 const OfflineSettingsPage = () => import('@/pages/OfflineSettingsPage.vue');
 const OfflineRoomPage = () => import('@/pages/OfflineRoomPage.vue');
 const VoomPage = () => import('@/pages/VoomPage.vue');
@@ -46,6 +48,8 @@ export const router = createRouter({
     { path: '/chats', name: 'chats', component: ChatsPage },
     { path: '/chats/:id/search', name: 'chat-search', component: ChatSearchPage, props: true },
     { path: '/chats/:id/settings', name: 'chat-settings', component: ChatSettingsPage, props: true },
+    { path: '/chats/:id/theaters', name: 'small-theater', component: SmallTheaterPage, props: true },
+    { path: '/theaters/:theaterId', name: 'small-theater-detail', component: SmallTheaterDetailPage, props: true },
     { path: '/chats/:id', name: 'chat-room', component: ChatRoomPage, props: true },
     { path: '/offline/:id/settings', name: 'offline-chat-settings', component: OfflineSettingsPage, props: true },
     { path: '/offline/:id', name: 'offline-room', component: OfflineRoomPage, props: true },

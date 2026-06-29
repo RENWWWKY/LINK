@@ -210,6 +210,10 @@
           <Sparkles :size="20" />
           <span>{{ generatingVoom ? '生成中' : '生成 VOOM' }}</span>
         </button>
+        <button type="button" @click="openSmallTheater">
+          <Clapperboard :size="20" />
+          <span>小剧场</span>
+        </button>
         <button class="danger-menu-action" type="button" :disabled="chatActionLocked" @click="openDeleteFriendConfirm">
           <UserMinus :size="20" />
           <span>删除好友</span>
@@ -485,7 +489,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ArchiveX, BookmarkPlus, CheckSquare, ContactRound, Copy, DoorOpen, Grid3X3, MapPin, MessageSquareText, Pencil, Quote, RefreshCw, RotateCcw, SlidersHorizontal, Sparkles, Trash2, UserMinus, UserRound, Wallet, X } from 'lucide-vue-next';
+import { ArchiveX, BookmarkPlus, CheckSquare, Clapperboard, ContactRound, Copy, DoorOpen, Grid3X3, MapPin, MessageSquareText, Pencil, Quote, RefreshCw, RotateCcw, SlidersHorizontal, Sparkles, Trash2, UserMinus, UserRound, Wallet, X } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
 import ChatHeader from '@/components/chat/ChatHeader.vue';
 import ChatModelSwitchPanel from '@/components/chat/ChatModelSwitchPanel.vue';
@@ -1698,6 +1702,11 @@ async function confirmClearHistory() {
 
 function openChatSettings() {
   void router.push({ name: 'chat-settings', params: { id: props.id } });
+}
+
+function openSmallTheater() {
+  showActionMenu.value = false;
+  void router.push({ name: 'small-theater', params: { id: props.id } });
 }
 
 function openChatSearch() {
