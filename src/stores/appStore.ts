@@ -5,7 +5,7 @@ import { defaultSettings } from '@/data/seed';
 import type { AppSettings, AppSnapshot, CharacterProfile, CharacterProfileHistoryEntry, CharacterProfileHistoryField, ChatImageAttachment, ChatImageCandidate, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatMode, ChatModelOverrides, ChatModelScope, ChatOfflineInvitationAttachment, ChatOfflineInvitationStatus, ChatTransferAttachment, ChatTransferStatus, ChatVoiceAttachment, Conversation, ConversationMemoryAtom, ConversationMemoryDebugTrace, ConversationMemoryRecord, ConversationSettings, FavoriteMessageKind, FavoriteMessageRecord, GeneratedImageRecord, ImageModuleId, MusicCommentThread, MusicTrack, SmallTheater, SmallTheaterTopic, Sticker, StickerGroup, UserProfile, VisualProfile, VoomComment, VoomFrequency, VoomImageCandidate, VoomPost, VoomPostVisibility, WorldBookEntry } from '@/types/domain';
 import { createAccountId, createId } from '@/utils/id';
 import { getCharacterAiName, getCharacterInitialProfile, getCharacterVoomAuthorName, getCharacterVoomDisplayName, normalizeCharacterMindStateLines, normalizeCharacterProfile } from '@/utils/character';
-import { normalizeUserProfile, normalizeVisualProfile } from '@/utils/profile';
+import { getUserAiName, getUserDisplayName, getUserVoomAuthorName, normalizeUserProfile, normalizeVisualProfile } from '@/utils/profile';
 import { getImageGenerationSize, getImagePromptPresetForProvider, getSelectedImageModelOption, isImageModelSelectionDisabled, mergeVendorModels, normalizeAppSettings, normalizeChatModelOverrides } from '@/utils/settings';
 import { normalizeWorldBookEntry, normalizeWorldBooks } from '@/utils/worldBook';
 import { createDefaultSmallTheaterTopics, normalizeSmallTheaterTopic } from '@/utils/smallTheater';
@@ -917,9 +917,22 @@ export const useAppStore = defineStore('app', () => {
     }) ?? null;
   }
 
+  function userForVoomComment(comment: VoomComment) {
+    const authorId = String(comment.authorId ?? '').trim();
+    const authorName = comment.authorName.trim().toLocaleLowerCase();
+    return users.value.find((entry) => {
+      if (authorId && entry.id === authorId) return true;
+      return [getUserVoomAuthorName(entry), getUserAiName(entry)]
+        .map((name) => name.trim().toLocaleLowerCase())
+        .includes(authorName);
+    }) ?? null;
+  }
+
   function voomCommentAiAuthorName(comment: VoomComment) {
     const character = characterForVoomComment(comment);
-    return character ? getCharacterAiName(character) : comment.authorName;
+    if (character) return getCharacterAiName(character);
+    const commentUser = userForVoomComment(comment);
+    return commentUser ? getUserAiName(commentUser) : comment.authorName;
   }
 
   function characterForVoomDisplayComment(comment: VoomComment) {
@@ -935,7 +948,9 @@ export const useAppStore = defineStore('app', () => {
 
   function voomCommentDisplayName(comment: VoomComment) {
     const character = characterForVoomDisplayComment(comment);
-    return character ? getCharacterVoomDisplayName(character) : comment.authorName;
+    if (character) return getCharacterVoomDisplayName(character);
+    const commentUser = userForVoomComment(comment);
+    return commentUser ? getUserDisplayName(commentUser) : comment.authorName;
   }
 
   function formatVoomCommentEvent(comment: VoomComment, comments: VoomComment[]) {
@@ -950,12 +965,16 @@ export const useAppStore = defineStore('app', () => {
 
   function voomAuthorNameForPost(post: VoomPost) {
     const character = characterById(post.charId);
-    return character ? getCharacterVoomDisplayName(character) : post.authorName;
+    if (character) return getCharacterVoomDisplayName(character);
+    const postUser = post.userId ? userById(post.userId) : null;
+    return postUser ? getUserDisplayName(postUser) : post.authorName;
   }
 
   function voomAiAuthorNameForPost(post: VoomPost) {
     const character = characterById(post.charId);
-    return character ? getCharacterAiName(character) : post.authorName;
+    if (character) return getCharacterAiName(character);
+    const postUser = post.userId ? userById(post.userId) : null;
+    return postUser ? getUserAiName(postUser) : post.authorName;
   }
 
   function notificationPreview(content: string, fallback: string) {
@@ -968,7 +987,7 @@ export const useAppStore = defineStore('app', () => {
     if (!currentUser) return false;
     if (comment.authorId && comment.authorId === currentUser.id) return true;
     const authorName = comment.authorName.trim().toLocaleLowerCase();
-    return [currentUser.nickname, currentUser.name]
+    return [getUserVoomAuthorName(currentUser), getUserAiName(currentUser)]
       .map((name) => name.trim().toLocaleLowerCase())
       .filter(Boolean)
       .includes(authorName);
@@ -1317,7 +1336,7 @@ export const useAppStore = defineStore('app', () => {
     if (message.sender === 'user') {
       const character = conversation ? characterById(conversation.charId) : null;
       const boundUser = character ? userById(character.boundUserId) : null;
-      return boundUser?.nickname || boundUser?.name || user.value?.nickname || user.value?.name || '我';
+      return getUserAiName(boundUser ?? user.value);
     }
     return '系统';
   }
@@ -3115,7 +3134,7 @@ export const useAppStore = defineStore('app', () => {
       const character = characterById(conversation.charId);
       const characterName = character ? getCharacterAiName(character) : '角色';
       const boundUser = character ? userById(character.boundUserId) ?? user.value : user.value;
-      const userSenderName = boundUser?.name || boundUser?.nickname || '我';
+      const userSenderName = getUserAiName(boundUser);
       const modelOverride = getConversationTextModelOverride(chatSettings, 'summary', conversation.activeMode);
       const floorMap = getMessageFloorMap(conversationMessages);
       const includeTimeline = chatSettings.timeAwareness.enabled;
@@ -3128,7 +3147,7 @@ export const useAppStore = defineStore('app', () => {
         }).join('\n'),
         previousSummary: getMemoryContext(memoriesForConversation(conversationId), { includeResolved: true, maxEntries: 42 }),
         timeAwareness: chatSettings.timeAwareness,
-        timeAwarenessUserName: boundUser?.name || boundUser?.nickname || '用户',
+        timeAwarenessUserName: getUserAiName(boundUser),
         timelineContext: renderMessageTimelineContext(range.sourceMessages, floorMap, range.startFloor),
         settings: settings.value ?? undefined,
         modelOverride,
@@ -3425,7 +3444,7 @@ export const useAppStore = defineStore('app', () => {
       messages: memories.map((memory) => `【${memory.startFloor}-${memory.endFloor}楼】\n${memory.summary}`).join('\n\n'),
       previousSummary: '',
       timeAwareness: chatSettings.timeAwareness,
-      timeAwarenessUserName: user.value?.name || user.value?.nickname || '用户',
+      timeAwarenessUserName: getUserAiName(user.value),
       timelineContext: renderMemoryRangeTimelineContext(memories),
       settings: settings.value ?? undefined,
       modelOverride,
@@ -3506,7 +3525,7 @@ export const useAppStore = defineStore('app', () => {
         messages: memory.summary,
         previousSummary: '',
         timeAwareness: chatSettings.timeAwareness,
-        timeAwarenessUserName: user.value?.name || user.value?.nickname || '用户',
+        timeAwarenessUserName: getUserAiName(user.value),
         timelineContext: renderMemoryRangeTimelineContext([memory]),
         settings: settings.value ?? undefined,
         modelOverride,
@@ -3738,12 +3757,12 @@ export const useAppStore = defineStore('app', () => {
       const summary = await generateConversationSummary({
         messages: usefulMessages.map((message) => {
           const floor = floorMap.get(message.id) ?? 1;
-          const sender = message.sender === 'user' ? boundUser?.name || boundUser?.nickname || '我' : characterName;
+          const sender = message.sender === 'user' ? getUserAiName(boundUser) : characterName;
           return `${floor}楼 ${sender}: ${messageReadableContent(message)}`;
         }).join('\n'),
         previousSummary: await memoryContextForConversationAsync(conversationId, exchangeText, { includeResolved: true, maxTokens: 1400, maxEntries: 24, storeDebug: false, modelOverride, queryVector }),
         timeAwareness: chatSettings.timeAwareness,
-        timeAwarenessUserName: boundUser?.name || boundUser?.nickname || '用户',
+        timeAwarenessUserName: getUserAiName(boundUser),
         timelineContext: renderMessageTimelineContext(usefulMessages, floorMap, floorMap.get(usefulMessages[0].id) ?? 1),
         settings: settings.value ?? undefined,
         modelOverride,
@@ -3850,7 +3869,7 @@ export const useAppStore = defineStore('app', () => {
         replyInstruction: options?.replyInstruction
           ? options.replyInstruction
           : options?.proactive
-          ? `这不是用户刚发来的新消息，而是${getCharacterAiName(character)}在自己的生活节奏里主动联系${boundUser.name || boundUser.nickname}。请基于最近对话、关系状态、时间流逝和角色当前生活，生成一组自然的主动消息；不要假装用户刚说了什么，也不要替用户发言。`
+          ? `这不是用户刚发来的新消息，而是${getCharacterAiName(character)}在自己的生活节奏里主动联系${getUserAiName(boundUser)}。请基于最近对话、关系状态、时间流逝和角色当前生活，生成一组自然的主动消息；不要假装用户刚说了什么，也不要替用户发言。`
           : undefined,
         availableStickers: availableCharacterStickers.map((sticker) => ({
           stickerId: sticker.id,
@@ -4525,7 +4544,7 @@ export const useAppStore = defineStore('app', () => {
       userId: author.id,
       visibility,
       visibleCharacterIds: targetCharacters.map((character) => character.id),
-      authorName: author.nickname || author.name || '我',
+      authorName: getUserVoomAuthorName(author),
       authorAvatar: author.avatar,
       content,
       image: image || undefined,
@@ -5149,7 +5168,7 @@ export const useAppStore = defineStore('app', () => {
     const currentUser = user.value;
     const comment: VoomComment = {
       id: createId('comment'),
-      authorName: currentUser?.nickname || currentUser?.name || '我',
+      authorName: getUserVoomAuthorName(currentUser),
       authorId: currentUser?.id,
       content: trimmedContent,
       parentId: parentId || undefined,
@@ -5175,7 +5194,7 @@ export const useAppStore = defineStore('app', () => {
 
   async function toggleVoomLike(postId: string) {
     const post = voomPosts.value.find((entry) => entry.id === postId);
-    const currentUserName = user.value?.nickname || user.value?.name || '我';
+    const currentUserName = getUserVoomAuthorName(user.value);
     if (!post) return;
 
     const likes = post.likes.includes(currentUserName)
@@ -5266,8 +5285,11 @@ export const useAppStore = defineStore('app', () => {
 
     replyingVoomCommentPostIds.value = [...replyingVoomCommentPostIds.value, postId];
     try {
+      const boundUserAuthorKeys = [getUserVoomAuthorName(boundUser), getUserAiName(boundUser)]
+        .map((name) => name.trim().toLocaleLowerCase())
+        .filter(Boolean);
       const userComments = post.comments
-        .filter((comment) => comment.authorId === boundUser.id || comment.authorName === boundUser.nickname || comment.authorName === boundUser.name)
+        .filter((comment) => comment.authorId === boundUser.id || boundUserAuthorKeys.includes(comment.authorName.trim().toLocaleLowerCase()))
         .slice(-4);
       const aiPost: VoomPost = {
         ...post,

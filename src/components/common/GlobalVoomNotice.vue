@@ -37,6 +37,7 @@ import { useAppStore } from '@/stores/appStore';
 import { playRingtone } from '@/services/ringtone';
 import type { VoomComment, VoomPost } from '@/types/domain';
 import { getCharacterVoomAuthorName, getCharacterVoomDisplayName } from '@/utils/character';
+import { getUserAiName, getUserVoomAuthorName } from '@/utils/profile';
 import { formatContentWithChineseTranslation } from '@/utils/translation';
 import { stripVoomCommentReplyPrefix } from '@/utils/voom';
 
@@ -132,7 +133,7 @@ function isCurrentUserVoomComment(comment: VoomComment) {
   if (!currentUser) return false;
   if (comment.authorId && comment.authorId === currentUser.id) return true;
   const authorName = normalizeAuthorKey(comment.authorName);
-  return [currentUser.nickname, currentUser.name]
+  return [getUserVoomAuthorName(currentUser), getUserAiName(currentUser)]
     .map(normalizeAuthorKey)
     .filter(Boolean)
     .includes(authorName);

@@ -314,6 +314,18 @@ export function normalizeUserProfile(user: UserProfile): UserProfile {
   };
 }
 
+export function getUserDisplayName(user: Pick<UserProfile, 'nickname' | 'name'> | null | undefined) {
+  return user?.nickname?.trim() || user?.name?.trim() || '我';
+}
+
+export function getUserAiName(user: Pick<UserProfile, 'name' | 'nickname'> | null | undefined) {
+  return user?.name?.trim() || user?.nickname?.trim() || '用户';
+}
+
+export function getUserVoomAuthorName(user: Pick<UserProfile, 'nickname' | 'name'> | null | undefined) {
+  return user?.nickname?.trim() || user?.name?.trim() || '我';
+}
+
 export function getVisualProfile(user: UserProfile | null): VisualProfile | null {
   if (!user) return null;
   return normalizeVisualProfile(removeVisualProfileAvatar(user.profile as Partial<VisualProfile>), user);

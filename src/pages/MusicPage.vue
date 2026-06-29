@@ -236,6 +236,7 @@ import { useAppStore } from '@/stores/appStore';
 import { useMusicPlayerStore } from '@/stores/musicPlayerStore';
 import type { MusicComment, MusicCommentThread, MusicSource, MusicTrack } from '@/types/domain';
 import { createId } from '@/utils/id';
+import { getUserVoomAuthorName } from '@/utils/profile';
 
 type MusicPageMode = 'player' | 'search' | 'comments' | 'likes';
 
@@ -594,7 +595,7 @@ async function submitUserComment() {
   const trackKey = getTrackKey(track);
   const comment: MusicComment = {
     id: createId('music_comment'),
-    authorName: currentUser.nickname || currentUser.name || '我',
+    authorName: getUserVoomAuthorName(currentUser),
     authorId: currentUser.id,
     authorType: 'user',
     avatar: currentUser.avatar,

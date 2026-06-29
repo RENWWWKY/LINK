@@ -2,6 +2,7 @@ import { unzipSync } from 'fflate';
 import type { ApiVendor, AppSettings, CharacterProfile, ConversationMemoryAtom, ConversationMemoryEntryStatus, ConversationMemoryEntryType, ConversationTimeAwarenessSettings, GenerateReplyInput, ImageProviderType, MusicComment, MusicTrack, NovelAiModelOption, PollinationsModelOption, PromptContext, SmallTheater, SmallTheaterTopic, UserProfile, VoomComment, VoomFrequency, VoomPost } from '@/types/domain';
 import { createId } from '@/utils/id';
 import { getCharacterAiName, getCharacterVoomAuthorName } from '@/utils/character';
+import { getUserAiName, getUserVoomAuthorName } from '@/utils/profile';
 import { defaultNovelAiModels, defaultPollinationsModels, getResolvedApiConfig, getResolvedOpenAiImageConfig, novelAiOfficialApiUrl, novelAiProxyApiUrl } from '@/utils/settings';
 import { estimateTokenCount } from '@/utils/memory';
 import { renderTimeAwarenessPrompt } from '@/utils/timeAwareness';
@@ -2303,7 +2304,7 @@ export async function generateUserVoomComments(input: {
   requireTextGenerationConfig(input.settings, input.modelOverride, '用户 VOOM 评论生成');
 
   const timeAwarenessPrompt = renderTimeAwarenessPrompt(input.timeAwareness, {
-    userName: input.author.name || input.author.nickname || '用户'
+    userName: getUserAiName(input.author)
   });
   const includeTimeContext = shouldIncludeVoomTimeContext(input.timeAwareness);
 
@@ -2319,7 +2320,8 @@ export async function generateUserVoomComments(input: {
   const prompt = [
     '你要模拟 LINK VOOM 里，角色们看到用户发出的动态后留下的自然评论。只输出 JSON，不要输出 JSON 以外的文字。',
     timeAwarenessPrompt,
-    `用户昵称：${input.author.nickname || input.author.name}`,
+    `用户真名：${getUserAiName(input.author)}`,
+    `用户主页网名：${getUserVoomAuthorName(input.author)}`,
     `用户设定：${input.author.description || '无'}`,
     includeTimeContext && input.createdAt ? `用户动态发布时间：${formatVoomContextTime(input.createdAt)}` : '',
     `用户动态正文：\n${input.content}`,
@@ -2361,7 +2363,7 @@ export async function generateVoomCommentReplies(input: {
   const postBelongsToUser = input.post.authorType === 'user';
   const targetComments = input.userComments.length ? input.userComments : input.post.comments.slice(-2);
   const includeTimeContext = shouldIncludeVoomTimeContext(input.context.timeAwareness);
-  const blockedAuthorNames = [input.context.boundUser.nickname, input.context.boundUser.name, input.context.user.nickname, input.context.user.name]
+  const blockedAuthorNames = [getUserVoomAuthorName(input.context.boundUser), getUserAiName(input.context.boundUser), getUserVoomAuthorName(input.context.user), getUserAiName(input.context.user)]
     .map((name) => name.trim())
     .filter(Boolean);
   const prompt = [
@@ -2492,7 +2494,8 @@ export async function generateMusicCommentThread(input: {
     : '当前账号暂未绑定角色。';
   const prompt = [
     '你要为 LINK 音乐页生成一个独立的歌曲评论区。它不是线上聊天、线下 RP 或 VOOM 会话，不要写入任何聊天事件。只输出 JSON，不要输出 JSON 以外的文字。',
-    `当前用户：${input.user.nickname || input.user.name || '我'}（不要代替该用户发评论）`,
+    `当前用户真名：${getUserAiName(input.user)}（不要代替该用户发评论）`,
+    `当前用户主页网名：${getUserVoomAuthorName(input.user)}`,
     `歌曲信息：\n${formatMusicTrackPrompt(input.track)}`,
     `该用户账号绑定的角色：\n${characterText}`,
     existingComments.length ? `已有评论区：\n${existingComments.map(formatMusicCommentPromptLine).join('\n')}` : '已有评论区：暂无。',

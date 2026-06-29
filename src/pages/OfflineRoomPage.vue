@@ -195,6 +195,7 @@ import type { ChatMessage } from '@/types/domain';
 import { getCharacterDisplayName } from '@/utils/character';
 import { useKeyboardScrollGuard } from '@/utils/keyboardScrollGuard';
 import { getConversationFloors } from '@/utils/memory';
+import { getUserAiName } from '@/utils/profile';
 import { formatChatTime } from '@/utils/time';
 import { isVoomNarrationMessage } from '@/utils/voomMessages';
 
@@ -222,7 +223,7 @@ const character = computed(() => (conversation.value ? store.characterById(conve
 const conversationUser = computed(() => (conversation.value ? store.userById(conversation.value.userId) : undefined));
 const characterDisplayName = computed(() => (character.value ? getCharacterDisplayName(character.value) : ''));
 const characterTrueName = computed(() => character.value?.name.trim() || characterDisplayName.value || '角色');
-const userTrueName = computed(() => conversationUser.value?.name.trim() || conversationUser.value?.nickname.trim() || '用户');
+const userTrueName = computed(() => getUserAiName(conversationUser.value));
 const currentConversationReplying = computed(() => store.isConversationReplying(props.id));
 const offlineAllMessages = computed(() => store.messagesForConversation(props.id).filter((message) => message.mode === 'offline' && !isVoomNarrationMessage(message)));
 const hiddenMessageIds = computed(() => store.hiddenMessageIdsForConversation(props.id));

@@ -59,7 +59,7 @@
       :character-display-names="characterVoomDisplayNames"
       :character-author-aliases="characterVoomAuthorAliases"
       :current-user-id="store.user?.id"
-      :current-user-name="store.user?.nickname"
+      :current-user-name="activeUserVoomAuthorName"
       :can-regenerate-image="canRegenerateVoomImage"
       :regenerating-image="regeneratingImagePostIds.includes(post.id)"
       :replying-thread="store.isReplyingVoomComments(post.id)"
@@ -257,6 +257,7 @@ import VoomPostCard from '@/components/voom/VoomPostCard.vue';
 import { useAppStore } from '@/stores/appStore';
 import type { CharacterProfile, VoomPost, VoomPostVisibility } from '@/types/domain';
 import { getCharacterDisplayName, getCharacterVoomAuthorName, getCharacterVoomDisplayName } from '@/utils/character';
+import { getUserDisplayName, getUserVoomAuthorName } from '@/utils/profile';
 import { readChatImageFile } from '@/utils/imageFile';
 import { getCharacterVisualProfile } from '@/utils/profile';
 import { getSelectedImageModelOption } from '@/utils/settings';
@@ -287,7 +288,8 @@ const pendingDeletePostId = ref('');
 
 const publisherCharacters = computed(() => store.charactersForActiveUser);
 const canRegenerateVoomImage = computed(() => Boolean(getSelectedImageModelOption(store.settings, 'voom')));
-const activeUserDisplayName = computed(() => store.user?.nickname || store.user?.name || '账号');
+const activeUserDisplayName = computed(() => store.user ? getUserDisplayName(store.user) : '账号');
+const activeUserVoomAuthorName = computed(() => getUserVoomAuthorName(store.user));
 const activeUserAvatar = computed(() => store.user?.avatar || '');
 const activeUserCharacterIds = computed(() => new Set(store.charactersForActiveUser.map((character) => character.id)));
 const voomLatestPostAtByCharacter = computed(() => {

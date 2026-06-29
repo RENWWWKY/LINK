@@ -1,6 +1,7 @@
 import type { ChatMode, ConversationOfflineSettings, OfflinePromptPreset, PromptContext, VoomPost, WorldBookEntry, WorldBookLoreEntry } from '@/types/domain';
 import { normalizeTimeAwarenessSettings, renderTimeAwarenessPrompt } from '@/utils/timeAwareness';
 import { activeOfflineTonePreset, activeOfflineWritingStylePreset, defaultOfflineSettings, normalizeOfflineSettings } from '@/utils/memory';
+import { getUserAiName } from '@/utils/profile';
 
 export const baseRoleplayPrompt = `你是{{char}}。
 
@@ -419,7 +420,7 @@ const offlineSelfReviewPrompt = `输出前内部自我检测：
 function renderOfflineSettingsPrompt(settings: ConversationOfflineSettings | null | undefined, context: PromptContext) {
   const offlineSettings = normalizeOfflineSettings(settings ?? defaultOfflineSettings);
   const characterName = context.character.name;
-  const userName = context.boundUser.name || context.user.name;
+  const userName = getUserAiName(context.boundUser) || getUserAiName(context.user);
   const writingStylePreset = activeOfflineWritingStylePreset(offlineSettings);
   const tonePreset = activeOfflineTonePreset(offlineSettings);
 
@@ -539,15 +540,16 @@ function entryActivationLabel(entry: WorldBookLoreEntry) {
 }
 
 function replaceWorldBookTokens(value: string, context: PromptContext) {
+  const userName = getUserAiName(context.user);
   return value
     .replace(/\{\{\s*char\s*\}\}/gi, context.character.name)
     .replace(/<\s*char\s*>/gi, context.character.name)
     .replace(/\bChar\b/g, context.character.name)
     .replace(/\bchar\b/g, context.character.name)
-    .replace(/\{\{\s*user\s*\}\}/gi, context.user.name)
-    .replace(/<\s*user\s*>/gi, context.user.name)
-    .replace(/\bUser\b/g, context.user.name)
-    .replace(/\buser\b/g, context.user.name);
+    .replace(/\{\{\s*user\s*\}\}/gi, userName)
+    .replace(/<\s*user\s*>/gi, userName)
+    .replace(/\bUser\b/g, userName)
+    .replace(/\buser\b/g, userName);
 }
 
 function renderLoreEntry(book: WorldBookEntry, entry: WorldBookLoreEntry, context: PromptContext) {
@@ -603,14 +605,16 @@ export function buildPrompt(context: PromptContext) {
   const selectedWorldBooks = selectWorldBooks(context);
   const outputPrompt = context.mode === 'online' ? profileMutationPrompt : offlineReplyOutputPrompt;
   const includeMessageTime = normalizeTimeAwarenessSettings(context.timeAwareness).enabled;
+  const userName = getUserAiName(context.user);
+  const boundUserName = getUserAiName(context.boundUser);
   const timeAwarenessPrompt = renderTimeAwarenessPrompt(context.timeAwareness, {
-    userName: context.boundUser.name || context.user.name
+    userName: boundUserName || userName
   });
   const history = context.messages
     .slice(-24)
     .map((message) => {
       const speaker = message.sender === 'user'
-        ? context.boundUser.name || context.boundUser.nickname
+        ? boundUserName
         : message.sender === 'char'
           ? context.character.name || context.character.nickname
           : '系统';
@@ -632,7 +636,7 @@ export function buildPrompt(context: PromptContext) {
       '{{char_nickname}}': context.character.nickname,
       '{{char_signature}}': context.character.signature,
       '{{char_description}}': context.character.description,
-      '{{user}}': context.user.name,
+      '{{user}}': userName,
       '{{user_description}}': context.user.description,
       '{{bound_user_nickname}}': context.boundUser.nickname,
       '{{bound_user_signature}}': context.boundUser.signature
@@ -643,7 +647,7 @@ export function buildPrompt(context: PromptContext) {
     context.mode === 'online' && context.narrationModeEnabled
       ? replaceTokens(narrationModePrompt, {
           '{{char}}': context.character.name,
-          '{{user}}': context.user.name
+          '{{user}}': userName
         })
       : '',
     context.mode === 'online' && context.offlineInvitationEnabled === false
