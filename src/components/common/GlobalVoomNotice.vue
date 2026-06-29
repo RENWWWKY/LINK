@@ -85,11 +85,18 @@ function markCurrentPostsSeen() {
 
 function showNextVoomNotice() {
   if (activePost.value) return;
-  const nextPost = noticeableVoomPosts.value.find((post) => !seenPostIds.value.has(voomNoticeKey(post)));
-  if (nextPost) {
+  for (const nextPost of noticeableVoomPosts.value) {
+    const nextNoticeKey = voomNoticeKey(nextPost);
+    if (seenPostIds.value.has(nextNoticeKey)) continue;
+    if (store.consumeSuppressedVoomNoticeKey(nextNoticeKey)) {
+      seenPostIds.value = new Set([...seenPostIds.value, nextNoticeKey]);
+      persistSeenPostIds();
+      continue;
+    }
     activePost.value = nextPost;
-    activeNoticeKey.value = voomNoticeKey(nextPost);
+    activeNoticeKey.value = nextNoticeKey;
     void playRingtone(store.settings, 'voom', nextPost.charId);
+    return;
   }
 }
 

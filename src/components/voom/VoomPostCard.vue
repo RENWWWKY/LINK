@@ -69,10 +69,9 @@
                 <strong>{{ displayAuthorName(reply.authorName, reply.authorId) }}</strong>
                 <span v-if="isCurrentUserComment(reply)" class="comment-user-tag">我</span>
                 <span v-if="isCharacterComment(reply)" class="comment-role-tag">角色</span>
-                <em v-if="replyTargetName(reply.parentId)">回复 {{ replyTargetName(reply.parentId) }}</em>
-                <time :datetime="commentDateTime(reply)">{{ commentTime(reply) }}</time>
               </span>
-              <span class="comment-text">{{ commentDisplayContent(reply) }}</span>
+              <span class="comment-text">{{ replyDisplayContent(reply) }}</span>
+              <time class="comment-inline-time" :datetime="commentDateTime(reply)">{{ commentTime(reply) }}</time>
             </button>
             <form v-if="isComposerFor(reply.id)" class="comment-composer comment-composer-inline" @submit.prevent="submitComment">
               <input v-model="commentDraft" :placeholder="commentPlaceholder" />
@@ -263,6 +262,12 @@ function commentDisplayContent(comment: VoomPost['comments'][number]) {
     content,
     contentTranslation
   );
+}
+
+function replyDisplayContent(comment: VoomPost['comments'][number]) {
+  const targetName = replyTargetName(comment.parentId);
+  const content = commentDisplayContent(comment);
+  return targetName ? `@${targetName} ${content}` : content;
 }
 
 function normalizeAuthorKey(name = '') {
@@ -807,21 +812,25 @@ footer {
   color: #171717;
 }
 
-.comment-main {
+.comment-main,
+.comment-reply {
   display: block;
 }
 
-.comment-main .comment-meta {
+.comment-main .comment-meta,
+.comment-reply .comment-meta {
   display: inline-flex;
   margin-right: 4px;
   vertical-align: baseline;
 }
 
-.comment-main .comment-text {
+.comment-main .comment-text,
+.comment-reply .comment-text {
   display: inline;
 }
 
-.comment-main .comment-inline-time {
+.comment-main .comment-inline-time,
+.comment-reply .comment-inline-time {
   margin-left: 6px;
   color: #a0a5ab;
   font-size: 10px;

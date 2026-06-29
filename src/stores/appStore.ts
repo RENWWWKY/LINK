@@ -147,6 +147,7 @@ export const useAppStore = defineStore('app', () => {
   const replyingConversationIds = ref<string[]>([]);
   const loadingReply = computed(() => replyingConversationIds.value.length > 0);
   const replyingVoomCommentPostIds = ref<string[]>([]);
+  const suppressedVoomNoticeKeys = ref<string[]>([]);
   const configAlert = ref({ open: false, title: '提示', message: '' });
   const users = ref<UserProfile[]>([]);
   const characters = ref<CharacterProfile[]>([]);
@@ -824,6 +825,27 @@ export const useAppStore = defineStore('app', () => {
 
   function isReplyingVoomComments(postId: string) {
     return replyingVoomCommentPostIds.value.includes(postId);
+  }
+
+  function suppressVoomNoticeKeys(keys: string[]) {
+    const nextKeys = keys.map((key) => key.trim()).filter(Boolean);
+    if (!nextKeys.length) return;
+    suppressedVoomNoticeKeys.value = [...new Set([...suppressedVoomNoticeKeys.value, ...nextKeys])];
+  }
+
+  function consumeSuppressedVoomNoticeKey(key: string) {
+    const normalizedKey = key.trim();
+    if (!normalizedKey || !suppressedVoomNoticeKeys.value.includes(normalizedKey)) return false;
+    suppressedVoomNoticeKeys.value = suppressedVoomNoticeKeys.value.filter((entry) => entry !== normalizedKey);
+    return true;
+  }
+
+  function voomPostGlobalNoticeKey(postId: string) {
+    return `post:${postId}`;
+  }
+
+  function voomCommentGlobalNoticeKey(postId: string, commentId: string) {
+    return `comment:${postId}:${commentId}`;
   }
 
   function isConversationReplying(conversationId: string) {
@@ -5217,7 +5239,7 @@ export const useAppStore = defineStore('app', () => {
     return replyToVoomComments(post.id, { actorConversationId: conversationId, silent: true });
   }
 
-  async function replyToVoomComments(postId: string, options: { actorConversationId?: string; silent?: boolean } = {}) {
+  async function replyToVoomComments(postId: string, options: { actorConversationId?: string; silent?: boolean; suppressGlobalNotice?: boolean } = {}) {
     if (isReplyingVoomComments(postId)) return;
 
     const post = voomPosts.value.find((entry) => entry.id === postId);
@@ -5318,13 +5340,19 @@ export const useAppStore = defineStore('app', () => {
         conversationIds: targetConversations.map((targetConversation) => targetConversation.id),
         comments: [...latestPost.comments, ...nextComments]
       };
+      if (options.suppressGlobalNotice) {
+        suppressVoomNoticeKeys([
+          voomPostGlobalNoticeKey(nextPost.id),
+          ...nextComments.map((comment) => voomCommentGlobalNoticeKey(nextPost.id, comment.id))
+        ]);
+      }
       await saveVoomPost(nextPost);
       await Promise.all(targetConversations.flatMap((targetConversation) => nextComments.map((comment) => appendConversationEvent(
         targetConversation.id,
         formatVoomCommentEvent(comment, nextPost.comments),
         { mode: targetConversation.activeMode, voomPostId: post.id, voomCommentId: comment.id, voomEventType: 'reply', createdAt: comment.createdAt }
       ))));
-      notifyVoomComments(nextPost, nextComments, conversation);
+      if (!options.suppressGlobalNotice) notifyVoomComments(nextPost, nextComments, conversation);
       return true;
     } catch (error) {
       if (options.silent) console.warn('Auto VOOM comment reply failed.', error);
@@ -5399,6 +5427,7 @@ export const useAppStore = defineStore('app', () => {
     deleteFavorite,
     showConfigAlert,
     isReplyingVoomComments,
+    consumeSuppressedVoomNoticeKey,
     isConversationReplying,
     saveUserProfile,
     saveUsers,

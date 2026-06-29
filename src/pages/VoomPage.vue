@@ -67,7 +67,7 @@
       @regenerate-image="handleRegenerateImage"
       @apply-image="handleApplyImageCandidate"
       @busy-action="store.showConfigAlert"
-      @reply-thread="store.replyToVoomComments"
+      @reply-thread="handleManualReplyThread"
       @toggle-like="store.toggleVoomLike"
       @delete-post="requestDeleteVoomPost"
     />
@@ -395,6 +395,10 @@ function voomReadAtForCharacter(characterId: string) {
 function hasUnreadVoomForCharacter(characterId: string) {
   const latestPostAt = voomLatestPostAtByCharacter.value.get(characterId) ?? 0;
   return latestPostAt > voomReadAtForCharacter(characterId);
+}
+
+function handleManualReplyThread(postId: string) {
+  void store.replyToVoomComments(postId, { suppressGlobalNotice: true });
 }
 
 function selectAccountVoomFeed() {
