@@ -9,7 +9,7 @@ import { getUserAiName, getUserDisplayName, getUserVoomAuthorName, normalizeUser
 import { getImageGenerationSize, getImagePromptPresetForProvider, getSelectedImageModelOption, isImageModelSelectionDisabled, mergeVendorModels, normalizeAppSettings, normalizeChatModelOverrides } from '@/utils/settings';
 import { normalizeWorldBookEntry, normalizeWorldBooks } from '@/utils/worldBook';
 import { createDefaultSmallTheaterTopics, normalizeSmallTheaterTopic } from '@/utils/smallTheater';
-import { RECENT_STICKER_GROUP_NAME, createStickerFromDraft, createStickerGroup, isLegacyGanadiSticker, isLegacyGanadiStickerGroup, isRecentStickerGroupId, localizeStickerImageUrl, normalizeSticker, normalizeStickerGroup, shouldLocalizeStickerImageUrl, sortRecentStickers, type StickerImportDraft } from '@/utils/stickers';
+import { RECENT_STICKER_GROUP_NAME, cacheStickerImageUrl, createStickerFromDraft, createStickerGroup, getStickerDisplayImageUrl, isLegacyGanadiSticker, isLegacyGanadiStickerGroup, isRecentStickerGroupId, normalizeSticker, normalizeStickerGroup, shouldLocalizeStickerImageUrl, sortRecentStickers, type StickerImportDraft } from '@/utils/stickers';
 import { ageMemoryKind, buildMemoryAtomContext, createMemoryAtomsFromRecord, createMemoryRecord, estimateTokenCount, getConversationFloorCount, getHiddenMessageIds, getMemoryContext, getMemoryHiddenEndFloor, getMessageFloorMap, getMessagesInFloorRange, getNextSummaryRange, getVisibleMessages, mergeMemoryAtoms, normalizeConversationSettings, normalizeMemoryAtom, normalizeMemoryRecordEntries, renderCharacterMemoryPrompt, shouldCompressMemory } from '@/utils/memory';
 import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
 import { estimateRoleplayReplyInputTokens, fetchVendorModels, generateConversationSummary, generateEmbeddingVector, generateImageByProvider, generateMemoryAtomAudit, generateRoleplayReply, generateSmallTheater, generateUserVoomComments, generateVoomCommentReplies, generateVoomPost, hasTextGenerationConfig, shouldAutoGenerateMoment, type MemoryAtomAuditUpdate, type RoleplayReplyResult, type RoleplayReplySegment } from '@/services/ai';
@@ -812,7 +812,7 @@ export const useAppStore = defineStore('app', () => {
       availableStickers: availableCharacterStickers.map((sticker) => ({
         stickerId: sticker.id,
         description: sticker.description,
-        imageUrl: sticker.imageUrl
+        imageUrl: getStickerDisplayImageUrl(sticker)
       })),
       userMessage: userMessageText,
       settings: settings.value ?? undefined,
@@ -1219,6 +1219,22 @@ export const useAppStore = defineStore('app', () => {
     return isInlineMediaUrl(normalizedValue) ? fallback : normalizedValue;
   }
 
+  function stripMessageStickerCache(sticker: NonNullable<ChatMessage['sticker']>) {
+    const { cachedImageUrl: _cachedImageUrl, ...restSticker } = sticker;
+    return {
+      ...restSticker,
+      imageUrl: stripInlineMediaUrl(sticker.imageUrl, stickerBackupPlaceholder)
+    };
+  }
+
+  function stripStickerLocalCache(sticker: Sticker): Sticker {
+    const { cachedImageUrl: _cachedImageUrl, cachedImageUpdatedAt: _cachedImageUpdatedAt, ...restSticker } = sticker;
+    return {
+      ...restSticker,
+      imageUrl: stripInlineMediaUrl(sticker.imageUrl, stickerBackupPlaceholder)
+    };
+  }
+
   function stripChatImageCache(image: ChatImageAttachment): ChatImageAttachment {
     return {
       ...image,
@@ -1237,12 +1253,12 @@ export const useAppStore = defineStore('app', () => {
   function stripMessageMediaCache(message: ChatMessage): ChatMessage {
     return {
       ...message,
-      sticker: message.sticker ? { ...message.sticker, imageUrl: stripInlineMediaUrl(message.sticker.imageUrl, stickerBackupPlaceholder) } : undefined,
+      sticker: message.sticker ? stripMessageStickerCache(message.sticker) : undefined,
       image: message.image ? stripChatImageCache(message.image) : undefined,
       voice: message.voice ? stripVoiceAudioCache(message.voice) : undefined,
       quote: message.quote ? {
         ...message.quote,
-        sticker: message.quote.sticker ? { ...message.quote.sticker, imageUrl: stripInlineMediaUrl(message.quote.sticker.imageUrl, stickerBackupPlaceholder) } : undefined,
+        sticker: message.quote.sticker ? stripMessageStickerCache(message.quote.sticker) : undefined,
         image: message.quote.image ? stripChatImageCache(message.quote.image) : undefined,
         voice: message.quote.voice ? stripVoiceAudioCache(message.quote.voice) : undefined
       } : undefined
@@ -2032,25 +2048,62 @@ export const useAppStore = defineStore('app', () => {
   async function saveSticker(nextSticker: Sticker) {
     const fallbackGroupId = stickerGroups.value[0]?.id ?? '';
     const groupIds = nextSticker.groupIds.filter((id) => !isRecentStickerGroupId(id));
-    const normalizedSticker = normalizeSticker({ ...nextSticker, groupIds, updatedAt: Date.now() }, fallbackGroupId);
+    const previousSticker = stickers.value.find((sticker) => sticker.id === nextSticker.id);
+    const normalizedSticker = normalizeSticker({
+      ...nextSticker,
+      cachedImageUrl: previousSticker && previousSticker.imageUrl === nextSticker.imageUrl ? nextSticker.cachedImageUrl : undefined,
+      cachedImageUpdatedAt: previousSticker && previousSticker.imageUrl === nextSticker.imageUrl ? nextSticker.cachedImageUpdatedAt : undefined,
+      groupIds,
+      updatedAt: Date.now()
+    }, fallbackGroupId);
     if (!normalizedSticker) return;
     const index = stickers.value.findIndex((sticker) => sticker.id === normalizedSticker.id);
     if (index >= 0) stickers.value[index] = normalizedSticker;
     else stickers.value.unshift(normalizedSticker);
     await putEntity('stickers', normalizedSticker);
+    if (!normalizedSticker.cachedImageUrl) queueStickerCache(normalizedSticker);
   }
 
-  async function persistImportedStickerInBackground(importedSticker: Sticker, draft: StickerImportDraft) {
-    await putEntity('stickers', importedSticker);
-    draft.cleanupImageUrl?.();
+  function isPersistableStickerSourceUrl(imageUrl: string) {
+    return /^https?:\/\//i.test(imageUrl.trim());
+  }
+
+  async function persistStickerCacheInBackground(sticker: Sticker, options: { readImageUrl?: () => Promise<string>; cleanupImageUrl?: () => void } = {}) {
+    let nextSticker = sticker;
+    try {
+      const cachedImageUrl = await cacheStickerImageUrl(sticker.imageUrl, options.readImageUrl);
+      if (cachedImageUrl) {
+        nextSticker = {
+          ...sticker,
+          imageUrl: isPersistableStickerSourceUrl(sticker.imageUrl) ? sticker.imageUrl : stickerBackupPlaceholder,
+          cachedImageUrl,
+          cachedImageUpdatedAt: Date.now()
+        };
+      } else if (!isPersistableStickerSourceUrl(sticker.imageUrl)) {
+        nextSticker = { ...sticker, imageUrl: stickerBackupPlaceholder };
+      }
+      const index = stickers.value.findIndex((item) => item.id === nextSticker.id);
+      if (index >= 0) stickers.value[index] = nextSticker;
+      await putEntity('stickers', nextSticker);
+    } finally {
+      options.cleanupImageUrl?.();
+    }
+  }
+
+  function queueStickerCache(sticker: Sticker, options: { readImageUrl?: () => Promise<string>; cleanupImageUrl?: () => void } = {}) {
+    stickerImportCacheQueue = stickerImportCacheQueue
+      .then(() => persistStickerCacheInBackground(sticker, options))
+      .catch((error) => {
+        console.warn('Sticker background persistence failed.', error);
+        options.cleanupImageUrl?.();
+      });
   }
 
   function queueImportedStickerCache(sticker: Sticker, draft: StickerImportDraft) {
-    stickerImportCacheQueue = stickerImportCacheQueue
-      .then(() => persistImportedStickerInBackground(sticker, draft))
-      .catch((error) => {
-        console.warn('Sticker background persistence failed.', error);
-      });
+    queueStickerCache(sticker, {
+      readImageUrl: draft.cacheImageUrl,
+      cleanupImageUrl: draft.cleanupImageUrl
+    });
   }
 
   async function importStickers(drafts: StickerImportDraft[], groupIds: string[]) {
@@ -2776,6 +2829,8 @@ export const useAppStore = defineStore('app', () => {
     const resolvedSticker = {
       ...sticker,
       imageUrl: sticker.imageUrl,
+      cachedImageUrl: sticker.cachedImageUrl,
+      cachedImageUpdatedAt: sticker.cachedImageUpdatedAt,
       lastUsedAt: sentAt,
       updatedAt: sticker.updatedAt
     };
@@ -2793,7 +2848,8 @@ export const useAppStore = defineStore('app', () => {
       sticker: {
         stickerId: resolvedSticker.id,
         description: resolvedSticker.description,
-        imageUrl: resolvedSticker.imageUrl
+        imageUrl: resolvedSticker.imageUrl,
+        cachedImageUrl: resolvedSticker.cachedImageUrl
       },
       quote: cloneMessageQuote(quote),
       createdAt: sentAt,
@@ -2818,12 +2874,12 @@ export const useAppStore = defineStore('app', () => {
     for (const message of candidates) {
       const sticker = message.sticker;
       if (!sticker) continue;
-      const imageUrl = await localizeStickerImageUrl(sticker.imageUrl);
+      const cachedImageUrl = sticker.cachedImageUrl || await cacheStickerImageUrl(sticker.imageUrl);
       const nextMessage: ChatMessage = {
         ...message,
         sticker: {
           ...sticker,
-          imageUrl
+          cachedImageUrl
         }
       };
       const messageIndex = messages.value.findIndex((item) => item.id === nextMessage.id);
@@ -2860,7 +2916,7 @@ export const useAppStore = defineStore('app', () => {
     }
 
     if (action === 'sticker-local-cache') {
-      const nextStickers = stickers.value.map((sticker) => isInlineMediaUrl(sticker.imageUrl) ? { ...sticker, imageUrl: stickerBackupPlaceholder, updatedAt: sticker.updatedAt } : sticker);
+      const nextStickers = stickers.value.map((sticker) => stripStickerLocalCache(sticker));
       return estimateFreedBytes(stickers.value, nextStickers);
     }
 
@@ -2890,8 +2946,9 @@ export const useAppStore = defineStore('app', () => {
     }
 
     if (action === 'sticker-local-cache') {
-      const nextStickers = stickers.value.map((sticker) => isInlineMediaUrl(sticker.imageUrl) ? { ...sticker, imageUrl: stickerBackupPlaceholder, updatedAt: Date.now() } : sticker);
-      const changedStickers = nextStickers.filter((sticker, index) => sticker.imageUrl !== stickers.value[index].imageUrl);
+      const now = Date.now();
+      const nextStickers = stickers.value.map((sticker) => ({ ...stripStickerLocalCache(sticker), updatedAt: sticker.cachedImageUrl || isInlineMediaUrl(sticker.imageUrl) ? now : sticker.updatedAt }));
+      const changedStickers = nextStickers.filter((sticker, index) => JSON.stringify(sticker) !== JSON.stringify(stickers.value[index]));
       if (changedStickers.length) {
         const changedMap = new Map(changedStickers.map((sticker) => [sticker.id, sticker]));
         stickers.value = stickers.value.map((sticker) => changedMap.get(sticker.id) ?? sticker);
@@ -3971,7 +4028,7 @@ export const useAppStore = defineStore('app', () => {
         availableStickers: availableCharacterStickers.map((sticker) => ({
           stickerId: sticker.id,
           description: sticker.description,
-          imageUrl: sticker.imageUrl
+          imageUrl: getStickerDisplayImageUrl(sticker)
         })),
         userMessage: userMessageText,
         settings: settings.value ?? undefined,
@@ -4138,7 +4195,8 @@ export const useAppStore = defineStore('app', () => {
         sticker: {
           stickerId: sticker.id,
           description: sticker.description,
-          imageUrl: sticker.imageUrl
+          imageUrl: sticker.imageUrl,
+          cachedImageUrl: sticker.cachedImageUrl
         },
         replyBatchId,
         ...replyVariantFields,

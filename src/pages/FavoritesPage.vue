@@ -40,7 +40,7 @@
           </figure>
 
           <figure v-else-if="item.message.sticker" class="favorite-sticker-card">
-            <img :src="item.message.sticker.imageUrl" :alt="item.message.sticker.description" />
+            <img :src="getStickerDisplayImageUrl(item.message.sticker)" :alt="item.message.sticker.description" />
             <figcaption>{{ item.message.sticker.description }}</figcaption>
           </figure>
 
@@ -89,6 +89,7 @@ import { useRouter } from 'vue-router';
 import { Bookmark, LoaderCircle, MapPin, Mic2, Trash2 } from 'lucide-vue-next';
 import { useAppStore } from '@/stores/appStore';
 import type { FavoriteMessageRecord } from '@/types/domain';
+import { getStickerDisplayImageUrl } from '@/utils/stickers';
 
 const router = useRouter();
 const store = useAppStore();

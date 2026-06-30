@@ -85,7 +85,7 @@
             <span>{{ activeMaintenanceTab === 'invalid' ? '失效项' : '重复项' }}</span>
           </div>
           <article v-for="item in activeMaintenanceCandidates" :key="item.sticker.id" class="candidate-row">
-            <img :src="item.sticker.imageUrl" :alt="item.sticker.description || 'Sticker'" />
+            <img :src="getStickerDisplayImageUrl(item.sticker)" :alt="item.sticker.description || 'Sticker'" />
             <div>
               <strong>{{ item.sticker.description || '未命名 Sticker' }}</strong>
               <span>{{ item.reason }}</span>
@@ -118,7 +118,7 @@ import StickerImportModal, { type StickerImportTab } from '@/components/stickers
 import StickerLibraryPanel from '@/components/stickers/StickerLibraryPanel.vue';
 import { useAppStore } from '@/stores/appStore';
 import type { Sticker, StickerSourceType } from '@/types/domain';
-import { RECENT_STICKER_GROUP_ID, createImageFileStickerDraft, parseStickerImportText, readStickerImportFile, type StickerImportDraft } from '@/utils/stickers';
+import { RECENT_STICKER_GROUP_ID, createImageFileStickerDraft, getStickerDisplayImageUrl, parseStickerImportText, readStickerImportFile, type StickerImportDraft } from '@/utils/stickers';
 
 type MaintenanceTab = 'invalid' | 'dedupe';
 type MaintenanceBusy = 'invalid' | 'dedupe' | 'delete';
@@ -242,7 +242,7 @@ function bytesToHex(buffer: ArrayBuffer) {
 }
 
 async function hashStickerImage(sticker: Sticker) {
-  const imageUrl = sticker.imageUrl.trim();
+  const imageUrl = getStickerDisplayImageUrl(sticker);
   if (!imageUrl) return '';
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 5500);
@@ -266,7 +266,7 @@ async function hashStickerImage(sticker: Sticker) {
 }
 
 function validateStickerImage(sticker: Sticker) {
-  const imageUrl = sticker.imageUrl.trim();
+  const imageUrl = getStickerDisplayImageUrl(sticker);
   if (!sticker.description.trim()) return Promise.resolve({ valid: false, reason: '缺少描述' });
   if (!imageUrl) return Promise.resolve({ valid: false, reason: '缺少图片链接' });
   return new Promise<{ valid: boolean; reason: string }>((resolve) => {

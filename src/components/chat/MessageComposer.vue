@@ -20,7 +20,7 @@
         @pointerdown.prevent="keepTextMode"
         @click="pickStickerSuggestion(sticker)"
       >
-        <img :src="sticker.imageUrl" :alt="sticker.description" />
+        <img :src="getStickerDisplayImageUrl(sticker)" :alt="sticker.description" />
         <span>{{ sticker.description }}</span>
       </button>
     </section>
@@ -65,6 +65,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { Camera, Image as ImageIcon, Mic, Plus, Smile, X } from 'lucide-vue-next';
 import type { ChatMessageQuote, Sticker } from '@/types/domain';
+import { getStickerDisplayImageUrl } from '@/utils/stickers';
 
 const props = defineProps<{
   canSendReply?: boolean;

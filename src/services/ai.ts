@@ -5,6 +5,7 @@ import { getCharacterAiName, getCharacterVoomAuthorName } from '@/utils/characte
 import { getUserAiName, getUserVoomAuthorName } from '@/utils/profile';
 import { defaultNovelAiModels, defaultPollinationsModels, getResolvedApiConfig, getResolvedOpenAiImageConfig, novelAiOfficialApiUrl, novelAiProxyApiUrl } from '@/utils/settings';
 import { estimateTokenCount } from '@/utils/memory';
+import { getStickerDisplayImageUrl } from '@/utils/stickers';
 import { renderTimeAwarenessPrompt } from '@/utils/timeAwareness';
 import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
 import { getVoomFrequencyChance, stripVoomCommentReplyPrefix } from '@/utils/voom';
@@ -1344,7 +1345,7 @@ function getVisualImageParts(input: GenerateReplyInput): TextApiContentPart[] {
       },
       {
         type: 'image_url' as const,
-        image_url: { url: message.sticker?.imageUrl ?? '' }
+        image_url: { url: message.sticker ? getStickerDisplayImageUrl(message.sticker) : '' }
       }
     ]) : [];
   const imageParts = input.messages

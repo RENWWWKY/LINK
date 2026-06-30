@@ -25,7 +25,7 @@
       >
         <div class="bubble" :class="{ narration: message.displayStyle === 'narration', sticker: message.sticker, image: message.image, voice: message.voice, location: message.location, transfer: message.transfer, offlineInvitation: message.offlineInvitation }" :style="bubbleStyle">
           <template v-if="message.sticker">
-            <img class="sticker-image" :src="message.sticker.imageUrl" :alt="message.sticker.description" />
+            <img class="sticker-image" :src="getStickerDisplayImageUrl(message.sticker)" :alt="message.sticker.description" />
           </template>
           <template v-else-if="message.image">
             <figure class="chat-image-card" :class="[`chat-image-card--${message.image.kind}`, { interactive: message.sender === 'char' }]" :style="imageCardStyle" @click="handleImageCardClick">
@@ -178,6 +178,7 @@ import { getCharacterDisplayName } from '@/utils/character';
 import { formatChatTime } from '@/utils/time';
 import { defaultConversationSettings } from '@/utils/memory';
 import { defaultProfileAvatar } from '@/utils/profile';
+import { getStickerDisplayImageUrl } from '@/utils/stickers';
 import { normalizeTranslationText, shouldShowChineseTranslation } from '@/utils/translation';
 
 const props = withDefaults(defineProps<{

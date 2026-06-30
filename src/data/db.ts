@@ -185,8 +185,8 @@ async function compactVoomPostInlineImages(post: VoomPost): Promise<VoomPost> {
 }
 
 async function compactStickerInlineImages(sticker: Sticker): Promise<Sticker> {
-  const nextImageUrl = await compactInlineImageValue(sticker.imageUrl, inlineProfileImageCompressionOptions) ?? sticker.imageUrl;
-  return nextImageUrl === sticker.imageUrl ? sticker : { ...sticker, imageUrl: nextImageUrl };
+  const nextCachedImageUrl = await compactInlineImageValue(sticker.cachedImageUrl, inlineProfileImageCompressionOptions) ?? sticker.cachedImageUrl;
+  return nextCachedImageUrl === sticker.cachedImageUrl ? sticker : { ...sticker, cachedImageUrl: nextCachedImageUrl };
 }
 
 async function compactGeneratedImageRecord(record: GeneratedImageRecord): Promise<GeneratedImageRecord> {

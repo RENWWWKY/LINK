@@ -58,6 +58,14 @@ function isInlineMediaUrl(value: string) {
   return /^data:(?:image|audio)\//i.test(value.trim());
 }
 
+function stripStickerImageCache<T extends { imageUrl: string; cachedImageUrl?: string }>(sticker: T): T {
+  const { cachedImageUrl: _cachedImageUrl, ...restSticker } = sticker;
+  return {
+    ...restSticker,
+    imageUrl: isInlineMediaUrl(sticker.imageUrl) ? stickerBackupPlaceholder : stripLargeInlineAsset(sticker.imageUrl, stickerBackupPlaceholder)
+  } as T;
+}
+
 function stripLargeInlineAsset(value: string | undefined, fallback = '') {
   const normalizedValue = String(value ?? '').trim();
   if (!isInlineMediaUrl(normalizedValue)) return normalizedValue;
@@ -89,7 +97,7 @@ function sanitizeVoiceForBackup(voice: ChatVoiceAttachment): ChatVoiceAttachment
 function sanitizeQuoteForBackup(quote: ChatMessageQuote): ChatMessageQuote {
   return {
     ...quote,
-    sticker: quote.sticker ? { ...quote.sticker, imageUrl: stripLargeInlineAsset(quote.sticker.imageUrl, stickerBackupPlaceholder) } : undefined,
+    sticker: quote.sticker ? stripStickerImageCache(quote.sticker) : undefined,
     image: quote.image ? sanitizeChatImageForBackup(quote.image) : undefined,
     voice: quote.voice ? sanitizeVoiceForBackup(quote.voice) : undefined
   };
@@ -98,7 +106,7 @@ function sanitizeQuoteForBackup(quote: ChatMessageQuote): ChatMessageQuote {
 function sanitizeMessageForBackup(message: ChatMessage): ChatMessage {
   return {
     ...message,
-    sticker: message.sticker ? { ...message.sticker, imageUrl: stripLargeInlineAsset(message.sticker.imageUrl, stickerBackupPlaceholder) } : undefined,
+    sticker: message.sticker ? stripStickerImageCache(message.sticker) : undefined,
     image: message.image ? sanitizeChatImageForBackup(message.image) : undefined,
     voice: message.voice ? sanitizeVoiceForBackup(message.voice) : undefined,
     quote: message.quote ? sanitizeQuoteForBackup(message.quote) : undefined
@@ -106,10 +114,8 @@ function sanitizeMessageForBackup(message: ChatMessage): ChatMessage {
 }
 
 function sanitizeStickerForBackup(sticker: Sticker): Sticker {
-  return {
-    ...sticker,
-    imageUrl: stripLargeInlineAsset(sticker.imageUrl, stickerBackupPlaceholder)
-  };
+  const { cachedImageUpdatedAt: _cachedImageUpdatedAt, ...safeSticker } = stripStickerImageCache(sticker);
+  return safeSticker;
 }
 
 function sanitizeVoomPostForBackup(post: VoomPost): VoomPost {

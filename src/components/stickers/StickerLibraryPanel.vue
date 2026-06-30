@@ -130,7 +130,7 @@
             <input :checked="selectedStickerIds.includes(sticker.id)" type="checkbox" @change="toggleStickerSelection(sticker.id)" />
             <span></span>
           </label>
-          <img :src="sticker.imageUrl" :alt="sticker.description" />
+          <img :src="getStickerDisplayImageUrl(sticker)" :alt="sticker.description" />
           <span>{{ sticker.description }}</span>
         </article>
         <button
@@ -141,7 +141,7 @@
           :disabled="disabled && Boolean(conversationId)"
           @click.stop="handleStickerClick(sticker)"
         >
-          <img :src="sticker.imageUrl" :alt="sticker.description" />
+          <img :src="getStickerDisplayImageUrl(sticker)" :alt="sticker.description" />
           <span>{{ sticker.description }}</span>
         </button>
       </template>
@@ -182,7 +182,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { ArrowDown, ArrowUp, Check, FileUp, ImagePlus, MoveRight, PencilLine, Plus, Settings2, Trash2, Upload, X } from 'lucide-vue-next';
 import { useAppStore } from '@/stores/appStore';
 import type { Sticker, StickerSourceType } from '@/types/domain';
-import { RECENT_STICKER_GROUP_ID, RECENT_STICKER_GROUP_NAME, createImageFileStickerDraft, parseStickerImportText, readStickerImportFile } from '@/utils/stickers';
+import { RECENT_STICKER_GROUP_ID, RECENT_STICKER_GROUP_NAME, createImageFileStickerDraft, getStickerDisplayImageUrl, parseStickerImportText, readStickerImportFile } from '@/utils/stickers';
 import { RECOMMENDED_STICKER_GROUP_ID, RECOMMENDED_STICKER_GROUP_NAME } from '@/utils/stickerRecommendations';
 
 const props = withDefaults(defineProps<{

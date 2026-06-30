@@ -1,5 +1,6 @@
 import { unzipSync } from 'fflate';
 import type { Sticker, StickerGroup, StickerSourceType } from '@/types/domain';
+import { compressInlineImageDataUrl } from '@/utils/imageFile';
 import { createId } from './id';
 
 export interface StickerImportDraft {
@@ -30,6 +31,7 @@ export const LEGACY_GANADI_STICKER_IDS = new Set([
 
 const imageDownloadPath = '/__image-download';
 const maxStickerImageBytes = 12 * 1024 * 1024;
+const stickerCacheCompressionOptions = { maxDimension: 360, quality: 0.72, mimeType: 'image/webp' as const, minBytes: 0, force: true };
 const urlPattern = /(data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+|https?:\/\/[^\s<>"'，。；;、)\]}]*?\.(?:png|jpe?g|gif|webp|avif|bmp|svg)(?:[?#][^\s<>"'，。；;、)\]}]*)?|https?:\/\/[^\s<>"'，。；;、)\]}]+)/gi;
 const imageExtensionPattern = /\.(?:png|jpe?g|gif|webp|avif|bmp|svg)(?:[?#].*)?$/i;
 
@@ -66,6 +68,10 @@ function isRemoteImageUrl(value: string) {
   return /^https?:\/\//i.test(value.trim());
 }
 
+function isFetchableLocalImageUrl(value: string) {
+  return /^blob:/i.test(value.trim());
+}
+
 function inferImageMimeType(url: string) {
   const pathname = (() => {
     try {
@@ -98,6 +104,10 @@ function readBlobAsDataUrl(blob: Blob) {
   });
 }
 
+export function getStickerDisplayImageUrl(sticker: Pick<Sticker, 'imageUrl' | 'cachedImageUrl'> | { imageUrl: string; cachedImageUrl?: string }) {
+  return String(sticker.cachedImageUrl || sticker.imageUrl || '').trim();
+}
+
 export function shouldLocalizeStickerImageUrl(imageUrl: string) {
   const trimmed = imageUrl.trim();
   return Boolean(trimmed) && !isDataImageUrl(trimmed) && isRemoteImageUrl(trimmed);
@@ -106,11 +116,11 @@ export function shouldLocalizeStickerImageUrl(imageUrl: string) {
 export async function localizeStickerImageUrl(imageUrl: string) {
   const trimmed = imageUrl.trim();
   if (!trimmed || isDataImageUrl(trimmed)) return trimmed;
-  if (!isRemoteImageUrl(trimmed)) return trimmed;
+  if (!isRemoteImageUrl(trimmed) && !isFetchableLocalImageUrl(trimmed)) return trimmed;
 
   let response: Response;
   try {
-    response = await fetch(createImageDownloadUrl(trimmed), {
+    response = await fetch(isFetchableLocalImageUrl(trimmed) ? trimmed : createImageDownloadUrl(trimmed), {
       headers: { Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' }
     });
   } catch (error) {
@@ -138,6 +148,13 @@ export async function localizeStickerImageUrl(imageUrl: string) {
   }
 
   return readBlobAsDataUrl(downloadedBlob.type ? downloadedBlob : new Blob([downloadedBlob], { type: mimeType }));
+}
+
+export async function cacheStickerImageUrl(imageUrl: string, readImageUrl?: () => Promise<string>) {
+  const sourceDataUrl = readImageUrl ? await readImageUrl() : await localizeStickerImageUrl(imageUrl);
+  const trimmed = sourceDataUrl.trim();
+  if (!trimmed || !isDataImageUrl(trimmed)) return trimmed;
+  return compressInlineImageDataUrl(trimmed, stickerCacheCompressionOptions);
 }
 
 export async function localizeStickerImportDraft(draft: StickerImportDraft): Promise<StickerImportDraft> {
@@ -336,7 +353,7 @@ export function createImageFileStickerDraft(file: File): StickerImportDraft {
     description: fileName,
     imageUrl: objectUrl,
     sourceType: 'local-image',
-    cacheImageUrl: () => readBlobAsDataUrl(file),
+    cacheImageUrl: () => cacheStickerImageUrl(objectUrl, () => readBlobAsDataUrl(file)),
     cleanupImageUrl: () => URL.revokeObjectURL(objectUrl)
   };
 }
@@ -397,6 +414,8 @@ export function normalizeSticker(sticker: Partial<Sticker> | null | undefined, f
     id,
     description,
     imageUrl,
+    ...(String(sticker?.cachedImageUrl ?? '').trim() ? { cachedImageUrl: String(sticker?.cachedImageUrl ?? '').trim() } : {}),
+    ...(Number(sticker?.cachedImageUpdatedAt) > 0 ? { cachedImageUpdatedAt: Number(sticker?.cachedImageUpdatedAt) } : {}),
     groupIds: normalizedGroupIds.length ? normalizedGroupIds : [fallbackGroupId].filter(Boolean),
     sourceType,
     ...(Number(sticker?.lastUsedAt) > 0 ? { lastUsedAt: Number(sticker?.lastUsedAt) } : {}),

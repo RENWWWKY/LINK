@@ -327,6 +327,8 @@ export interface Sticker {
   id: string;
   description: string;
   imageUrl: string;
+  cachedImageUrl?: string;
+  cachedImageUpdatedAt?: number;
   groupIds: string[];
   sourceType: StickerSourceType;
   lastUsedAt?: number;
@@ -338,6 +340,7 @@ export interface ChatStickerAttachment {
   stickerId: string;
   description: string;
   imageUrl: string;
+  cachedImageUrl?: string;
 }
 
 export type ChatImageAttachmentKind = 'photo' | 'local' | 'description' | 'generated';

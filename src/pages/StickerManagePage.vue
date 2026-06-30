@@ -73,7 +73,7 @@
                 <input :checked="selectedStickerIds.includes(sticker.id)" type="checkbox" @change="toggleSticker(sticker.id)" />
                 <span></span>
               </label>
-              <img :src="sticker.imageUrl" :alt="sticker.description" />
+              <img :src="getStickerDisplayImageUrl(sticker)" :alt="sticker.description" />
               <div class="sticker-fields">
                 <input :value="stickerDrafts[sticker.id]?.description ?? sticker.description" aria-label="文字描述" @input="updateStickerDraft(sticker.id, 'description', ($event.target as HTMLInputElement).value)" />
                 <div class="field-action-row">
@@ -113,7 +113,7 @@ import { useRouter } from 'vue-router';
 import { ArrowDown, ArrowUp, Folder, FolderPlus, ImagePlus, Trash2 } from 'lucide-vue-next';
 import { useAppStore } from '@/stores/appStore';
 import type { Sticker } from '@/types/domain';
-import { RECENT_STICKER_GROUP_ID, RECENT_STICKER_GROUP_NAME } from '@/utils/stickers';
+import { RECENT_STICKER_GROUP_ID, RECENT_STICKER_GROUP_NAME, getStickerDisplayImageUrl } from '@/utils/stickers';
 
 type ActiveTab = 'groups' | 'stickers';
 type StickerDraftField = 'description' | 'groupId';
