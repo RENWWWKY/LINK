@@ -8,7 +8,7 @@ import { getCharacterAiName, getCharacterInitialProfile, getCharacterVoomAuthorN
 import { getUserAiName, getUserDisplayName, getUserVoomAuthorName, normalizeUserProfile, normalizeVisualProfile } from '@/utils/profile';
 import { getImageGenerationSize, getImagePromptPresetForProvider, getSelectedImageModelOption, isImageModelSelectionDisabled, mergeVendorModels, normalizeAppSettings, normalizeChatModelOverrides } from '@/utils/settings';
 import { normalizeWorldBookEntry, normalizeWorldBooks } from '@/utils/worldBook';
-import { createDefaultSmallTheaterTopics, normalizeSmallTheaterTopic } from '@/utils/smallTheater';
+import { createDefaultSmallTheaterTopics, defaultSmallTheaterTopicDrafts, normalizeSmallTheaterTopic } from '@/utils/smallTheater';
 import { RECENT_STICKER_GROUP_NAME, cacheStickerImageUrl, createStickerFromDraft, createStickerGroup, getStickerDisplayImageUrl, isLegacyGanadiSticker, isLegacyGanadiStickerGroup, isRecentStickerGroupId, normalizeSticker, normalizeStickerGroup, shouldLocalizeStickerImageUrl, sortRecentStickers, type StickerImportDraft } from '@/utils/stickers';
 import { ageMemoryKind, buildMemoryAtomContext, createMemoryAtomsFromRecord, createMemoryRecord, estimateTokenCount, getConversationFloorCount, getHiddenMessageIds, getMemoryContext, getMemoryHiddenEndFloor, getMessageFloorMap, getMessagesInFloorRange, getNextSummaryRange, getVisibleMessages, mergeMemoryAtoms, normalizeConversationSettings, normalizeMemoryAtom, normalizeMemoryRecordEntries, renderCharacterMemoryPrompt, shouldCompressMemory } from '@/utils/memory';
 import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
@@ -4756,10 +4756,44 @@ export const useAppStore = defineStore('app', () => {
     await putEntity('settings', settings.value, 'main');
   }
 
+  function shouldRefreshBuiltInSmallTheaterTopics(existingTopics: SmallTheaterTopic[]) {
+    const builtInTopics = existingTopics.filter((topic) => topic.builtIn);
+    if (!builtInTopics.length) return false;
+    if (builtInTopics.length !== defaultSmallTheaterTopicDrafts.length) return true;
+    return defaultSmallTheaterTopicDrafts.some((draft, index) => {
+      const topic = builtInTopics[index];
+      return !topic || topic.title !== draft.title || topic.prompt !== draft.prompt;
+    });
+  }
+
+  async function refreshBuiltInSmallTheaterTopics(characterId: string, existingTopics: SmallTheaterTopic[]) {
+    const builtInTopics = existingTopics.filter((topic) => topic.builtIn);
+    const enabledByTitle = new Map(builtInTopics.map((topic) => [topic.title, topic.enabled]));
+    const timestamp = Math.min(...builtInTopics.map((topic) => topic.createdAt), Date.now());
+    const defaultTopics = createDefaultSmallTheaterTopics(characterId, timestamp).map((topic) => ({
+      ...topic,
+      enabled: enabledByTitle.get(topic.title) ?? topic.enabled,
+      updatedAt: Date.now()
+    }));
+
+    smallTheaterTopics.value = [
+      ...smallTheaterTopics.value.filter((topic) => topic.charId !== characterId || !topic.builtIn),
+      ...defaultTopics
+    ];
+    await Promise.all([
+      ...builtInTopics.map((topic) => deleteEntity('smallTheaterTopics', topic.id)),
+      ...defaultTopics.map((topic) => putEntity('smallTheaterTopics', topic))
+    ]);
+    return smallTheaterTopicsForCharacter(characterId);
+  }
+
   async function ensureSmallTheaterTopicsForCharacter(characterId: string) {
     const normalizedCharacterId = characterId.trim();
     if (!normalizedCharacterId) return [];
     const existingTopics = smallTheaterTopicsForCharacter(normalizedCharacterId);
+    if (shouldRefreshBuiltInSmallTheaterTopics(existingTopics)) {
+      return refreshBuiltInSmallTheaterTopics(normalizedCharacterId, existingTopics);
+    }
     if (existingTopics.length || settings.value?.smallTheaterTopicDefaultsInitialized?.[normalizedCharacterId]) return existingTopics;
 
     const timestamp = Date.now();

@@ -108,7 +108,7 @@
         </label>
         <label>
           <span>扩展提示词</span>
-          <textarea v-model="topicDraft.prompt" maxlength="500" rows="6" placeholder="写清楚希望小剧场呈现的形式、语气和互动点。"></textarea>
+          <textarea v-model="topicDraft.prompt" maxlength="8000" rows="6" placeholder="写清楚希望小剧场呈现的形式、语气和互动点。"></textarea>
         </label>
         <label class="topic-editor-switch">
           <input v-model="topicDraft.enabled" type="checkbox" />
