@@ -289,7 +289,7 @@ const tabs = computed(() => [
   grid-template-columns: repeat(5, 1fr);
   height: calc(var(--tab-height) + var(--safe-bottom));
   padding-bottom: var(--safe-bottom);
-  border-top: 1px solid rgba(17, 17, 17, 0.08);
+  border-top: 1px solid transparent;
   background: #ffffff;
 }
 

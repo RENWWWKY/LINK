@@ -25,10 +25,6 @@
                   <span>LINK FM</span>
                   <strong>{{ isPlaying ? '正在共振' : '待机巡航' }}</strong>
                 </div>
-                <div class="needle" :class="{ playing: isPlaying }" aria-hidden="true">
-                  <span></span>
-                  <i></i>
-                </div>
                 <div class="record" :class="{ spinning: isPlaying }">
                   <div class="grooves"></div>
                   <div class="album-art">
@@ -665,8 +661,10 @@ function playNeighbor(direction: -1 | 1) {
 }
 
 .music-top-bar {
-  background: rgba(248, 249, 250, 0.88);
-  backdrop-filter: blur(22px) saturate(1.08);
+  background: #ffffff;
+  border-bottom: 1px solid transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .music-actions {
@@ -698,19 +696,15 @@ function playNeighbor(direction: -1 | 1) {
   min-height: calc(100dvh - var(--tab-height) - 58px - var(--safe-bottom));
   overflow: hidden;
   perspective: 1200px;
-  background:
-    linear-gradient(155deg, #f9fafb 0%, #cfd3d8 18%, #6b717a 46%, #171a1f 78%, #050608 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  background: #ffffff;
+  box-shadow: none;
 }
 
 .player-stage::before {
   position: absolute;
   inset: 0;
   z-index: 1;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.42), transparent 18%),
-    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.055) 0 1px, transparent 1px 12px),
-    linear-gradient(180deg, transparent 56%, rgba(0, 0, 0, 0.76) 100%);
+  background: none;
   pointer-events: none;
   content: '';
 }
@@ -721,7 +715,7 @@ function playNeighbor(direction: -1 | 1) {
   bottom: 86px;
   left: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.34), transparent);
+  background: transparent;
   pointer-events: none;
   content: '';
 }
@@ -761,10 +755,7 @@ function playNeighbor(direction: -1 | 1) {
 
 .flip-front {
   place-items: center;
-  background:
-    linear-gradient(122deg, rgba(255, 255, 255, 0.28), transparent 29%),
-    radial-gradient(ellipse at 50% 52%, rgba(255, 255, 255, 0.17) 0 31%, transparent 32%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0.18));
+  background: #ffffff;
 }
 
 .flip-front::before,
@@ -776,26 +767,20 @@ function playNeighbor(direction: -1 | 1) {
 }
 
 .flip-front::before {
-  background:
-    linear-gradient(180deg, transparent 58%, rgba(2, 3, 4, 0.42) 100%),
-    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 13px);
+  background: none;
 }
 
 .flip-back {
   grid-template-rows: auto minmax(0, 1fr);
   gap: 16px;
   padding: 22px 20px 18px;
-  color: #f7f8fa;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.16), transparent 28%),
-    linear-gradient(180deg, #202329 0%, #111317 54%, #050608 100%);
+  color: #111317;
+  background: #ffffff;
   transform: rotateY(180deg);
 }
 
 .flip-back::before {
-  background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.08), transparent 42%, rgba(255, 255, 255, 0.05)),
-    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.045) 0 1px, transparent 1px 22px);
+  background: none;
 }
 
 .lyrics-card-head {
@@ -805,11 +790,11 @@ function playNeighbor(direction: -1 | 1) {
   gap: 5px;
   min-width: 0;
   padding-bottom: 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+  border-bottom: 1px solid rgba(17, 19, 23, 0.08);
 }
 
 .lyrics-card-head span {
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(17, 19, 23, 0.5);
   font-size: 10px;
   font-weight: 900;
   letter-spacing: 0.18em;
@@ -829,7 +814,7 @@ function playNeighbor(direction: -1 | 1) {
 }
 
 .lyrics-card-head small {
-  color: rgba(255, 255, 255, 0.58);
+  color: rgba(17, 19, 23, 0.58);
   font-size: 12px;
   font-weight: 800;
 }
@@ -853,7 +838,7 @@ function playNeighbor(direction: -1 | 1) {
 
 .full-lyrics p {
   margin: 0;
-  color: rgba(255, 255, 255, 0.38);
+  color: rgba(17, 19, 23, 0.42);
   font-size: 15px;
   font-weight: 850;
   line-height: 1.45;
@@ -862,15 +847,15 @@ function playNeighbor(direction: -1 | 1) {
 }
 
 .full-lyrics p.passed {
-  color: rgba(255, 255, 255, 0.24);
+  color: rgba(17, 19, 23, 0.28);
 }
 
 .full-lyrics p.active {
-  color: #ffffff;
+  color: #111317;
   font-size: 23px;
   line-height: 1.25;
   transform: translateX(8px);
-  text-shadow: 0 10px 26px rgba(0, 0, 0, 0.34);
+  text-shadow: none;
 }
 
 .signal-caption {
@@ -881,7 +866,7 @@ function playNeighbor(direction: -1 | 1) {
   display: flex;
   align-items: center;
   gap: 9px;
-  color: rgba(255, 255, 255, 0.76);
+  color: rgba(17, 19, 23, 0.58);
 }
 
 .signal-caption span,
@@ -895,67 +880,10 @@ function playNeighbor(direction: -1 | 1) {
 
 .signal-caption strong {
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.13);
+  background: rgba(17, 19, 23, 0.08);
   padding: 5px 9px;
-  color: #ffffff;
+  color: #111317;
   font-size: 11px;
-}
-
-.needle {
-  position: absolute;
-  top: 20px;
-  left: 52%;
-  width: 126px;
-  height: 152px;
-  transform: rotate(-10deg);
-  transform-origin: 18px 18px;
-  transition: transform 260ms ease;
-  z-index: 2;
-}
-
-.needle.playing {
-  transform: rotate(8deg);
-}
-
-.needle span {
-  position: absolute;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: #ffffff;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
-}
-
-.needle span::after {
-  position: absolute;
-  inset: 10px;
-  border-radius: 50%;
-  background: #d6e2f0;
-  content: '';
-}
-
-.needle i {
-  position: absolute;
-  top: 25px;
-  left: 23px;
-  width: 126px;
-  height: 9px;
-  border-radius: 999px;
-  background: #ffffff;
-  transform: rotate(52deg);
-  transform-origin: left center;
-}
-
-.needle i::after {
-  position: absolute;
-  right: -15px;
-  top: 50px;
-  width: 33px;
-  height: 22px;
-  border-radius: 7px;
-  background: #ffffff;
-  transform: rotate(-38deg);
-  content: '';
 }
 
 .record {
@@ -964,7 +892,7 @@ function playNeighbor(direction: -1 | 1) {
   place-items: center;
   width: min(70vw, 292px);
   aspect-ratio: 1;
-  margin-top: 26px;
+  margin-top: 58px;
   border-radius: 50%;
   background: #111114;
   box-shadow: 0 0 0 12px rgba(255, 255, 255, 0.08), 0 22px 38px rgba(7, 10, 18, 0.42);
@@ -986,10 +914,10 @@ function playNeighbor(direction: -1 | 1) {
   z-index: 1;
   display: grid;
   place-items: center;
-  width: 49%;
+  width: 68%;
   aspect-ratio: 1;
   overflow: hidden;
-  border: 11px solid #ffffff;
+  border: 7px solid #ffffff;
   border-radius: 50%;
   background: #eef3f8;
   color: #6d737c;
@@ -1107,11 +1035,10 @@ function playNeighbor(direction: -1 | 1) {
   z-index: 3;
   gap: 10px;
   border-radius: 0;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03) 24%, rgba(0, 0, 0, 0.78));
+  background: #ffffff;
   padding: 15px 18px 22px;
   box-shadow: none;
-  backdrop-filter: blur(20px);
+  backdrop-filter: none;
 }
 
 .progress-row {
@@ -1119,13 +1046,13 @@ function playNeighbor(direction: -1 | 1) {
   grid-template-columns: 44px 1fr 44px;
   align-items: center;
   gap: 8px;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(17, 19, 23, 0.58);
   font-size: 12px;
 }
 
 .progress-row input {
   width: 100%;
-  accent-color: #ffffff;
+  accent-color: #111317;
 }
 
 .now-playing-line {
@@ -1133,7 +1060,7 @@ function playNeighbor(direction: -1 | 1) {
   justify-items: center;
   gap: 2px;
   min-width: 0;
-  color: #ffffff;
+  color: #111317;
 }
 
 .now-playing-line strong,
@@ -1151,7 +1078,7 @@ function playNeighbor(direction: -1 | 1) {
 }
 
 .now-playing-line span {
-  color: rgba(255, 255, 255, 0.62);
+  color: rgba(17, 19, 23, 0.52);
   font-size: 12px;
   font-weight: 800;
 }
@@ -1172,7 +1099,7 @@ function playNeighbor(direction: -1 | 1) {
   height: 44px;
   border-radius: 50%;
   background: transparent;
-  color: rgba(255, 255, 255, 0.78);
+  color: #111317;
   box-shadow: none;
   backdrop-filter: none;
   transition: transform 160ms ease, color 160ms ease, filter 160ms ease;
@@ -1184,9 +1111,9 @@ function playNeighbor(direction: -1 | 1) {
 
 .transport-row button.active {
   background: transparent;
-  color: #ffffff;
+  color: #111317;
   box-shadow: none;
-  filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.3));
+  filter: drop-shadow(0 0 12px rgba(17, 19, 23, 0.18));
 }
 
 .transport-row button.active svg {
@@ -1199,7 +1126,7 @@ function playNeighbor(direction: -1 | 1) {
   height: 64px;
   background: transparent;
   box-shadow: none;
-  color: #ffffff;
+  color: #111317;
 }
 
 .transport-row .main-play svg {
@@ -1603,9 +1530,12 @@ function playNeighbor(direction: -1 | 1) {
   white-space: nowrap;
 }
 
-.comment-toolbar button:disabled,
-.transport-row button:disabled {
+.comment-toolbar button:disabled {
   opacity: 0.5;
+}
+
+.transport-row button:disabled {
+  opacity: 1;
 }
 
 .comment-card {
