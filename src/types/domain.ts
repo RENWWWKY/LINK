@@ -948,6 +948,7 @@ export interface PromptContext {
   offlineInvitationEnabled?: boolean;
   availableStickers?: ChatStickerAttachment[];
   timeAwareness?: ConversationTimeAwarenessSettings;
+  timeAwarenessNow?: number;
   offlineSettings?: ConversationOfflineSettings;
   replyInstruction?: string;
 }

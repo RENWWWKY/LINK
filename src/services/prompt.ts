@@ -688,9 +688,11 @@ export function buildPrompt(context: PromptContext, options: { includeOnlineChat
   const includeMessageTime = normalizeTimeAwarenessSettings(context.timeAwareness).enabled;
   const userName = getUserAiName(context.user);
   const boundUserName = getUserAiName(context.boundUser);
+  const timeAwarenessTimestamp = context.timeAwarenessNow;
+  const timeAwarenessNow = Number.isFinite(timeAwarenessTimestamp) ? new Date(timeAwarenessTimestamp as number) : undefined;
   const timeAwarenessPrompt = renderTimeAwarenessPrompt(context.timeAwareness, {
     userName: boundUserName || userName
-  });
+  }, timeAwarenessNow);
   const history = context.messages
     .slice(-24)
     .map((message) => {
@@ -737,6 +739,9 @@ export function buildPrompt(context: PromptContext, options: { includeOnlineChat
       ? '线下邀约功能当前已关闭：本轮以及后续线上回复都禁止发起线下邀约，messageActions.offlineInvitation 必须固定为 null。'
       : '',
     timeAwarenessPrompt,
+    includeMessageTime
+      ? '时间判定规则：最近对话里的“发送时间”只表示那条历史消息实际发出的时间。回复时先以“现实时间感知”里的当前时间判断现在，再根据历史发送时间推算已经过去多久；不要把最后一条用户消息的发送时间当作当前时间。'
+      : '',
     `当前对话总结：\n${context.conversationSummary || '暂无总结。'}`,
     `记忆手册：\n${context.memorySummary || '暂无记忆手册。'}`,
     `世界书：\n${renderWorldBooks(selectedWorldBooks, context) || '无启用条目。'}`,

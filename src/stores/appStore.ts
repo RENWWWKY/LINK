@@ -3706,6 +3706,7 @@ export const useAppStore = defineStore('app', () => {
     }
 
     if (!startConversationReply(conversationId)) return;
+    const generationStartedAt = Date.now();
     try {
       if (chatSettings.stickerVisionEnabled) {
         await localizeRecentStickerMessagesForVision(conversationId);
@@ -3728,6 +3729,7 @@ export const useAppStore = defineStore('app', () => {
         narrationModeEnabled: chatSettings.narrationModeEnabled,
         offlineInvitationEnabled: chatSettings.offlineInvitationEnabled,
         timeAwareness: chatSettings.timeAwareness,
+        timeAwarenessNow: generationStartedAt,
         offlineSettings: chatSettings.offline,
         replyInstruction: options?.replyInstruction
           ? options.replyInstruction
