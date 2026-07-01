@@ -1513,89 +1513,9 @@ function parseVoomMomentPayload(rawContent: string, context: PromptContext): Voo
   }
 }
 
-function normalizeVoomSimilarityText(value = '') {
-  return value
-    .toLocaleLowerCase()
-    .replace(/[\s\p{P}\p{S}]+/gu, '')
-    .trim();
-}
-
-function createCharacterNgrams(value: string, size: number) {
-  const normalized = normalizeVoomSimilarityText(value);
-  if (!normalized) return new Set<string>();
-  if (normalized.length <= size) return new Set([normalized]);
-  const grams = new Set<string>();
-  for (let index = 0; index <= normalized.length - size; index += 1) {
-    grams.add(normalized.slice(index, index + size));
-  }
-  return grams;
-}
-
-function jaccardSimilarity(first: Set<string>, second: Set<string>) {
-  if (!first.size || !second.size) return 0;
-  let intersection = 0;
-  for (const item of first) {
-    if (second.has(item)) intersection += 1;
-  }
-  return intersection / (first.size + second.size - intersection);
-}
-
-function getVoomSimilarityScore(first: string, second: string) {
-  const firstText = normalizeVoomSimilarityText(first);
-  const secondText = normalizeVoomSimilarityText(second);
-  if (!firstText || !secondText) return 0;
-  if (firstText === secondText) return 1;
-  if (firstText.length >= 8 && secondText.length >= 8 && (firstText.includes(secondText) || secondText.includes(firstText))) return 0.9;
-
-  const bigramScore = jaccardSimilarity(createCharacterNgrams(firstText, 2), createCharacterNgrams(secondText, 2));
-  const trigramScore = jaccardSimilarity(createCharacterNgrams(firstText, 3), createCharacterNgrams(secondText, 3));
-  return Math.max(bigramScore, trigramScore);
-}
-
-function getVoomPayloadSimilarity(payload: VoomMomentPayload, post: VoomPost) {
-  const payloadCombined = [payload.content, payload.imageDescription].filter(Boolean).join('\n');
-  const postCombined = [post.content, post.contentTranslation, post.imageDescription].filter(Boolean).join('\n');
-  return Math.max(
-    getVoomSimilarityScore(payload.content, post.content),
-    getVoomSimilarityScore(payload.imageDescription, post.imageDescription ?? ''),
-    getVoomSimilarityScore(payloadCombined, postCombined)
-  );
-}
-
-function findSimilarRecentVoomPost(payload: VoomMomentPayload, recentPosts: VoomPost[]) {
-  const candidates = recentPosts
-    .map((post) => ({ post, score: getVoomPayloadSimilarity(payload, post) }))
-    .sort((first, second) => second.score - first.score);
-  const [bestMatch] = candidates;
-  return bestMatch && bestMatch.score >= 0.42 ? bestMatch : null;
-}
-
-async function generateDistinctVoomPayload(context: PromptContext, settings?: AppSettings, modelOverride = '') {
-  const basePrompt = buildMomentPrompt(context);
-  const recentPosts = context.recentVoomPosts ?? [];
-  let prompt = basePrompt;
-  let latestPayload: VoomMomentPayload | null = null;
-
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const apiReply = await callTextApi(settings, prompt, modelOverride);
-    const payload = parseVoomMomentPayload(apiReply, context);
-    latestPayload = payload;
-
-    const similarPost = findSimilarRecentVoomPost(payload, recentPosts);
-    if (!similarPost) return payload;
-
-    prompt = [
-      basePrompt,
-      '上一版候选因为和近期 VOOM 太相似被拒绝，请完全重写。',
-      `被拒绝的候选正文：${payload.content}`,
-      `被拒绝的候选配图：${payload.imageDescription}`,
-      `最相似的历史正文：${similarPost.post.content}`,
-      similarPost.post.imageDescription ? `最相似的历史配图：${similarPost.post.imageDescription}` : '',
-      '这次必须换成另一个具体事件或生活切面，正文、配图、情绪重心都要明显不同。只输出新的 JSON。'
-    ].filter(Boolean).join('\n\n');
-  }
-
-  return latestPayload ?? parseVoomMomentPayload('', context);
+async function generateVoomPayload(context: PromptContext, settings?: AppSettings, modelOverride = '') {
+  const apiReply = await callTextApi(settings, buildMomentPrompt(context), modelOverride);
+  return parseVoomMomentPayload(apiReply, context);
 }
 
 function normalizeVoomCommentReplies(input: unknown, fallbackAuthorName: string, post: VoomPost, blockedAuthorNames: string[] = []): VoomCommentReplyResult[] {
@@ -2137,7 +2057,7 @@ export async function generateRoleplayReply(input: GenerateReplyInput): Promise<
 }
 
 export async function generateVoomPost(context: PromptContext, settings?: AppSettings, modelOverride = ''): Promise<Omit<VoomPost, 'id' | 'createdAt'>> {
-  const { content, contentTranslation, imageDescription, likes, comments } = await generateDistinctVoomPayload(context, settings, modelOverride);
+  const { content, contentTranslation, imageDescription, likes, comments } = await generateVoomPayload(context, settings, modelOverride);
   const characterName = getCharacterAiName(context.character);
   const characterVoomAuthorName = getCharacterVoomAuthorName(context.character);
   const characterAuthorAliases = new Set([context.character.id, context.character.name, context.character.nickname, characterName, characterVoomAuthorName]
