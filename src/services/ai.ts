@@ -1429,7 +1429,7 @@ function normalizeVoomMomentComments(input: unknown): VoomMomentPayload['comment
   if (!Array.isArray(input)) return [];
   const comments: VoomMomentPayload['comments'] = [];
   for (const comment of input) {
-    if (!comment || typeof comment !== 'object') continue;
+    if (comments.length >= 15 || !comment || typeof comment !== 'object') continue;
     const entry = comment as Record<string, unknown>;
     const authorName = String(entry.authorName ?? '').trim();
     const rawContent = String(entry.content ?? '');
@@ -1529,7 +1529,7 @@ function normalizeVoomCommentReplies(input: unknown, fallbackAuthorName: string,
   const candidates: Array<VoomCommentReplyResult & { rawParentId?: string }> = [];
 
   for (const entry of replySource) {
-    if (candidates.length >= 6 || !entry || typeof entry !== 'object') continue;
+    if (candidates.length >= 15 || !entry || typeof entry !== 'object') continue;
     const reply = entry as Record<string, unknown>;
     const authorName = String(reply.authorName ?? '').trim() || fallbackAuthorName;
     if (blockedAuthors.has(authorName.toLocaleLowerCase())) continue;
@@ -2205,7 +2205,7 @@ function normalizeUserVoomComments(input: unknown, targetCharacters: CharacterPr
 
   const candidates: Array<UserVoomCommentResult & { rawParentId?: string }> = [];
   for (const entry of source) {
-    if (candidates.length >= 10 || !entry || typeof entry !== 'object') continue;
+    if (candidates.length >= 15 || !entry || typeof entry !== 'object') continue;
     const record = entry as Record<string, unknown>;
     const content = stripVoomCommentReplyPrefix(String(record.content ?? record.text ?? record.comment ?? ''));
     if (!content) continue;
@@ -2291,7 +2291,7 @@ export async function generateUserVoomComments(input: {
     { "id": "c2", "authorName": "NPC 网名", "content": "回复内容", "contentTranslation": "如 content 不是普通话，则给普通话译文；否则留空", "parentId": "c1" }
   ]
 }`,
-    '要求：1. 输出 6-10 条；2. authorId 可以来自可见角色，NPC 则不要填 authorId，必须填写具体 authorName；3. NPC 可以来自可见角色自己的设定、社交圈、朋友同事家人粉丝或参考上下文内容生成，如果没有提及则可以根据世界线合理拓展相应NPC；4. parentId 留空表示直接评论用户动态，填写本次前面输出的 id 表示回复那条评论；5. 可以让角色回复 NPC，也可以让 NPC 回复角色或其他 NPC，但不要代替用户本人评论；6. 评论要短、自然、有社交软件感，不要解释设定；7. 不要使用“NPC”“朋友A”“路人”这类占位名；8. contentTranslation 规则：外语、粤语都要翻译成自然现代简体普通话；不要加“翻译：”前缀。'
+    '要求：1. 输出 6-15 条；2. authorId 可以来自可见角色，NPC 则不要填 authorId，必须填写具体 authorName；3. NPC 可以来自可见角色自己的设定、社交圈、朋友同事家人粉丝或参考上下文内容生成，如果没有提及则可以根据世界线合理拓展相应NPC；4. parentId 留空表示直接评论用户动态，填写本次前面输出的 id 表示回复那条评论；5. 可以让角色回复 NPC，也可以让 NPC 回复角色或其他 NPC，但不要代替用户本人评论；6. 评论要短、自然、有社交软件感，不要解释设定；7. 不要使用“NPC”“朋友A”“路人”这类占位名；8. contentTranslation 规则：外语、粤语都要翻译成自然现代简体普通话；不要加“翻译：”前缀。'
   ].filter(Boolean).join('\n\n');
 
   const apiReply = await callTextApi(input.settings, prompt, input.modelOverride);
@@ -2343,7 +2343,7 @@ export async function generateVoomCommentReplies(input: {
     { "id": "r2", "authorName": "NPC网名", "content": "自然评论或回复", "contentTranslation": "如 content 不是中文，则给普通话译文；否则留空", "parentId": "已有评论ID或本次前面输出的id，可留空" }
   ]
 }`,
-    '要求：1. 输出 6-10 条；2. authorName 可以是当前执行角色真名，也可以是符合社交圈边界的真实感 NPC 网名；3. 角色可以回复用户或其他人的评论，NPC 也可以发新评论、回复角色或互相回复；4. parentId 留空表示新评论，填写已有评论 ID 或本次前面输出的 id 表示回复；5. 不要代替用户发言，不要使用“NPC”“路人”“朋友A”这类占位名；6. 内容像真实社交软件评论区，短、自然、有上下文，不要解释设定；7. contentTranslation 规则：外语、粤语都要翻译成简体普通话；不要加“翻译：”前缀。'
+    '要求：1. 输出 6-15 条；2. authorName 可以是当前执行角色真名，也可以是符合社交圈边界的真实感 NPC 网名；3. 角色可以回复用户或其他人的评论，NPC 也可以发新评论、回复角色或互相回复；4. parentId 留空表示新评论，填写已有评论 ID 或本次前面输出的 id 表示回复；5. 不要代替用户发言，不要使用“NPC”“路人”“朋友A”这类占位名；6. 内容像真实社交软件评论区，短、自然、有上下文，不要解释设定；7. contentTranslation 规则：外语、粤语都要翻译成简体普通话；不要加“翻译：”前缀。'
   ].join('\n\n');
 
   const apiReply = await callTextApi(input.settings, prompt, input.modelOverride);
@@ -2393,7 +2393,7 @@ function normalizeMusicComments(value: unknown, input: { user: UserProfile; char
   const createdAt = Date.now();
 
   source.forEach((entry, index) => {
-    if (comments.length >= 12 || !entry || typeof entry !== 'object') return;
+    if (comments.length >= 15 || !entry || typeof entry !== 'object') return;
     const record = entry as Record<string, unknown>;
     const content = String(record.content ?? record.text ?? record.comment ?? '').trim();
     if (!content) return;
@@ -2464,7 +2464,7 @@ export async function generateMusicCommentThread(input: {
     { "id": "c1", "authorId": "绑定角色id，可留空", "authorName": "角色昵称或真实感听友名", "content": "评论内容", "contentTranslation": "如需翻译则填写，否则留空", "parentId": "回复的已有评论ID或本次前面输出的id，可留空" }
   ]
 }`,
-    '要求：1. 输出 8-12 条；2. 至少包含 2 条该用户绑定角色的评论或回复，角色 authorId 必须来自绑定角色；3. 其余可以是有真实感的路人听友；4. 可以回复任意已有评论或本次前面评论；5. 不要使用“NPC”“路人A”“朋友A”这类占位名；6. 语气像音乐 App 评论区，短、自然、有情绪和梗，但不要刷屏；7. contentTranslation 规则：外语、粤语都要翻译成自然现代简体普通话，不要加“翻译：”前缀。'
+    '要求：1. 输出 6-15 条；2. 至少包含 2 条该用户绑定角色的评论或回复，角色 authorId 必须来自绑定角色；3. 其余可以是有真实感的路人听友；4. 可以回复任意已有评论或本次前面评论；5. 不要使用“NPC”“路人A”“朋友A”这类占位名；6. 语气像音乐 App 评论区，短、自然、有情绪和梗，但不要刷屏；7. contentTranslation 规则：外语、粤语都要翻译成自然现代简体普通话，不要加“翻译：”前缀。'
   ].join('\n\n');
 
   const apiReply = await callTextApi(input.settings, prompt, input.modelOverride);
