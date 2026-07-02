@@ -25,6 +25,10 @@
                   <span>LINK FM</span>
                   <strong>{{ isPlaying ? '正在共振' : '待机巡航' }}</strong>
                 </div>
+                <div class="now-playing-line cover-now-playing">
+                  <strong>{{ nowPlayingTitle }}</strong>
+                  <span>{{ nowPlayingArtists }}</span>
+                </div>
                 <div class="record" :class="{ spinning: isPlaying }">
                   <div class="grooves"></div>
                   <div class="album-art">
@@ -56,12 +60,8 @@
               <input :value="progressValue" type="range" min="0" max="100" step="0.1" aria-label="播放进度" @input="seekAudio" />
               <span>{{ durationLabel }}</span>
             </div>
-            <div class="now-playing-line">
-              <strong>{{ nowPlayingTitle }}</strong>
-              <span>{{ nowPlayingArtists }}</span>
-            </div>
             <div class="transport-row">
-              <button type="button" :disabled="!activeTrack" :class="{ active: activeTrack && isFavorite(activeTrack.id) }" :aria-label="activeTrack && isFavorite(activeTrack.id) ? '从我的喜欢删除' : '加入我的喜欢'" @click="activeTrack && toggleFavorite(activeTrack)">
+              <button class="favorite-toggle" type="button" :disabled="!activeTrack" :class="{ active: activeTrack && isFavorite(activeTrack.id) }" :aria-label="activeTrack && isFavorite(activeTrack.id) ? '从我的喜欢删除' : '加入我的喜欢'" @click="activeTrack && toggleFavorite(activeTrack)">
                 <Heart :size="25" :fill="activeTrack && isFavorite(activeTrack.id) ? 'currentColor' : 'none'" />
               </button>
               <button type="button" aria-label="上一首" @click="playNeighbor(-1)">
@@ -85,17 +85,6 @@
 
       <section v-else-if="pageMode === 'search'" class="content-sheet search-sheet">
         <div class="search-console">
-          <div class="discover-hero">
-            <div class="discover-copy">
-              <span>DISCOVER</span>
-              <strong>搜索你的下一首循环</strong>
-              <small>{{ selectedSourceLabel }} · 搜到即可收藏，无法直连时自动寻找可播放镜像。</small>
-            </div>
-            <div class="discover-orbit" aria-hidden="true">
-              <i></i><i></i><i></i>
-            </div>
-          </div>
-
           <div class="source-segment" aria-label="音乐源">
             <button type="button" :class="{ active: selectedSource === 'netease' }" @click="selectedSource = 'netease'">网易云</button>
             <button type="button" :class="{ active: selectedSource === 'kuwo' }" @click="selectedSource = 'kuwo'">酷我</button>
@@ -111,13 +100,6 @@
               <Search :size="18" />
             </button>
           </form>
-
-          <div class="quick-grid" aria-label="搜索快捷入口">
-            <span><Trophy :size="23" />排行榜</span>
-            <span><UserRound :size="23" />歌手</span>
-            <span><Music2 :size="23" />曲风</span>
-            <span><Disc3 :size="23" />新歌</span>
-          </div>
         </div>
 
         <p v-if="searchError" class="message error">{{ searchError }}</p>
@@ -137,10 +119,15 @@
               <Pause v-else-if="activeTrack?.id === track.id && isPlaying" :size="18" />
               <Play v-else :size="18" />
             </button>
-            <button type="button" :class="{ active: isFavorite(track.id) }" :aria-label="isFavorite(track.id) ? '从我的喜欢删除' : '加入我的喜欢'" @click="toggleFavorite(track)">
+            <button class="favorite-toggle" type="button" :class="{ active: isFavorite(track.id) }" :aria-label="isFavorite(track.id) ? '从我的喜欢删除' : '加入我的喜欢'" @click="toggleFavorite(track)">
               <Heart :size="18" :fill="isFavorite(track.id) ? 'currentColor' : 'none'" />
             </button>
           </article>
+          <button v-if="!searchEndReached" class="load-more-button" type="button" :disabled="loadingMoreSearch" @click="loadMoreSearch">
+            <LoaderCircle v-if="loadingMoreSearch" class="spin" :size="16" />
+            <span>{{ loadingMoreSearch ? '继续搜索中' : '更多' }}</span>
+          </button>
+          <p v-else class="load-more-note">暂时没有更多结果</p>
         </div>
         <div v-else class="message">点击右上角搜索，或输入关键词找歌。</div>
       </section>
@@ -213,7 +200,7 @@
               <span><strong>{{ track.name }}</strong><small>{{ trackArtists(track) }} · {{ track.album || '未知专辑' }}</small></span>
             </button>
             <button type="button" aria-label="播放" @click="togglePlay(track)"><Play :size="18" /></button>
-            <button type="button" class="active" aria-label="从我的喜欢删除" @click="toggleFavorite(track)"><Heart :size="18" fill="currentColor" /></button>
+            <button type="button" class="favorite-toggle active" aria-label="从我的喜欢删除" @click="toggleFavorite(track)"><Heart :size="18" fill="currentColor" /></button>
           </article>
         </div>
         <div v-else class="message">加入喜欢的歌曲会保存在这里。</div>
@@ -224,7 +211,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
-import { ChevronDown, ChevronUp, Disc3, Heart, LoaderCircle, MessageCircle, Music2, Pause, Play, RefreshCw, Search, Send, SkipBack, SkipForward, Sparkles, Trophy, UserRound, X } from 'lucide-vue-next';
+import { ChevronDown, ChevronUp, Disc3, Heart, LoaderCircle, MessageCircle, Pause, Play, RefreshCw, Search, Send, SkipBack, SkipForward, Sparkles, UserRound, X } from 'lucide-vue-next';
 import { deleteEntity, getDb, putEntity } from '@/data/db';
 import { generateMusicCommentThread, hasTextGenerationConfig } from '@/services/ai';
 import { fetchMusicAudioUrl, fetchMusicCoverUrl, fetchMusicLyricText, mergeMusicTrack, searchMusicTracks } from '@/services/music';
@@ -238,6 +225,7 @@ type MusicPageMode = 'player' | 'search' | 'comments' | 'likes';
 
 const store = useAppStore();
 const musicPlayer = useMusicPlayerStore();
+const searchCandidatePageSize = 60;
 const pageMode = ref<MusicPageMode>('player');
 const query = ref('');
 const selectedSource = ref<MusicSource>('netease');
@@ -245,10 +233,14 @@ const fallbackCoverUrl = '/link-icon.png';
 const searchResults = ref<MusicTrack[]>([]);
 const favoriteTracks = ref<MusicTrack[]>([]);
 const commentThreads = ref<MusicCommentThread[]>([]);
-const sourceLabels: Partial<Record<MusicSource, string>> = { netease: '网易云', kuwo: '酷我', joox: 'JOOX' };
 const searching = ref(false);
+const loadingMoreSearch = ref(false);
 const searchError = ref('');
 const commentError = ref('');
+const searchPage = ref(0);
+const searchEndReached = ref(false);
+const lastSearchKeyword = ref('');
+const lastSearchSource = ref<MusicSource>('netease');
 const loadingLyricTrackId = ref('');
 const generatingCommentTrackId = ref('');
 const commentDraft = ref('');
@@ -289,7 +281,6 @@ const currentTimeLabel = computed(() => formatDuration(currentTime.value));
 const durationLabel = computed(() => duration.value ? formatDuration(duration.value) : '03:40');
 const nowPlayingTitle = computed(() => activeTrack.value?.name || '先搜索一首歌');
 const nowPlayingArtists = computed(() => activeTrack.value ? trackArtists(activeTrack.value) : 'LINK FM');
-const selectedSourceLabel = computed(() => sourceLabels[selectedSource.value] ?? '音乐源');
 const parsedActiveLyrics = computed(() => {
   const track = activeTrack.value;
   return track ? parseLyricLines(lyricTextByTrackId.value[track.id] || '') : [];
@@ -425,20 +416,65 @@ async function hydrateSearchCovers(tracks: MusicTrack[]) {
   }));
 }
 
+function withFavoriteState(tracks: MusicTrack[]) {
+  return tracks.map((track) => favoriteTracks.value.find((favorite) => favorite.id === track.id) ?? track);
+}
+
+function appendSearchResults(tracks: MusicTrack[]) {
+  const existingIds = new Set(searchResults.value.map((track) => track.id));
+  const nextTracks = withFavoriteState(tracks).filter((track) => !existingIds.has(track.id));
+  if (!nextTracks.length) return 0;
+  searchResults.value = [...searchResults.value, ...nextTracks];
+  return nextTracks.length;
+}
+
+async function fetchSearchPage(keyword: string, source: MusicSource, page: number) {
+  return searchMusicTracks(keyword, source, page, searchCandidatePageSize);
+}
+
 async function runSearch() {
   const keyword = query.value.trim();
   if (!keyword || searching.value) return;
   searching.value = true;
+  loadingMoreSearch.value = false;
   searchError.value = '';
+  searchPage.value = 0;
+  searchEndReached.value = false;
+  lastSearchKeyword.value = keyword;
+  lastSearchSource.value = selectedSource.value;
   try {
-    const tracks = await searchMusicTracks(keyword, selectedSource.value, 1, 16);
-    searchResults.value = tracks.map((track) => favoriteTracks.value.find((favorite) => favorite.id === track.id) ?? track);
+    const tracks = await fetchSearchPage(keyword, selectedSource.value, 1);
+    searchResults.value = withFavoriteState(tracks);
+    searchPage.value = 1;
+    searchEndReached.value = !tracks.length;
     if (!activeTrackId.value && searchResults.value[0]) activeTrackId.value = searchResults.value[0].id;
     void hydrateSearchCovers(searchResults.value);
   } catch (error) {
     searchError.value = error instanceof Error ? error.message : '音乐搜索失败。';
   } finally {
     searching.value = false;
+  }
+}
+
+async function loadMoreSearch() {
+  const keyword = lastSearchKeyword.value || query.value.trim();
+  if (!keyword || searching.value || loadingMoreSearch.value || searchEndReached.value) return;
+  loadingMoreSearch.value = true;
+  searchError.value = '';
+  try {
+    const nextPage = searchPage.value + 1;
+    const tracks = await fetchSearchPage(keyword, lastSearchSource.value, nextPage);
+    const addedCount = appendSearchResults(tracks);
+    if (addedCount) {
+      searchPage.value = nextPage;
+      void hydrateSearchCovers(searchResults.value.slice(-addedCount));
+    } else {
+      searchEndReached.value = true;
+    }
+  } catch (error) {
+    searchError.value = error instanceof Error ? error.message : '继续搜索失败。';
+  } finally {
+    loadingMoreSearch.value = false;
   }
 }
 
@@ -870,7 +906,6 @@ function playNeighbor(direction: -1 | 1) {
 }
 
 .signal-caption span,
-.discover-copy span,
 .room-copy span,
 .playlist-hero > div:last-child > span {
   font-size: 10px;
@@ -1083,20 +1118,30 @@ function playNeighbor(direction: -1 | 1) {
   font-weight: 800;
 }
 
+.cover-now-playing {
+  position: absolute;
+  top: 66px;
+  right: 24px;
+  left: 24px;
+  z-index: 4;
+  pointer-events: none;
+}
+
 .transport-row {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(5, 40px);
   align-items: center;
   justify-items: center;
-  gap: 4px;
+  justify-content: center;
+  gap: 8px;
 }
 
 .transport-row button {
   position: relative;
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   background: transparent;
   color: #111317;
@@ -1116,20 +1161,36 @@ function playNeighbor(direction: -1 | 1) {
   filter: drop-shadow(0 0 12px rgba(17, 19, 23, 0.18));
 }
 
+.transport-row .favorite-toggle.active {
+  color: #e93b57;
+  filter: drop-shadow(0 0 12px rgba(233, 59, 87, 0.22));
+}
+
 .transport-row button.active svg {
   fill: currentColor;
   stroke: currentColor;
 }
 
+.track-row > .favorite-toggle.active {
+  color: #e93b57;
+}
+
+.transport-row button svg {
+  width: 23px;
+  height: 23px;
+}
+
 .transport-row .main-play {
-  width: 64px;
-  height: 64px;
+  width: 40px;
+  height: 40px;
   background: transparent;
   box-shadow: none;
   color: #111317;
 }
 
 .transport-row .main-play svg {
+  width: 31px;
+  height: 31px;
   filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.28));
 }
 
@@ -1149,14 +1210,12 @@ function playNeighbor(direction: -1 | 1) {
   min-height: 520px;
 }
 
-.discover-hero,
 .room-hero,
 .playlist-hero,
 .library-stats,
 .search-form,
 .search-console,
 .source-segment,
-.quick-grid,
 .track-list,
 .comment-toolbar,
 .comment-list,
@@ -1174,76 +1233,6 @@ function playNeighbor(direction: -1 | 1) {
     repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.03) 0 1px, transparent 1px 16px);
   padding: 10px;
   box-shadow: 0 18px 34px rgba(24, 28, 34, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.76);
-}
-
-.discover-hero {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr 78px;
-  min-height: 126px;
-  overflow: hidden;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.2), transparent 34%),
-    linear-gradient(135deg, #f8f9fa 0%, #d5d9de 44%, #34383f 100%);
-  padding: 17px;
-  color: #ffffff;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5), 0 14px 28px rgba(18, 22, 28, 0.12);
-}
-
-.discover-copy {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  align-content: center;
-  gap: 8px;
-}
-
-.discover-copy strong {
-  max-width: 210px;
-  color: #111317;
-  font-size: 23px;
-  line-height: 1.1;
-}
-
-.discover-copy small {
-  max-width: 235px;
-  color: rgba(17, 19, 23, 0.62);
-  line-height: 1.5;
-}
-
-.discover-orbit {
-  position: relative;
-  align-self: center;
-  justify-self: end;
-  width: 74px;
-  height: 74px;
-  border: 1px solid rgba(17, 19, 23, 0.12);
-  border-radius: 50%;
-}
-
-.discover-orbit i {
-  position: absolute;
-  border-radius: 50%;
-  background: rgba(17, 19, 23, 0.74);
-}
-
-.discover-orbit i:nth-child(1) {
-  inset: 22px;
-  background: #111317;
-}
-
-.discover-orbit i:nth-child(2) {
-  top: 2px;
-  left: 34px;
-  width: 12px;
-  height: 12px;
-}
-
-.discover-orbit i:nth-child(3) {
-  right: 8px;
-  bottom: 15px;
-  width: 18px;
-  height: 18px;
 }
 
 .search-form {
@@ -1324,27 +1313,6 @@ function playNeighbor(direction: -1 | 1) {
   box-shadow: inset 0 0 0 1px rgba(17, 19, 23, 0.08);
 }
 
-.quick-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-  background: transparent;
-  padding: 0;
-}
-
-.quick-grid span {
-  display: grid;
-  justify-items: center;
-  gap: 8px;
-  min-height: 66px;
-  align-content: center;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.62);
-  color: #5d646e;
-  font-weight: 800;
-  box-shadow: inset 0 0 0 1px rgba(17, 19, 23, 0.05);
-}
-
 .track-list,
 .comment-list {
   display: grid;
@@ -1352,6 +1320,10 @@ function playNeighbor(direction: -1 | 1) {
   background: rgba(255, 255, 255, 0.58);
   padding: 9px;
   box-shadow: inset 0 0 0 1px rgba(20, 25, 38, 0.035);
+}
+
+.search-sheet .track-list {
+  padding-bottom: calc(9px + var(--tab-height) + var(--safe-bottom));
 }
 
 .result-head {
@@ -1421,6 +1393,35 @@ function playNeighbor(direction: -1 | 1) {
   height: 36px;
   border-radius: 50%;
   color: #657083;
+}
+
+.load-more-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 42px;
+  border: 0;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #111317;
+  font-size: 13px;
+  font-weight: 900;
+  box-shadow: inset 0 0 0 1px rgba(17, 19, 23, 0.08), 0 8px 18px rgba(31, 38, 54, 0.04);
+}
+
+.load-more-button:disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
+.load-more-note {
+  margin: 0;
+  padding: 11px 8px 3px;
+  color: #8a909b;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
 }
 
 .sheet-heading {

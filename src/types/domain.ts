@@ -152,6 +152,8 @@ export interface ChatMemorySettings {
   mergeSummaryPrompt: string;
   vectorMemoryEnabled: boolean;
   hideSummarizedMessages: boolean;
+  grandSummaryHiddenStartFloor: number;
+  grandSummaryVisibleTailFloors: number;
   atomWriterEnabled: boolean;
   atomWriterEvery: number;
   autoGrandSummaryEnabled: boolean;

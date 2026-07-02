@@ -45,13 +45,12 @@ end
 执行规则
 
 1. 标注本次为第几次大总结。
-2. 仅梳理从上一轮总结结束到当前的新增剧情，不重复写入历史旧总结内容。
-3. 严格按照时间线梳理，区分不同日期、时段和小时发生的事件，保证时序清晰。
-4. 每个“时间”必须写成“日期 + 时段 + 具体小时 + 依据楼层/回忆录范围”，例如“2026-07-02 08:00 早上（依据 12-18 楼）”；如果原文时间未明，写“时间未明，依据上下文约为……”，不得把早上、下午、晚上互相改写。
-5. 如果开启时间感知，以待总结楼层时间线和回忆录中的 time 为最高优先级；同一事件的消息发送时间、回忆录 time、上下文推断冲突时，优先保留明确楼层时间，并在重要细节中说明冲突来源。
-6. 只保留核心事件、关键对话、人物行动、物品约定、角色情绪变化，剔除冗余修饰语句，纯客观陈述事实，不添加主观评价。
-7. 完整保留剧情细节，不删减关键伏笔，保证剧情记录完整。
-8. 文字简洁直白，无需加粗、排版美化。
+2. 严格按照时间线梳理，区分不同日期、时段和小时发生的事件，保证时序清晰。
+3. 每个“时间”必须写成“日期 + 时段 + 具体小时”，例如“2026-07-02 08:00 早上”。
+4. 如果开启时间感知，以待总结楼层时间线和回忆录中的 time 为最高优先级。
+5. 只保留核心事件、关键对话、人物行动、物品约定、角色情绪变化，剔除冗余修饰语句，纯客观陈述事实，不添加主观评价。
+6. 完整保留剧情细节，不删减关键伏笔，保证剧情记录完整。
+7. 文字简洁直白，无需加粗、排版美化。
 
 固定输出格式
 
@@ -59,7 +58,7 @@ plaintext
 
 <details>
 <summary>大总结(填写本次序号)</summary>
-- 时间：日期 + 时段 + 具体小时（依据楼层/回忆录范围）
+- 时间：日期 + 时段 + 具体小时
   - 关键事件：完整叙述事件经过与出场人物
   - 重要细节：写明时间依据；如有时间冲突，标注冲突来源与最终采用时间
   - 关键对话与内心戏：标注对应角色
@@ -67,7 +66,7 @@ plaintext
   - 角色与用户之间的情感变化（选填）
   - 事件收尾与后续小互动（选填）
 
-- 时间：日期 + 时段 + 具体小时（依据楼层/回忆录范围）
+- 时间：日期 + 时段 + 具体小时
   - 关键事件：完整叙述事件经过与出场人物
   - 重要细节：写明时间依据；如有时间冲突，标注冲突来源与最终采用时间
   - 关键对话与内心戏：标注对应角色
@@ -82,6 +81,8 @@ plaintext
 </details>`,
   vectorMemoryEnabled: false,
   hideSummarizedMessages: true,
+  grandSummaryHiddenStartFloor: 1,
+  grandSummaryVisibleTailFloors: 10,
   atomWriterEnabled: false,
   atomWriterEvery: 1,
   autoGrandSummaryEnabled: true,
@@ -98,6 +99,11 @@ function normalizeMemoryPrompt(value: unknown, fallback: string) {
     || prompt.includes('保留稳定事实、长期关系变化、重要承诺、偏好、冲突和未解决事项')
     || (prompt.includes('[类型|状态|重要度1-5|主体|证据楼层]') && !prompt.includes('发生时间'));
   return isLegacyDefaultPrompt ? fallback : prompt;
+}
+
+function normalizeNonNegativeInteger(value: unknown, fallback: number) {
+  const numericValue = Number(value);
+  return Math.max(0, Math.round(Number.isFinite(numericValue) ? numericValue : fallback));
 }
 
 export const defaultOfflineWritingStylePresets: OfflinePromptPreset[] = [
@@ -333,6 +339,8 @@ export function normalizeConversationSettings(settings: Partial<ConversationSett
   const theaterFrequency = normalizeVoomFrequency(settings?.theaterFrequency, defaultConversationSettings.theaterFrequency);
   const proactiveReply = settings?.proactiveReply ?? defaultConversationSettings.proactiveReply;
   const summarizeEvery = Math.max(1, Math.round(Number(memory.summarizeEvery) || memoryDefaults.summarizeEvery));
+  const grandSummaryHiddenStartFloor = normalizeNonNegativeInteger(memory.grandSummaryHiddenStartFloor, memoryDefaults.grandSummaryHiddenStartFloor);
+  const grandSummaryVisibleTailFloors = normalizeNonNegativeInteger(memory.grandSummaryVisibleTailFloors, memoryDefaults.grandSummaryVisibleTailFloors);
 
   return {
     conversationId,
@@ -345,6 +353,8 @@ export function normalizeConversationSettings(settings: Partial<ConversationSett
       mergeSummaryPrompt: normalizeMemoryPrompt(memory.mergeSummaryPrompt, memoryDefaults.mergeSummaryPrompt),
       vectorMemoryEnabled: false,
       hideSummarizedMessages: memory.hideSummarizedMessages ?? memoryDefaults.hideSummarizedMessages,
+      grandSummaryHiddenStartFloor,
+      grandSummaryVisibleTailFloors,
       atomWriterEnabled: false,
       atomWriterEvery: 1,
       autoGrandSummaryEnabled: memory.autoGrandSummaryEnabled ?? memory.autoMergeEnabled ?? memoryDefaults.autoGrandSummaryEnabled,
@@ -988,15 +998,27 @@ export function getMessagesInFloorRange(messages: ChatMessage[], startFloor: num
 }
 
 export const grandSummaryVisibleTailFloors = 10;
+export const grandSummaryHiddenStartFloor = 1;
 
 export interface HiddenFloorRange {
   start: number;
   end: number;
 }
 
-export function getGrandSummaryHiddenEndFloor(endFloor: number) {
+export function getGrandSummaryHiddenEndFloor(endFloor: number, visibleTailFloors = grandSummaryVisibleTailFloors) {
   const normalizedEndFloor = Math.max(1, Math.floor(endFloor));
-  return Math.max(0, normalizedEndFloor - grandSummaryVisibleTailFloors);
+  const normalizedTailFloors = Math.max(0, Math.floor(Number(visibleTailFloors) || 0));
+  return Math.max(0, normalizedEndFloor - normalizedTailFloors);
+}
+
+export function getGrandSummaryHiddenRange(endFloor: number, hiddenStartFloor = grandSummaryHiddenStartFloor, visibleTailFloors = grandSummaryVisibleTailFloors) {
+  const normalizedEndFloor = Math.max(1, Math.floor(endFloor));
+  const normalizedStartFloor = Math.max(0, Math.floor(Number(hiddenStartFloor) || 0));
+  const hiddenEndFloor = getGrandSummaryHiddenEndFloor(normalizedEndFloor, visibleTailFloors);
+  const clampedStartFloor = normalizedStartFloor > 0 ? Math.min(normalizedStartFloor, normalizedEndFloor) : 0;
+  return clampedStartFloor > 0 && hiddenEndFloor >= clampedStartFloor
+    ? { hiddenStartFloor: clampedStartFloor, hiddenEndFloor }
+    : { hiddenStartFloor: 0, hiddenEndFloor: 0 };
 }
 
 export function isIncrementalGrandSummary(memory: ConversationMemoryRecord) {

@@ -10,7 +10,7 @@ import { getImageGenerationSize, getImagePromptPresetForProvider, getSelectedIma
 import { normalizeWorldBookEntry, normalizeWorldBooks } from '@/utils/worldBook';
 import { createDefaultSmallTheaterTopics, defaultSmallTheaterTopicDrafts, normalizeSmallTheaterTopic } from '@/utils/smallTheater';
 import { RECENT_STICKER_GROUP_NAME, cacheStickerImageUrl, createStickerFromDraft, createStickerGroup, getStickerDisplayImageUrl, isLegacyGanadiSticker, isLegacyGanadiStickerGroup, isRecentStickerGroupId, normalizeSticker, normalizeStickerGroup, shouldLocalizeStickerImageUrl, sortRecentStickers, type StickerImportDraft } from '@/utils/stickers';
-import { ageMemoryKind, collectIncrementalGrandSummaries, createMemoryRecord, estimateTokenCount, filterHighestMemoryLayers, getConversationFloorCount, getGrandSummaryHiddenEndFloor, getHiddenMessageIds, getMemoryContext, getMemoryMergeDepth, getMessageFloorMap, getMessagesInFloorRange, getNextSummaryRange, getNextSummaryStartFloor, getVisibleMessages, isIncrementalGrandSummary, normalizeConversationSettings, normalizeMemoryRecordEntries, renderCharacterMemoryPrompt, shouldCompressMemory } from '@/utils/memory';
+import { ageMemoryKind, collectIncrementalGrandSummaries, createMemoryRecord, estimateTokenCount, filterHighestMemoryLayers, getConversationFloorCount, getGrandSummaryHiddenRange, getHiddenMessageIds, getMemoryContext, getMemoryMergeDepth, getMessageFloorMap, getMessagesInFloorRange, getNextSummaryRange, getNextSummaryStartFloor, getVisibleMessages, isIncrementalGrandSummary, normalizeConversationSettings, normalizeMemoryRecordEntries, renderCharacterMemoryPrompt, shouldCompressMemory } from '@/utils/memory';
 import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
 import { estimateRoleplayReplyInputTokens, fetchVendorModels, generateConversationSummary, generateImageByProvider, generateRoleplayReply, generateSmallTheater, generateUserVoomComments, generateVoomCommentReplies, generateVoomPost, hasTextGenerationConfig, shouldAutoGenerateMoment, type ConversationSummaryIdentityRule, type RoleplayReplyResult, type RoleplayReplySegment } from '@/services/ai';
 import { GitHubBackupError, downloadGitHubBackup, downloadGitHubBackupVersion, ensureGitHubBackupRepository, formatGitHubBackupError, listGitHubBackupHistory, uploadGitHubBackup } from '@/services/githubBackup';
@@ -162,8 +162,8 @@ const fullConversationMergeSummaryPrompt = `停止剧情，停止输出其他所
 
 1. 将过往所有分段总结+本次新增剧情整合为一份完整连贯的剧情文档，不再拆分段落记录。
 2. 统一梳理整条故事时间线，理顺前后逻辑，合并重复内容，久远的细碎情节可以适当精简压缩。
-3. 区分时间节点，把所有事件按先后顺序串联起来；每个“时间”必须写成“日期 + 时段 + 具体小时 + 依据楼层/记忆范围”。
-4. 如果输入记忆、楼层发送时间和上下文推断冲突，优先保留明确楼层时间或原回忆录 time，不得把早上、下午、晚上互相改写；必要时在重要细节标注冲突来源。
+3. 区分时间节点，把所有事件按先后顺序串联起来；每个“时间”必须写成“日期 + 时段 + 具体小时”。
+4. 如果输入记忆、楼层发送时间和上下文推断冲突，优先保留明确楼层时间或原回忆录 time。
 5. 留存全部主线转折点、人物约定、道具信息、情感走向与伏笔内容。
 6. 客观平铺事实，不用文学修辞，不做情绪点评，全程流水账叙事。
 7. 内容完整还原全部剧情，无遗漏、无篡改。
@@ -174,7 +174,7 @@ plaintext
 
 <details>
 <summary>大总结(填写本次合并序号)</summary>
-- 时间：日期 + 时段 + 具体小时（依据楼层/记忆范围）
+- 时间：日期 + 时段 + 具体小时
   - 关键事件：完整叙述事件经过与出场人物
   - 重要细节：写明时间依据；如有时间冲突，标注冲突来源与最终采用时间
   - 关键对话与内心戏：标注对应角色
@@ -182,7 +182,7 @@ plaintext
   - 角色与用户之间的情感变化（选填）
   - 事件收尾与后续小互动（选填）
 
-- 时间：日期 + 时段 + 具体小时（依据楼层/记忆范围）
+- 时间：日期 + 时段 + 具体小时
   - 关键事件：完整叙述事件经过与出场人物
   - 重要细节：写明时间依据；如有时间冲突，标注冲突来源与最终采用时间
   - 关键对话与内心戏：标注对应角色
@@ -3387,85 +3387,134 @@ export const useAppStore = defineStore('app', () => {
     const previousEndFloor = existingGrandSummaries.reduce((max, memory) => Math.max(max, memory.endFloor), 0);
     const nextEndFloor = Math.max(summaryEvery, (Math.floor(previousEndFloor / summaryEvery) + 1) * summaryEvery);
     if (floorCount < nextEndFloor) return null;
-    const existingSameRange = existingGrandSummaries.find((memory) => memory.startFloor === 1 && memory.endFloor === nextEndFloor);
-    if (existingSameRange) return existingSameRange;
+    const result = await createIncrementalGrandSummary(conversationId, {
+      segmentStartFloor: previousEndFloor + 1,
+      endFloor: nextEndFloor,
+      hiddenStartFloor: chatSettings.memory.grandSummaryHiddenStartFloor,
+      visibleTailFloors: chatSettings.memory.grandSummaryVisibleTailFloors
+    });
+    return result?.record ?? null;
+  }
 
-    const segmentStartFloor = previousEndFloor + 1;
+  async function createManualIncrementalGrandSummary(conversationId: string, options: { segmentStartFloor: number; endFloor: number; hiddenStartFloor?: number; visibleTailFloors?: number }): Promise<ConversationSummaryResult | null> {
+    return createIncrementalGrandSummary(conversationId, options);
+  }
+
+  async function createIncrementalGrandSummary(conversationId: string, options: { segmentStartFloor: number; endFloor: number; hiddenStartFloor?: number; visibleTailFloors?: number }): Promise<ConversationSummaryResult | null> {
+    const conversation = conversationById(conversationId);
+    if (!conversation) return null;
+    const chatSettings = settingsForConversation(conversationId);
+    const conversationMessages = messagesForConversation(conversationId).filter((message) => message.mode === conversation.activeMode && message.replyVariantState !== 'inactive');
+    const floorCount = getConversationFloorCount(conversationMessages);
+    const segmentStartFloor = Math.max(1, Math.floor(Number(options.segmentStartFloor) || 1));
+    const nextEndFloor = Math.max(segmentStartFloor, Math.floor(Number(options.endFloor) || segmentStartFloor));
+    if (floorCount < nextEndFloor) return null;
     const sourceMessages = getMessagesInFloorRange(conversationMessages, 1, nextEndFloor);
-    const memoirsForSegment = memoriesForConversation(conversationId)
-      .filter((memory) => memory.mode === conversation.activeMode && !memory.isMergedSummary && memory.startFloor >= segmentStartFloor && memory.endFloor <= nextEndFloor)
-      .sort(compareMemoryRecordsByRange);
     if (!sourceMessages.length) return null;
 
-    const character = characterById(conversation.charId);
-    const characterName = character ? getCharacterAiName(character) : '角色';
-    const boundUser = character ? userById(character.boundUserId) ?? user.value : user.value;
-    const userSenderName = getUserAiName(boundUser);
-    const modelOverride = getConversationTextModelOverride(chatSettings, 'summary', conversation.activeMode);
-    const floorMap = getMessageFloorMap(conversationMessages);
-    const includeTimeline = chatSettings.timeAwareness.enabled;
-    const floorMessageText = sourceMessages.map((message) => {
-      const floor = floorMap.get(message.id) ?? 1;
-      const sender = message.sender === 'user' ? userSenderName : message.sender === 'char' ? characterName : '系统';
-      const sentAtText = includeTimeline ? `（发送时间：${formatMemoryTimelineTime(message.createdAt)}）` : '';
-      return `${floor}楼 ${sender}${sentAtText}: ${message.content}`;
-    }).join('\n');
-    const memoirText = memoirsForSegment.length
-      ? memoirsForSegment.map((memory) => `【回忆录 ${memory.startFloor}-${memory.endFloor}楼】\n${memory.summary}`).join('\n\n')
-      : '本轮暂无可读取回忆录，仅依据楼层正文总结。';
-    const summary = await generateConversationSummary({
-      messages: [
-        `【1-${nextEndFloor}楼楼层正文】`,
-        floorMessageText,
-        `【${segmentStartFloor}-${nextEndFloor}楼回忆录】`,
-        memoirText
-      ].join('\n\n'),
-      previousSummary: '',
-      identityRules: createConversationSummaryIdentityRules(boundUser, character),
-      timeAwareness: chatSettings.timeAwareness,
-      timeAwarenessUserName: getUserAiName(boundUser),
-      timelineContext: [
-        renderMessageTimelineContext(sourceMessages, floorMap, 1),
-        renderMemoryRangeTimelineContext(memoirsForSegment)
-      ].filter(Boolean).join('\n'),
-      settings: settings.value ?? undefined,
-      modelOverride,
-      promptOverride: renderCharacterMemoryPrompt(chatSettings.memory.mergeSummaryPrompt, characterName)
-    });
-    const hiddenEndFloor = chatSettings.memory.hideSummarizedMessages ? getGrandSummaryHiddenEndFloor(nextEndFloor) : 0;
-    const now = Date.now();
-    const nextRecord: ConversationMemoryRecord = {
-      id: createId('memory'),
+    const rangeIdentity = {
       conversationId,
       mode: conversation.activeMode,
-      kind: 'long-term',
       startFloor: 1,
       endFloor: nextEndFloor,
-      hiddenStartFloor: hiddenEndFloor >= 1 ? 1 : 0,
-      hiddenEndFloor,
-      summary,
-      tokenCount: estimateTokenCount(summary),
-      vector: [],
-      entries: [],
-      sourceMessageIds: sourceMessages.map((message) => message.id),
-      model: modelOverride || settings.value?.model || '',
-      summaryRole: 'incremental-grand',
-      isMergedSummary: true,
-      mergedFrom: memoirsForSegment.map((memory) => cloneMemoryRecordForMerge(memory)),
-      createdAt: now,
-      updatedAt: now
-    };
-    nextRecord.entries = normalizeMemoryRecordEntries(nextRecord);
+      isMergedSummary: true
+    } satisfies Pick<ConversationMemoryRecord, 'conversationId' | 'mode' | 'startFloor' | 'endFloor' | 'isMergedSummary'>;
+    const rangeKey = getMemoryRangeKey(rangeIdentity);
+    const existingSameRange = memoriesForConversation(conversationId)
+      .filter((memory) => memory.mode === conversation.activeMode)
+      .flatMap((memory) => collectIncrementalGrandSummaries(memory))
+      .find((memory) => isSameMemoryRange(memory, rangeIdentity));
+    if (existingSameRange) return { record: existingSameRange, status: 'existing' };
+    if (summarizingConversationRanges.has(rangeKey)) return null;
+    summarizingConversationRanges.add(rangeKey);
 
-    conversationMemories.value = [
-      ...conversationMemories.value.filter((memory) => memory.conversationId !== conversationId || !memoirsForSegment.some((item) => item.id === memory.id)),
-      nextRecord
-    ];
-    await Promise.all([
-      ...memoirsForSegment.map((memory) => deleteEntity('conversationMemories', memory.id)),
-      putEntity('conversationMemories', nextRecord)
-    ]);
-    return nextRecord;
+    try {
+      const memoirsForSegment = memoriesForConversation(conversationId)
+        .filter((memory) => memory.mode === conversation.activeMode && !memory.isMergedSummary && memory.startFloor >= segmentStartFloor && memory.endFloor <= nextEndFloor)
+        .sort(compareMemoryRecordsByRange);
+      const character = characterById(conversation.charId);
+      const characterName = character ? getCharacterAiName(character) : '角色';
+      const boundUser = character ? userById(character.boundUserId) ?? user.value : user.value;
+      const userSenderName = getUserAiName(boundUser);
+      const modelOverride = getConversationTextModelOverride(chatSettings, 'summary', conversation.activeMode);
+      const floorMap = getMessageFloorMap(conversationMessages);
+      const includeTimeline = chatSettings.timeAwareness.enabled;
+      const floorMessageText = sourceMessages.map((message) => {
+        const floor = floorMap.get(message.id) ?? 1;
+        const sender = message.sender === 'user' ? userSenderName : message.sender === 'char' ? characterName : '系统';
+        const sentAtText = includeTimeline ? `（发送时间：${formatMemoryTimelineTime(message.createdAt)}）` : '';
+        return `${floor}楼 ${sender}${sentAtText}: ${message.content}`;
+      }).join('\n');
+      const memoirText = memoirsForSegment.length
+        ? memoirsForSegment.map((memory) => `【回忆录 ${memory.startFloor}-${memory.endFloor}楼】\n${memory.summary}`).join('\n\n')
+        : '本轮暂无可读取回忆录，仅依据楼层正文总结。';
+      const summary = await generateConversationSummary({
+        messages: [
+          `【1-${nextEndFloor}楼楼层正文】`,
+          floorMessageText,
+          `【${segmentStartFloor}-${nextEndFloor}楼回忆录】`,
+          memoirText
+        ].join('\n\n'),
+        previousSummary: '',
+        identityRules: createConversationSummaryIdentityRules(boundUser, character),
+        timeAwareness: chatSettings.timeAwareness,
+        timeAwarenessUserName: getUserAiName(boundUser),
+        timelineContext: [
+          renderMessageTimelineContext(sourceMessages, floorMap, 1),
+          renderMemoryRangeTimelineContext(memoirsForSegment)
+        ].filter(Boolean).join('\n'),
+        settings: settings.value ?? undefined,
+        modelOverride,
+        promptOverride: renderCharacterMemoryPrompt(chatSettings.memory.mergeSummaryPrompt, characterName)
+      });
+      const existingAfterGeneration = memoriesForConversation(conversationId)
+        .filter((memory) => memory.mode === conversation.activeMode)
+        .flatMap((memory) => collectIncrementalGrandSummaries(memory))
+        .find((memory) => isSameMemoryRange(memory, rangeIdentity));
+      if (existingAfterGeneration) return { record: existingAfterGeneration, status: 'existing' };
+      const hiddenRange = chatSettings.memory.hideSummarizedMessages
+        ? getGrandSummaryHiddenRange(
+            nextEndFloor,
+            options.hiddenStartFloor ?? chatSettings.memory.grandSummaryHiddenStartFloor,
+            options.visibleTailFloors ?? chatSettings.memory.grandSummaryVisibleTailFloors
+          )
+        : { hiddenStartFloor: 0, hiddenEndFloor: 0 };
+      const now = Date.now();
+      const nextRecord: ConversationMemoryRecord = {
+        id: createId('memory'),
+        conversationId,
+        mode: conversation.activeMode,
+        kind: 'long-term',
+        startFloor: 1,
+        endFloor: nextEndFloor,
+        hiddenStartFloor: hiddenRange.hiddenStartFloor,
+        hiddenEndFloor: hiddenRange.hiddenEndFloor,
+        summary,
+        tokenCount: estimateTokenCount(summary),
+        vector: [],
+        entries: [],
+        sourceMessageIds: sourceMessages.map((message) => message.id),
+        model: modelOverride || settings.value?.model || '',
+        summaryRole: 'incremental-grand',
+        isMergedSummary: true,
+        mergedFrom: memoirsForSegment.map((memory) => cloneMemoryRecordForMerge(memory)),
+        createdAt: now,
+        updatedAt: now
+      };
+      nextRecord.entries = normalizeMemoryRecordEntries(nextRecord);
+
+      conversationMemories.value = [
+        ...conversationMemories.value.filter((memory) => memory.conversationId !== conversationId || !memoirsForSegment.some((item) => item.id === memory.id)),
+        nextRecord
+      ];
+      await Promise.all([
+        ...memoirsForSegment.map((memory) => deleteEntity('conversationMemories', memory.id)),
+        putEntity('conversationMemories', nextRecord)
+      ]);
+      return { record: nextRecord, status: 'created' };
+    } finally {
+      summarizingConversationRanges.delete(rangeKey);
+    }
   }
 
   async function updateMemoryRecord(nextMemory: ConversationMemoryRecord) {
@@ -3526,11 +3575,12 @@ export const useAppStore = defineStore('app', () => {
     const memory = conversationMemories.value.find((entry) => entry.id === memoryId);
     if (!memory) return;
     if (!isIncrementalGrandSummary(memory)) return;
-    const hiddenEndFloor = getGrandSummaryHiddenEndFloor(memory.endFloor);
+    const chatSettings = settingsForConversation(memory.conversationId);
+    const hiddenRange = getGrandSummaryHiddenRange(memory.endFloor, chatSettings.memory.grandSummaryHiddenStartFloor, chatSettings.memory.grandSummaryVisibleTailFloors);
     await updateMemoryRecord({
       ...memory,
-      hiddenStartFloor: hidden && hiddenEndFloor >= 1 ? 1 : 0,
-      hiddenEndFloor: hidden ? hiddenEndFloor : 0
+      hiddenStartFloor: hidden ? hiddenRange.hiddenStartFloor : 0,
+      hiddenEndFloor: hidden ? hiddenRange.hiddenEndFloor : 0
     });
   }
 
@@ -5370,6 +5420,7 @@ export const useAppStore = defineStore('app', () => {
     generateMessageVoiceAudio,
     recallMessage,
     summarizeConversationWindow,
+    createManualIncrementalGrandSummary,
     updateMemoryRecord,
     deleteMemoryRecord,
     resummarizeMemory,

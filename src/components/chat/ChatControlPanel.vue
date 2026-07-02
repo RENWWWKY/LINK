@@ -8,7 +8,7 @@
             <p>{{ hiddenFloorStatus }}</p>
           </div>
           <button class="manual-summary-button" type="button" :disabled="summarizing" @click="showManualSummary = !showManualSummary">
-            {{ summarizing ? '总结中' : '手动总结' }}
+            {{ summarizing ? '生成中' : '新增大总结' }}
           </button>
         </section>
 
@@ -16,23 +16,33 @@
           <header class="section-header compact-header">
             <div>
               <span>Manual range</span>
-              <strong>手动总结范围</strong>
+              <strong>手动新增大总结</strong>
             </div>
           </header>
           <div class="range-grid">
             <label class="field">
-              <span>总结开始楼层</span>
+              <span>新增开始楼层</span>
               <input v-model.number="manualSummary.startFloor" min="1" type="number" />
             </label>
             <label class="field">
-              <span>总结结束楼层</span>
+              <span>新增结束楼层</span>
               <input v-model.number="manualSummary.endFloor" :max="messageCount" min="1" type="number" />
             </label>
           </div>
-          <p>适合补录关键剧情、手动修正遗漏，或者在一段重要对话结束后立刻固化记忆。隐藏楼层只由新增大总结产生。</p>
+          <div class="range-grid">
+            <label class="field">
+              <span>隐藏开始楼层</span>
+              <input v-model.number="manualSummary.hiddenStartFloor" min="0" type="number" />
+            </label>
+            <label class="field">
+              <span>保留最新楼层</span>
+              <input v-model.number="manualSummary.visibleTailFloors" min="0" type="number" />
+            </label>
+          </div>
+          <p>选择本轮要并入新增大总结的楼层；生成时会读取 1-结束楼层正文和该区间回忆录。</p>
           <div class="manual-summary-actions">
-            <button class="summary-submit" type="submit" :disabled="summarizing || !canManualSummarize">生成总结</button>
-            <button class="secondary-action" type="button" @click="fillLatestRange">填入未总结楼层</button>
+            <button class="summary-submit" type="submit" :disabled="summarizing || !canManualSummarize">新增大总结</button>
+            <button class="secondary-action" type="button" @click="fillLatestRange">填入未大总结楼层</button>
           </div>
         </form>
 
@@ -90,8 +100,18 @@
                   <span class="switch-track"></span>
                   <div>
                     <strong>新增大总结后隐藏楼层</strong>
-                    <span>只在新增大总结成功后隐藏旧楼层，默认保留末尾 10 楼。</span>
+                    <span>按下面的隐藏起点和保留楼层生成默认隐藏范围。</span>
                   </div>
+                </label>
+                <label class="field compact-field">
+                  <span>隐藏从第几楼开始</span>
+                  <input :value="memoryNumberDraft.grandSummaryHiddenStartFloor" inputmode="numeric" min="0" step="1" type="number" @input="updateMemoryNumberDraft('grandSummaryHiddenStartFloor', $event)" @change="commitMemoryNumberDraft('grandSummaryHiddenStartFloor', $event)" @blur="commitMemoryNumberDraft('grandSummaryHiddenStartFloor', $event)" @keydown.enter.prevent="commitMemoryNumberDraft('grandSummaryHiddenStartFloor', $event)" />
+                  <small>默认 1；设为 0 时新增大总结不预设隐藏范围。</small>
+                </label>
+                <label class="field compact-field">
+                  <span>保留最新多少楼不隐藏</span>
+                  <input :value="memoryNumberDraft.grandSummaryVisibleTailFloors" inputmode="numeric" min="0" step="1" type="number" @input="updateMemoryNumberDraft('grandSummaryVisibleTailFloors', $event)" @change="commitMemoryNumberDraft('grandSummaryVisibleTailFloors', $event)" @blur="commitMemoryNumberDraft('grandSummaryVisibleTailFloors', $event)" @keydown.enter.prevent="commitMemoryNumberDraft('grandSummaryVisibleTailFloors', $event)" />
+                  <small>默认 10；设为 0 时可隐藏到大总结结束楼层。</small>
                 </label>
               </div>
             </div>
@@ -312,7 +332,7 @@
             </div>
           </article>
           <button v-if="canShowMoreMemories" class="list-more-action" type="button" @click="showMoreMemories">显示更多总结</button>
-          <div v-if="!memories.length" class="empty-note memory-empty-note">记忆空间暂时空着。达到 6 楼或点击手动总结后，新的回忆录会收进这里。</div>
+          <div v-if="!memories.length" class="empty-note memory-empty-note">记忆空间暂时空着。达到 6 楼后会自动归档回忆录，也可以手动新增大总结。</div>
         </section>
       </section>
 
@@ -715,7 +735,7 @@ import AvatarCropperModal from '@/components/image/AvatarCropperModal.vue';
 import { useAppStore } from '@/stores/appStore';
 import type { CharacterProfile, ChatAppearanceSettings, ConversationMemoryRecord, ConversationSettings } from '@/types/domain';
 import { readImageFileFromInput } from '@/utils/imageFile';
-import { collectIncrementalGrandSummaries, estimateTokenCount, getConversationFloorCount, getEffectiveHiddenFloorRanges, getGrandSummaryHiddenEndFloor, grandSummaryVisibleTailFloors, isIncrementalGrandSummary, normalizeConversationSettings } from '@/utils/memory';
+import { collectIncrementalGrandSummaries, estimateTokenCount, getConversationFloorCount, getEffectiveHiddenFloorRanges, getGrandSummaryHiddenRange, isIncrementalGrandSummary, normalizeConversationSettings } from '@/utils/memory';
 import { parseMemorySummaryBlocks, type MemorySummaryBlock } from '@/utils/memorySummary';
 import { defaultProfileAvatar } from '@/utils/profile';
 import { normalizeVoomFrequency, voomFrequencyOptions } from '@/utils/voom';
@@ -725,7 +745,7 @@ type RgbChannel = 'red' | 'green' | 'blue';
 type RgbParts = Record<RgbChannel, number>;
 type ConfirmTone = 'primary' | 'danger';
 type ConfirmAction = () => Promise<void> | void;
-type MemoryNumberField = 'summarizeEvery' | 'grandSummaryEvery' | 'autoMergeThreshold' | 'autoMergeBatchSize';
+type MemoryNumberField = 'summarizeEvery' | 'grandSummaryEvery' | 'grandSummaryHiddenStartFloor' | 'grandSummaryVisibleTailFloors' | 'autoMergeThreshold' | 'autoMergeBatchSize';
 
 type IdleWindow = Window & {
   requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
@@ -785,6 +805,8 @@ const draft = reactive<ConversationSettings>(normalizeConversationSettings(null,
 const memoryNumberDraft = reactive<Record<MemoryNumberField, string>>({
   summarizeEvery: String(draft.memory.summarizeEvery),
   grandSummaryEvery: String(draft.memory.grandSummaryEvery),
+  grandSummaryHiddenStartFloor: String(draft.memory.grandSummaryHiddenStartFloor),
+  grandSummaryVisibleTailFloors: String(draft.memory.grandSummaryVisibleTailFloors),
   autoMergeThreshold: String(draft.memory.autoMergeThreshold),
   autoMergeBatchSize: String(draft.memory.autoMergeBatchSize)
 });
@@ -808,8 +830,8 @@ const confirmDialog = reactive<ConfirmDialogState>({
 const manualSummary = reactive({
   startFloor: 1,
   endFloor: 1,
-  hiddenStartFloor: 0,
-  hiddenEndFloor: 0
+  hiddenStartFloor: draft.memory.grandSummaryHiddenStartFloor,
+  visibleTailFloors: draft.memory.grandSummaryVisibleTailFloors
 });
 const timelineDisplayLimit = ref(80);
 const memoryDisplayLimit = ref(40);
@@ -1027,6 +1049,8 @@ function saveDraft() {
 function syncMemoryNumberDraft() {
   memoryNumberDraft.summarizeEvery = String(draft.memory.summarizeEvery);
   memoryNumberDraft.grandSummaryEvery = String(draft.memory.grandSummaryEvery);
+  memoryNumberDraft.grandSummaryHiddenStartFloor = String(draft.memory.grandSummaryHiddenStartFloor);
+  memoryNumberDraft.grandSummaryVisibleTailFloors = String(draft.memory.grandSummaryVisibleTailFloors);
   memoryNumberDraft.autoMergeThreshold = String(draft.memory.autoMergeThreshold);
   memoryNumberDraft.autoMergeBatchSize = String(draft.memory.autoMergeBatchSize);
 }
@@ -1039,6 +1063,8 @@ function memoryNumberLimits(field: MemoryNumberField) {
   return {
     summarizeEvery: { min: 1, max: Number.MAX_SAFE_INTEGER, fallback: draft.memory.summarizeEvery },
     grandSummaryEvery: { min: 20, max: 300, fallback: draft.memory.grandSummaryEvery },
+    grandSummaryHiddenStartFloor: { min: 0, max: Number.MAX_SAFE_INTEGER, fallback: draft.memory.grandSummaryHiddenStartFloor },
+    grandSummaryVisibleTailFloors: { min: 0, max: Number.MAX_SAFE_INTEGER, fallback: draft.memory.grandSummaryVisibleTailFloors },
     autoMergeThreshold: { min: 3, max: 30, fallback: draft.memory.autoMergeThreshold },
     autoMergeBatchSize: { min: 2, max: 20, fallback: draft.memory.autoMergeBatchSize }
   }[field];
@@ -1052,6 +1078,8 @@ function commitMemoryNumberDraft(field: MemoryNumberField, event?: Event) {
   memoryNumberDraft[field] = String(nextValue);
   if (draft.memory[field] === nextValue) return;
   draft.memory[field] = nextValue;
+  if (field === 'grandSummaryHiddenStartFloor') manualSummary.hiddenStartFloor = nextValue;
+  if (field === 'grandSummaryVisibleTailFloors') manualSummary.visibleTailFloors = nextValue;
   saveDraft();
 }
 
@@ -1164,14 +1192,20 @@ async function manualSummarize() {
   if (!canManualSummarize.value) return;
   summarizing.value = true;
   try {
-    const result = await store.summarizeConversationWindow(props.conversationId, {
-      forceStartFloor: Math.max(1, Math.floor(Number(manualSummary.startFloor))),
-      forceEndFloor: Math.max(1, Math.floor(Number(manualSummary.endFloor)))
+    const segmentStartFloor = Math.max(1, Math.floor(Number(manualSummary.startFloor)));
+    const endFloor = Math.max(segmentStartFloor, Math.floor(Number(manualSummary.endFloor)));
+    const result = await store.createManualIncrementalGrandSummary(props.conversationId, {
+      segmentStartFloor,
+      endFloor,
+      hiddenStartFloor: Math.max(0, Math.floor(Number(manualSummary.hiddenStartFloor) || 0)),
+      visibleTailFloors: Math.max(0, Math.floor(Number(manualSummary.visibleTailFloors) || 0))
     });
     if (result?.status === 'existing') {
-      store.showConfigAlert(`该楼层范围 ${result.record.startFloor}-${result.record.endFloor} 楼已存在总结，可直接编辑或先删除后重建。`, '总结已存在');
+      store.showConfigAlert(`1-${result.record.endFloor} 楼新增大总结已存在，可直接编辑或先删除后重建。`, '大总结已存在');
     } else if (result?.status === 'busy') {
-      store.showConfigAlert(`该楼层范围 ${result.record.startFloor}-${result.record.endFloor} 楼正在总结中，请稍后刷新记忆空间。`, '总结进行中');
+      store.showConfigAlert(`1-${result.record.endFloor} 楼新增大总结正在生成中，请稍后刷新记忆空间。`, '大总结生成中');
+    } else if (!result) {
+      store.showConfigAlert('该楼层范围暂时无法生成新增大总结，请检查结束楼层是否超过当前对话。', '无法生成');
     }
     fillLatestRange();
   } finally {
@@ -1180,13 +1214,13 @@ async function manualSummarize() {
 }
 
 function fillLatestRange() {
-  const lastEndFloor = memories.value.reduce((max, memory) => Math.max(max, memory.endFloor), 0);
+  const lastEndFloor = memories.value.flatMap((memory) => collectIncrementalGrandSummaries(memory)).reduce((max, memory) => Math.max(max, memory.endFloor), 0);
   const startFloor = Math.min(Math.max(1, lastEndFloor + 1), Math.max(1, messageCount.value));
   const endFloor = Math.max(startFloor, messageCount.value);
   manualSummary.startFloor = startFloor;
   manualSummary.endFloor = endFloor;
-  manualSummary.hiddenStartFloor = 0;
-  manualSummary.hiddenEndFloor = 0;
+  manualSummary.hiddenStartFloor = draft.memory.grandSummaryHiddenStartFloor;
+  manualSummary.visibleTailFloors = draft.memory.grandSummaryVisibleTailFloors;
 }
 
 function compareMemoryRecordsByRange(leftMemory: ConversationMemoryRecord, rightMemory: ConversationMemoryRecord) {
@@ -1334,9 +1368,14 @@ function formatErrorDetails(error: unknown) {
 }
 
 function manualSummaryDetailLines() {
+  const startFloor = Math.max(1, Math.floor(Number(manualSummary.startFloor)));
+  const endFloor = Math.max(startFloor, Math.floor(Number(manualSummary.endFloor)));
+  const visibleTailFloors = Math.max(0, Math.floor(Number(manualSummary.visibleTailFloors) || 0));
+  const hiddenRange = getGrandSummaryHiddenRange(endFloor, manualSummary.hiddenStartFloor, visibleTailFloors);
   return [
-    `总结范围：${manualSummary.startFloor}-${manualSummary.endFloor}楼`,
-    '隐藏范围：仅由新增大总结自动产生',
+    `新增区间：${startFloor}-${endFloor}楼`,
+    `大总结范围：1-${endFloor}楼`,
+    draft.memory.hideSummarizedMessages && hiddenRange.hiddenStartFloor > 0 ? `隐藏范围：成功后隐藏 ${hiddenRange.hiddenStartFloor}-${hiddenRange.hiddenEndFloor}楼，保留最新 ${visibleTailFloors} 楼` : '隐藏范围：当前不会隐藏楼层',
     `当前对话总楼层：${messageCount.value}`
   ];
 }
@@ -1377,15 +1416,15 @@ async function confirmPendingAction() {
 function requestManualSummarize() {
   if (!canManualSummarize.value) return;
   openConfirmDialog({
-    eyebrow: 'Manual memory',
-    title: '生成这段记忆？',
-    message: '会调用总结模型，把选定楼层写入记忆空间；这一步不会隐藏楼层。',
+    eyebrow: 'Manual grand memory',
+    title: '新增这段大总结？',
+    message: '会读取 1-结束楼层正文和所选区间回忆录，生成新增大总结；成功后会删除该区间回忆录。',
     details: manualSummaryDetailLines(),
-    confirmText: '生成总结',
-    runningText: '总结中',
+    confirmText: '新增大总结',
+    runningText: '生成中',
     action: manualSummarize,
-    errorTitle: '手动总结失败',
-    errorMessage: '手动总结没有完成，下面是本次范围和模型调用返回的详细错误。',
+    errorTitle: '新增大总结失败',
+    errorMessage: '新增大总结没有完成，下面是本次范围和模型调用返回的详细错误。',
     errorDetails: manualSummaryDetailLines()
   });
 }
@@ -1482,7 +1521,7 @@ function requestRunAutoMergeNow() {
     details: [
       `当前可整理：${mergeableMemories.value.length} 条`,
       `已有大总结：${mergedMemories.value.length} 条`,
-      `新增大总结：每 ${draft.memory.grandSummaryEvery} 楼触发一次，隐藏到当前段末尾前 ${grandSummaryVisibleTailFloors} 楼`,
+      `新增大总结：每 ${draft.memory.grandSummaryEvery} 楼触发一次，隐藏从 ${draft.memory.grandSummaryHiddenStartFloor} 楼开始，保留最新 ${draft.memory.grandSummaryVisibleTailFloors} 楼`,
       `全文大总结：${draft.memory.autoMergeThreshold} 条新增大总结触发；每批 ${draft.memory.autoMergeBatchSize} 条`
     ],
     confirmText: '立即整理',
@@ -1557,13 +1596,16 @@ function updateMemorySummary(memory: ConversationMemoryRecord, event: Event) {
 
 function requestToggleHidden(memory: ConversationMemoryRecord, hidden: boolean) {
   if (!canEditMemoryHiddenRange(memory)) return;
-  const nextHiddenEnd = getGrandSummaryHiddenEndFloor(memory.endFloor);
+  const nextHiddenRange = getGrandSummaryHiddenRange(memory.endFloor, draft.memory.grandSummaryHiddenStartFloor, draft.memory.grandSummaryVisibleTailFloors);
+  const hiddenDetails = nextHiddenRange.hiddenStartFloor > 0
+    ? [`总结范围：${memoryRangeLabel(memory)}`, `将隐藏：${nextHiddenRange.hiddenStartFloor}-${nextHiddenRange.hiddenEndFloor}楼`, `保留最新 ${draft.memory.grandSummaryVisibleTailFloors} 楼不隐藏`]
+    : [`总结范围：${memoryRangeLabel(memory)}`, '当前设置不会预设隐藏范围；可调整隐藏开始楼层或保留最新楼层。'];
   openConfirmDialog({
     eyebrow: 'Hidden floors',
     title: hidden ? '隐藏这段旧楼层？' : '取消隐藏这段楼层？',
     message: hidden ? '会按新增大总结规则折叠旧楼层，但总结文本仍会被读取。' : '会让这条新增大总结对应的楼层重新进入后续上下文读取。',
     details: hidden
-      ? [`总结范围：${memoryRangeLabel(memory)}`, `将隐藏：1-${nextHiddenEnd}楼`, `保留末尾最近 ${grandSummaryVisibleTailFloors} 楼不隐藏`]
+      ? hiddenDetails
       : [`当前隐藏：${hiddenRangeLabel(memory)}`, `总结范围：${memoryRangeLabel(memory)}`],
     confirmText: hidden ? '确认隐藏' : '取消隐藏',
     runningText: '保存中',
@@ -1589,9 +1631,9 @@ function hiddenRangeLabel(memory: ConversationMemoryRecord) {
 
 function memoryHiddenTip(memory: ConversationMemoryRecord) {
   if (hasHiddenRange(memory)) return `已隐藏 ${hiddenRangeLabel(memory)}；后续生成会读取这条总结，而不是重复塞入这些旧楼层。`;
-  const hiddenEndFloor = getGrandSummaryHiddenEndFloor(memory.endFloor);
-  if (hiddenEndFloor < 1) return '这条新增大总结范围太短，不建议隐藏。';
-  return `推荐隐藏会折叠 1-${hiddenEndFloor}楼，并保留末尾最近 ${grandSummaryVisibleTailFloors} 楼。`;
+  const hiddenRange = getGrandSummaryHiddenRange(memory.endFloor, draft.memory.grandSummaryHiddenStartFloor, draft.memory.grandSummaryVisibleTailFloors);
+  if (hiddenRange.hiddenStartFloor < 1) return '这条新增大总结按当前设置不预设隐藏范围。';
+  return `推荐隐藏会折叠 ${hiddenRange.hiddenStartFloor}-${hiddenRange.hiddenEndFloor}楼，并保留最新 ${draft.memory.grandSummaryVisibleTailFloors} 楼。`;
 }
 
 function canEditMemoryHiddenRange(memory: ConversationMemoryRecord) {
