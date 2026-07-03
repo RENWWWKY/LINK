@@ -54,6 +54,8 @@ interface IncrementalGrandSummaryOptions {
   visibleTailFloors?: number;
 }
 
+type BackupProgressCallback = (label: string, percent: number) => void;
+
 type ConversationSummaryResultStatus = 'created' | 'updated' | 'existing' | 'busy';
 
 export type DataCleanupAction = 'generated-images' | 'message-media' | 'sticker-local-cache' | 'image-candidates' | 'voice-audio' | 'memory-vectors';
@@ -2737,9 +2739,11 @@ export const useAppStore = defineStore('app', () => {
     await deleteEntity('worldBooks', worldBookId);
   }
 
-  async function createBackupFile() {
+  async function createBackupFile(onProgress?: BackupProgressCallback) {
     if (!ready.value) await hydrate();
+    onProgress?.('正在读取本地数据', 20);
     const snapshot = await loadSnapshot();
+    onProgress?.('正在整理备份内容', 65);
     return createLinkBackupFile({
       ...snapshot,
       messages: snapshot.messages.map((message) => normalizeStoredMessageIdentityReferences(message)),

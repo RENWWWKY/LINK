@@ -272,6 +272,7 @@ export const defaultAppSettings: AppSettings = {
   },
   voomImageProvider: '',
   voomImageModel: '',
+  voomImageRequirePortrait: true,
   voomReadAtByUser: {},
   smallTheaterTopicDefaultsInitialized: {},
   keepAlive: createDefaultKeepAliveSettings(),
@@ -1347,6 +1348,7 @@ export function normalizeAppSettings(settings?: Partial<AppSettings> | null): Ap
     imageModelOverrides: normalized.imageModelOverrides,
     voomImageProvider: normalized.imageModelOverrides.voom.provider,
     voomImageModel: normalized.imageModelOverrides.voom.model,
+    voomImageRequirePortrait: normalized.voomImageRequirePortrait !== false,
     imageOpenAi: {
       ...normalized.imageOpenAi,
       activeVendorId: normalized.imageOpenAi.activeVendorId

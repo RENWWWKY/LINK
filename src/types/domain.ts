@@ -909,6 +909,7 @@ export interface AppSettings {
   imageModelOverrides: Record<ImageModelScope, ImageModelSelection>;
   voomImageProvider: ImageProviderType | '';
   voomImageModel: string;
+  voomImageRequirePortrait: boolean;
   voomReadAtByUser: Record<string, Record<string, number>>;
   smallTheaterTopicDefaultsInitialized: Record<string, number>;
   keepAlive: AppKeepAliveSettings;
