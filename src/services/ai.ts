@@ -579,7 +579,7 @@ async function fetchNovelAiEndpoint(endpoint: string, init: RequestInit) {
 
 async function probeNovelAiAuth(settings: AppSettings) {
   const config = settings.imageNovelAi;
-  const endpointBase = getNovelAiEndpointBase(settings);
+  const endpointBase = resolveNovelAiEndpointBase(settings);
   const endpoints = [
     `${endpointBase}/user/subscription`,
     `${endpointBase}/ai/generate-image/models`,
@@ -1750,12 +1750,8 @@ export async function generateNovelAiImage(settings: AppSettings, overrides: Ima
   const config = settings.imageNovelAi;
   const positivePrompt = overrides.positivePrompt ?? config.positivePrompt;
   const negativePrompt = overrides.negativePrompt ?? config.negativePrompt;
-  const endpointBase = getNovelAiEndpointBase(settings);
+  const endpointBase = resolveNovelAiEndpointBase(settings);
   const generationEndpoint = `${endpointBase}/ai/generate-image`;
-
-  if (!endpointBase) {
-    throw new Error('请先选择 NovelAI 的连接方式。');
-  }
 
   if (!config.apiKey.trim()) {
     throw new Error('请先填写 NovelAI Token。');
@@ -1823,7 +1819,7 @@ export async function fetchNovelAiModels(settings: AppSettings): Promise<NovelAi
   const config = settings.imageNovelAi;
   const endpointBase = getNovelAiEndpointBase(settings);
 
-  if (!config.apiKey.trim()) {
+  if (!config.apiKey.trim() || !endpointBase) {
     return defaultNovelAiModels;
   }
 
@@ -2574,8 +2570,24 @@ export function shouldAutoGenerateMoment(frequency: VoomFrequency) {
 
 function getNovelAiEndpointBase(settings: AppSettings) {
   const config = settings.imageNovelAi;
-  const endpoint = config.endpointMode === 'official' ? novelAiOfficialApiUrl : novelAiProxyApiUrl;
+  const endpoint = config.endpointMode === 'official'
+    ? novelAiOfficialApiUrl
+    : config.endpointMode === 'custom'
+      ? config.customProxyUrl
+      : novelAiProxyApiUrl;
   return normalizeBaseUrl(endpoint);
+}
+
+function resolveNovelAiEndpointBase(settings: AppSettings) {
+  const config = settings.imageNovelAi;
+  const endpointBase = getNovelAiEndpointBase(settings);
+  if (!endpointBase) {
+    throw new Error(config.endpointMode === 'custom' ? '请先填写第三方 NovelAI 代理链接。' : '请先选择 NovelAI 的连接方式。');
+  }
+  if (!/^https?:\/\//i.test(endpointBase)) {
+    throw new Error(config.endpointMode === 'custom' ? '第三方 NovelAI 代理链接需要以 http:// 或 https:// 开头。' : 'NovelAI 接口地址需要以 http:// 或 https:// 开头。');
+  }
+  return endpointBase;
 }
 
 function normalizeNovelAiModelPayload(payload: unknown): NovelAiModelOption[] {

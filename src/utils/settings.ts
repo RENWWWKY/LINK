@@ -220,6 +220,7 @@ export const defaultAppSettings: AppSettings = {
     endpointMode: 'proxy',
     apiUrl: novelAiOfficialApiUrl,
     proxyUrl: novelAiProxyApiUrl,
+    customProxyUrl: '',
     apiKey: '',
     model: defaultNovelAiModels[0].id,
     availableModels: defaultNovelAiModels,
@@ -717,11 +718,17 @@ function normalizeNovelAiImageSettings(settings: Partial<NovelAiImageSettings> |
   });
 
   const selectedModel = String(settings?.model ?? defaultAppSettings.imageNovelAi.model).trim() || defaultAppSettings.imageNovelAi.model;
+  const endpointMode = settings?.endpointMode === 'official'
+    ? 'official'
+    : settings?.endpointMode === 'custom'
+      ? 'custom'
+      : 'proxy';
 
   return {
-    endpointMode: settings?.endpointMode === 'official' ? 'official' : 'proxy',
+    endpointMode,
     apiUrl: novelAiOfficialApiUrl,
     proxyUrl: novelAiProxyApiUrl,
+    customProxyUrl: String(settings?.customProxyUrl ?? '').trim(),
     apiKey: String(settings?.apiKey ?? '').trim(),
     model: selectedModel,
     availableModels: normalizeNovelAiModels(settings?.availableModels, selectedModel),

@@ -681,7 +681,7 @@ export interface ImagePromptPreset {
   negativePrompt: string;
 }
 
-export type NovelAiEndpointMode = 'proxy' | 'official';
+export type NovelAiEndpointMode = 'proxy' | 'official' | 'custom';
 
 export interface NovelAiModelOption {
   id: string;
@@ -708,6 +708,7 @@ export interface NovelAiImageSettings {
   endpointMode: NovelAiEndpointMode;
   apiUrl: string;
   proxyUrl: string;
+  customProxyUrl: string;
   apiKey: string;
   model: string;
   availableModels: NovelAiModelOption[];

@@ -961,6 +961,10 @@ export function getMessageFloorMap(messages: ChatMessage[]) {
   return floorMap;
 }
 
+export function getConversationActiveMessages(messages: ChatMessage[]) {
+  return messages.filter((message) => message.replyVariantState !== 'inactive');
+}
+
 function getMessageFloorGroupKey(message: ChatMessage) {
   if (message.sender === 'user') return 'user';
   if (message.replyBatchId) return `reply:${message.replyBatchId}`;
@@ -1085,10 +1089,10 @@ export function getVisibleMessages(messages: ChatMessage[], memories: Conversati
   return messages.filter((message) => !hiddenIds.has(message.id) && message.replyVariantState !== 'inactive');
 }
 
-export function getNextSummaryStartFloor(messages: ChatMessage[], memories: ConversationMemoryRecord[], mode: ChatMode) {
+export function getNextSummaryStartFloor(messages: ChatMessage[], memories: ConversationMemoryRecord[]) {
   const sourceMessagesById = new Map(messages.map((message) => [message.id, message]));
   const coveredRanges = memories
-    .filter((memory) => memory.mode === mode && memorySourceMessagesAreActive(memory, sourceMessagesById))
+    .filter((memory) => memorySourceMessagesAreActive(memory, sourceMessagesById))
     .map((memory) => ({ start: Math.max(1, Math.floor(memory.startFloor)), end: Math.max(1, Math.floor(memory.endFloor)) }))
     .filter((range) => range.end >= range.start)
     .sort((left, right) => left.start - right.start || left.end - right.end);
@@ -1101,11 +1105,11 @@ export function getNextSummaryStartFloor(messages: ChatMessage[], memories: Conv
   return startFloor;
 }
 
-export function getNextSummaryRange(messages: ChatMessage[], memories: ConversationMemoryRecord[], settings: ConversationSettings, mode: ChatMode) {
+export function getNextSummaryRange(messages: ChatMessage[], memories: ConversationMemoryRecord[], settings: ConversationSettings) {
   if (!settings.memory.autoSummarize) return null;
   const step = settings.memory.summarizeEvery;
   const floorCount = getConversationFloorCount(messages);
-  const startFloor = getNextSummaryStartFloor(messages, memories, mode);
+  const startFloor = getNextSummaryStartFloor(messages, memories);
   const endFloor = startFloor + step - 1;
   if (floorCount < endFloor) return null;
   const sourceMessages = getMessagesInFloorRange(messages, startFloor, endFloor);

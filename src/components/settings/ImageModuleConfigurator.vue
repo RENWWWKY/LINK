@@ -116,6 +116,7 @@
               <select v-model="draft.imageNovelAi.endpointMode">
                 <option value="proxy">内置代理</option>
                 <option value="official">官方直连</option>
+                <option value="custom">第三方代理</option>
               </select>
             </label>
 
@@ -124,6 +125,11 @@
               <input v-model="draft.imageNovelAi.apiKey" autocomplete="off" type="password" />
             </label>
           </div>
+
+          <label v-if="draft.imageNovelAi.endpointMode === 'custom'" class="field">
+            <span>第三方代理链接</span>
+            <input v-model="draft.imageNovelAi.customProxyUrl" autocomplete="off" inputmode="url" placeholder="https://your-novelai-proxy.example.com" />
+          </label>
 
           <div class="field-grid two-up compact-grid">
             <label class="field">
@@ -965,6 +971,7 @@ watch(
   () => [
     activeModuleId.value,
     draft.value.imageNovelAi.endpointMode,
+    draft.value.imageNovelAi.customProxyUrl,
     draft.value.imageNovelAi.apiKey,
     draft.value.imageNovelAi.model
   ],

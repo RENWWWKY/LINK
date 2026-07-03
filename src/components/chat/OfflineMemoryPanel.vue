@@ -352,7 +352,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useAppStore } from '@/stores/appStore';
 import type { CharacterProfile, ConversationMemoryRecord, ConversationSettings } from '@/types/domain';
 import { getCharacterDisplayName } from '@/utils/character';
-import { collectIncrementalGrandSummaries, estimateTokenCount, getConversationFloorCount, getEffectiveHiddenFloorRanges, getGrandSummaryHiddenRange, isIncrementalGrandSummary, normalizeConversationSettings } from '@/utils/memory';
+import { collectIncrementalGrandSummaries, estimateTokenCount, getConversationActiveMessages, getConversationFloorCount, getEffectiveHiddenFloorRanges, getGrandSummaryHiddenRange, isIncrementalGrandSummary, normalizeConversationSettings } from '@/utils/memory';
 import { parseMemorySummaryBlocks, type MemorySummaryBlock } from '@/utils/memorySummary';
 
 type ConfirmTone = 'primary' | 'danger';
@@ -449,6 +449,7 @@ const manualSummary = reactive({
 });
 
 const displayName = computed(() => getCharacterDisplayName(props.character));
+const conversationMessages = computed(() => getConversationActiveMessages(store.messagesForConversation(props.conversationId)));
 const memories = computed(() => store.memoriesForConversation(props.conversationId));
 const memoirMemoryCount = computed(() => memories.value.filter((memory) => !memory.isMergedSummary).length);
 const grandSummaryCount = computed(() => memories.value.filter((memory) => memory.isMergedSummary).length);
@@ -483,7 +484,7 @@ const memoryTimelineSpanLabel = computed(() => {
   const days = Math.max(1, Math.ceil((end - start + 1) / (24 * 60 * 60 * 1000)));
   return days > 99 ? '99+' : String(days);
 });
-const messageCount = computed(() => getConversationFloorCount(store.messagesForConversation(props.conversationId)));
+const messageCount = computed(() => getConversationFloorCount(conversationMessages.value));
 const hiddenFloorStatus = computed(() => {
   const hiddenRanges = getEffectiveHiddenFloorRanges(memories.value.flatMap((memory) => collectIncrementalGrandSummaries(memory))).map((range) => `${range.start}-${range.end}楼`);
   if (!hiddenRanges.length) return `当前对话共 ${messageCount.value} 楼，暂无隐藏楼层。`;
@@ -658,9 +659,10 @@ async function manualSummarize() {
     if (result?.status === 'existing') {
       store.showConfigAlert(`1-${result.record.endFloor} 楼新增大总结已存在，可直接编辑或先删除后重建。`, '大总结已存在');
     } else if (result?.status === 'busy') {
-      store.showConfigAlert(`1-${result.record.endFloor} 楼新增大总结正在生成中，请稍后刷新记忆空间。`, '大总结生成中');
+      const busyEndFloor = result.record?.endFloor ?? endFloor;
+      store.showConfigAlert(`1-${busyEndFloor} 楼新增大总结正在生成中，请稍后刷新记忆空间。`, '大总结生成中');
     } else if (!result) {
-      store.showConfigAlert('该楼层范围暂时无法生成新增大总结，请检查结束楼层是否超过当前对话。', '无法生成');
+      store.showConfigAlert(`该楼层范围暂时无法生成新增大总结，当前会话只有 ${messageCount.value} 楼，请检查结束楼层。`, '无法生成');
     }
     fillLatestRange();
   } finally {
@@ -883,7 +885,8 @@ async function resummarize(memoryId: string) {
     if (result?.status === 'updated') {
       store.showConfigAlert(`已更新 ${result.record.startFloor}-${result.record.endFloor} 楼的总结。`, '重总结完成');
     } else if (result?.status === 'busy') {
-      store.showConfigAlert(`该楼层范围 ${result.record.startFloor}-${result.record.endFloor} 楼正在总结中，请稍后再试。`, '总结进行中');
+      const rangeLabel = result.record ? `${result.record.startFloor}-${result.record.endFloor} 楼` : '该楼层范围';
+      store.showConfigAlert(`${rangeLabel}正在总结中，请稍后再试。`, '总结进行中');
     }
   } finally {
     summarizing.value = false;

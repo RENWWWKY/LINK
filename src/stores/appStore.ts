@@ -10,7 +10,7 @@ import { getImageGenerationSize, getImagePromptPresetForProvider, getSelectedIma
 import { normalizeWorldBookEntry, normalizeWorldBooks } from '@/utils/worldBook';
 import { createDefaultSmallTheaterTopics, defaultSmallTheaterTopicDrafts, normalizeSmallTheaterTopic } from '@/utils/smallTheater';
 import { RECENT_STICKER_GROUP_NAME, cacheStickerImageUrl, createStickerFromDraft, createStickerGroup, getStickerDisplayImageUrl, isLegacyGanadiSticker, isLegacyGanadiStickerGroup, isRecentStickerGroupId, normalizeSticker, normalizeStickerGroup, shouldLocalizeStickerImageUrl, sortRecentStickers, type StickerImportDraft } from '@/utils/stickers';
-import { ageMemoryKind, collectIncrementalGrandSummaries, createMemoryRecord, estimateTokenCount, filterHighestMemoryLayers, getConversationFloorCount, getGrandSummaryHiddenRange, getHiddenMessageIds, getMemoryContext, getMemoryMergeDepth, getMessageFloorMap, getMessagesInFloorRange, getNextSummaryRange, getNextSummaryStartFloor, getVisibleMessages, isIncrementalGrandSummary, normalizeConversationSettings, normalizeMemoryRecordEntries, renderCharacterMemoryPrompt, shouldCompressMemory } from '@/utils/memory';
+import { ageMemoryKind, collectIncrementalGrandSummaries, createMemoryRecord, estimateTokenCount, filterHighestMemoryLayers, getConversationActiveMessages, getConversationFloorCount, getGrandSummaryHiddenRange, getHiddenMessageIds, getMemoryContext, getMemoryMergeDepth, getMessageFloorMap, getMessagesInFloorRange, getNextSummaryRange, getNextSummaryStartFloor, getVisibleMessages, isIncrementalGrandSummary, normalizeConversationSettings, normalizeMemoryRecordEntries, renderCharacterMemoryPrompt, shouldCompressMemory } from '@/utils/memory';
 import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
 import { estimateRoleplayReplyInputTokens, fetchVendorModels, generateConversationSummary, generateImageByProvider, generateRoleplayReply, generateSmallTheater, generateUserVoomComments, generateVoomCommentReplies, generateVoomPost, hasTextGenerationConfig, shouldAutoGenerateMoment, type ConversationSummaryIdentityRule, type RoleplayReplyResult, type RoleplayReplySegment } from '@/services/ai';
 import { GitHubBackupError, downloadGitHubBackup, downloadGitHubBackupVersion, ensureGitHubBackupRepository, formatGitHubBackupError, listGitHubBackupHistory, uploadGitHubBackup } from '@/services/githubBackup';
@@ -35,10 +35,9 @@ type ConversationSummaryResultStatus = 'created' | 'updated' | 'existing' | 'bus
 export type DataCleanupAction = 'generated-images' | 'message-media' | 'sticker-local-cache' | 'image-candidates' | 'voice-audio' | 'memory-vectors';
 export type ClearableDataSection = 'messages' | 'voomPosts' | 'smallTheaters' | 'music' | 'worldBooks' | 'stickers' | 'conversationSettings' | 'conversationMemories' | 'conversationMemoryAtoms' | 'generatedImages';
 
-interface ConversationSummaryResult {
-  record: ConversationMemoryRecord;
-  status: ConversationSummaryResultStatus;
-}
+type ConversationSummaryResult =
+  | { record: ConversationMemoryRecord; status: Exclude<ConversationSummaryResultStatus, 'busy'> }
+  | { record?: ConversationMemoryRecord; status: 'busy' };
 
 interface ProfileHistorySource {
   sourceConversationId?: string;
@@ -470,13 +469,13 @@ export const useAppStore = defineStore('app', () => {
     return [];
   }
 
-  function getMemoryRangeKey(memory: Pick<ConversationMemoryRecord, 'conversationId' | 'mode' | 'startFloor' | 'endFloor' | 'isMergedSummary'>) {
-    return `${memory.conversationId}:${memory.mode}:${memory.isMergedSummary ? 'merged' : 'single'}:${memory.startFloor}-${memory.endFloor}`;
+  function getMemoryRangeKey(memory: Pick<ConversationMemoryRecord, 'conversationId' | 'startFloor' | 'endFloor' | 'isMergedSummary'>) {
+    return `${memory.conversationId}:${memory.isMergedSummary ? 'merged' : 'single'}:${memory.startFloor}-${memory.endFloor}`;
   }
 
   function isSameMemoryRange(
-    memory: Pick<ConversationMemoryRecord, 'conversationId' | 'mode' | 'startFloor' | 'endFloor' | 'isMergedSummary'>,
-    target: Pick<ConversationMemoryRecord, 'conversationId' | 'mode' | 'startFloor' | 'endFloor' | 'isMergedSummary'>
+    memory: Pick<ConversationMemoryRecord, 'conversationId' | 'startFloor' | 'endFloor' | 'isMergedSummary'>,
+    target: Pick<ConversationMemoryRecord, 'conversationId' | 'startFloor' | 'endFloor' | 'isMergedSummary'>
   ) {
     return getMemoryRangeKey(memory) === getMemoryRangeKey(target);
   }
@@ -1636,41 +1635,37 @@ export const useAppStore = defineStore('app', () => {
 
   interface MemoryFloorImpact {
     conversationId: string;
-    mode: ChatMode;
     floor: number;
   }
 
   function memoryFloorImpactsForMessages(targetMessages: ChatMessage[]) {
     const impacts: MemoryFloorImpact[] = [];
-    const byConversationMode = new Map<string, ChatMessage[]>();
+    const byConversation = new Map<string, ChatMessage[]>();
     targetMessages.forEach((message) => {
       if (message.replyVariantState === 'inactive') return;
-      const key = `${message.conversationId}:${message.mode}`;
-      byConversationMode.set(key, messages.value.filter((item) => item.conversationId === message.conversationId && item.mode === message.mode && item.replyVariantState !== 'inactive'));
+      byConversation.set(message.conversationId, getConversationActiveMessages(messagesForConversation(message.conversationId)));
     });
     targetMessages.forEach((message) => {
       if (message.replyVariantState === 'inactive') return;
-      const key = `${message.conversationId}:${message.mode}`;
-      const floorMap = getMessageFloorMap(byConversationMode.get(key) ?? []);
+      const floorMap = getMessageFloorMap(byConversation.get(message.conversationId) ?? []);
       const floor = floorMap.get(message.id);
       if (!floor) return;
-      impacts.push({ conversationId: message.conversationId, mode: message.mode, floor });
+      impacts.push({ conversationId: message.conversationId, floor });
     });
-    const earliestByConversationMode = new Map<string, MemoryFloorImpact>();
+    const earliestByConversation = new Map<string, MemoryFloorImpact>();
     impacts.forEach((impact) => {
-      const key = `${impact.conversationId}:${impact.mode}`;
-      const existing = earliestByConversationMode.get(key);
-      if (!existing || impact.floor < existing.floor) earliestByConversationMode.set(key, impact);
+      const existing = earliestByConversation.get(impact.conversationId);
+      if (!existing || impact.floor < existing.floor) earliestByConversation.set(impact.conversationId, impact);
     });
-    return [...earliestByConversationMode.values()];
+    return [...earliestByConversation.values()];
   }
 
   function memoryIsAfterFloorImpact(memory: ConversationMemoryRecord, impacts: MemoryFloorImpact[]) {
-    return impacts.some((impact) => memory.conversationId === impact.conversationId && memory.mode === impact.mode && memory.endFloor >= impact.floor);
+    return impacts.some((impact) => memory.conversationId === impact.conversationId && memory.endFloor >= impact.floor);
   }
 
   function atomIsAfterFloorImpact(atom: ConversationMemoryAtom, impacts: MemoryFloorImpact[]) {
-    return impacts.some((impact) => atom.conversationId === impact.conversationId && atom.mode === impact.mode && atom.lastTouchedFloor >= impact.floor);
+    return impacts.some((impact) => atom.conversationId === impact.conversationId && atom.lastTouchedFloor >= impact.floor);
   }
 
   async function pruneMemoriesForMessageIds(messageIds: string[], floorImpacts: MemoryFloorImpact[] = []) {
@@ -3421,11 +3416,11 @@ export const useAppStore = defineStore('app', () => {
     const conversation = conversationById(conversationId);
     if (!conversation) return null;
     const chatSettings = settingsForConversation(conversationId);
-    const conversationMessages = messagesForConversation(conversationId).filter((message) => message.mode === conversation.activeMode && message.replyVariantState !== 'inactive');
+    const conversationMessages = getConversationActiveMessages(messagesForConversation(conversationId));
     const conversationFloorCount = getConversationFloorCount(conversationMessages);
     const memories = memoriesForConversation(conversationId);
-    const nextRange = getNextSummaryRange(conversationMessages, memories, chatSettings, conversation.activeMode);
-    const partialStartFloor = getNextSummaryStartFloor(conversationMessages, memories, conversation.activeMode);
+    const nextRange = getNextSummaryRange(conversationMessages, memories, chatSettings);
+    const partialStartFloor = getNextSummaryStartFloor(conversationMessages, memories);
     const partialEndFloor = conversationFloorCount;
     const partialLength = partialEndFloor - partialStartFloor + 1;
     const range = options.forceStartFloor && options.forceEndFloor
@@ -3465,7 +3460,7 @@ export const useAppStore = defineStore('app', () => {
     }
     if (summarizingConversationRanges.has(rangeKey)) {
       const currentMemory = existingMemory ?? replacingMemory;
-      return currentMemory ? { record: currentMemory, status: 'busy' } : null;
+      return currentMemory ? { record: currentMemory, status: 'busy' } : { status: 'busy' };
     }
     summarizingConversationRanges.add(rangeKey);
 
@@ -3581,11 +3576,10 @@ export const useAppStore = defineStore('app', () => {
     const conversation = conversationById(conversationId);
     if (!conversation) return null;
     const chatSettings = settingsForConversation(conversationId);
-    const conversationMessages = messagesForConversation(conversationId).filter((message) => message.mode === conversation.activeMode && message.replyVariantState !== 'inactive');
+    const conversationMessages = getConversationActiveMessages(messagesForConversation(conversationId));
     const floorCount = getConversationFloorCount(conversationMessages);
     const summaryEvery = Math.max(20, chatSettings.memory.grandSummaryEvery);
     const existingGrandSummaries = memoriesForConversation(conversationId)
-      .filter((memory) => memory.mode === conversation.activeMode)
       .flatMap((memory) => collectIncrementalGrandSummaries(memory))
       .sort(compareMemoryRecordsByRange);
     const previousEndFloor = existingGrandSummaries.reduce((max, memory) => Math.max(max, memory.endFloor), 0);
@@ -3608,7 +3602,8 @@ export const useAppStore = defineStore('app', () => {
     const conversation = conversationById(conversationId);
     if (!conversation) return null;
     const chatSettings = settingsForConversation(conversationId);
-    const conversationMessages = messagesForConversation(conversationId).filter((message) => message.mode === conversation.activeMode && message.replyVariantState !== 'inactive');
+    const conversationMessages = getConversationActiveMessages(messagesForConversation(conversationId));
+    const memories = memoriesForConversation(conversationId);
     const floorCount = getConversationFloorCount(conversationMessages);
     const segmentStartFloor = Math.max(1, Math.floor(Number(options.segmentStartFloor) || 1));
     const nextEndFloor = Math.max(segmentStartFloor, Math.floor(Number(options.endFloor) || segmentStartFloor));
@@ -3624,17 +3619,16 @@ export const useAppStore = defineStore('app', () => {
       isMergedSummary: true
     } satisfies Pick<ConversationMemoryRecord, 'conversationId' | 'mode' | 'startFloor' | 'endFloor' | 'isMergedSummary'>;
     const rangeKey = getMemoryRangeKey(rangeIdentity);
-    const existingSameRange = memoriesForConversation(conversationId)
-      .filter((memory) => memory.mode === conversation.activeMode)
+    const existingSameRange = memories
       .flatMap((memory) => collectIncrementalGrandSummaries(memory))
       .find((memory) => isSameMemoryRange(memory, rangeIdentity));
     if (existingSameRange) return { record: existingSameRange, status: 'existing' };
-    if (summarizingConversationRanges.has(rangeKey)) return null;
+    if (summarizingConversationRanges.has(rangeKey)) return { status: 'busy' };
     summarizingConversationRanges.add(rangeKey);
 
     try {
-      const memoirsForSegment = memoriesForConversation(conversationId)
-        .filter((memory) => memory.mode === conversation.activeMode && !memory.isMergedSummary && memory.startFloor >= segmentStartFloor && memory.endFloor <= nextEndFloor)
+      const memoirsForSegment = memories
+        .filter((memory) => !memory.isMergedSummary && memory.startFloor >= segmentStartFloor && memory.endFloor <= nextEndFloor)
         .sort(compareMemoryRecordsByRange);
       const character = characterById(conversation.charId);
       const characterName = character ? getCharacterAiName(character) : '角色';
@@ -3672,7 +3666,6 @@ export const useAppStore = defineStore('app', () => {
         promptOverride: renderCharacterMemoryPrompt(chatSettings.memory.mergeSummaryPrompt, characterName)
       });
       const existingAfterGeneration = memoriesForConversation(conversationId)
-        .filter((memory) => memory.mode === conversation.activeMode)
         .flatMap((memory) => collectIncrementalGrandSummaries(memory))
         .find((memory) => isSameMemoryRange(memory, rangeIdentity));
       if (existingAfterGeneration) return { record: existingAfterGeneration, status: 'existing' };

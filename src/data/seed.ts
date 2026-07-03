@@ -99,6 +99,7 @@ export const defaultSettings: AppSettings = {
     endpointMode: 'proxy',
     apiUrl: 'https://image.novelai.net',
     proxyUrl: 'https://nai.lolidoll.cc.cd',
+    customProxyUrl: '',
     apiKey: '',
     model: 'nai-diffusion-4-5-full',
     availableModels: [
