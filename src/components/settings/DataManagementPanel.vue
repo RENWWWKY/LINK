@@ -4,7 +4,7 @@
       <div class="data-stage">
         <div class="stage-topline">
           <span class="stage-badge">Local</span>
-          <button class="stage-refresh" type="button" :disabled="storageRefreshing || Boolean(dataBusy)" aria-label="刷新缓存统计" @click="refreshBrowserStorageEstimate">
+          <button class="stage-refresh" type="button" :disabled="storageRefreshing || Boolean(dataBusy)" aria-label="刷新缓存统计" @click="refreshDataSnapshot">
             <RefreshCw :size="15" :class="{ spinning: storageRefreshing }" />
           </button>
         </div>
@@ -83,10 +83,11 @@
           <p class="module-kicker">Data Map</p>
           <strong>数据组成</strong>
         </div>
-        <small>{{ dataSections.length }} 组</small>
+        <small>{{ hasDataSnapshot ? `${dataSections.length} 组` : '未刷新' }}</small>
       </header>
 
       <div class="composition-list">
+        <p v-if="!hasDataSnapshot" class="composition-empty">点击右上角刷新按钮后计算数据组成。</p>
         <article v-for="section in rankedSections" :key="section.id" class="composition-row" :class="{ protected: section.protected }">
           <span class="section-index">{{ section.rank }}</span>
           <div class="composition-main">
@@ -108,7 +109,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, type Component } from 'vue';
+import { computed, nextTick, ref, type Component } from 'vue';
 import { Camera, ImageOff, Images, RefreshCw } from 'lucide-vue-next';
 import { useAppStore, type DataCleanupAction } from '@/stores/appStore';
 
@@ -128,11 +129,17 @@ interface CleanupActionConfig {
 }
 
 const store = useAppStore();
+type DataInventorySnapshot = ReturnType<typeof store.getDataInventory>;
+type CleanupEstimateMap = Partial<Record<DataCleanupAction, number>>;
+
 const dataBusy = ref<DataCleanupAction | ''>('');
 const dataFeedback = ref('');
 const dataFeedbackKind = ref<'success' | 'error'>('success');
 const storageRefreshing = ref(false);
+const storageSnapshotReady = ref(false);
 const browserStorage = ref<BrowserStorageSnapshot>({ usage: 0, quota: 0 });
+const dataInventory = ref<DataInventorySnapshot | null>(null);
+const cleanupEstimates = ref<CleanupEstimateMap>({});
 
 const cleanupActions: CleanupActionConfig[] = [
   {
@@ -158,19 +165,19 @@ const cleanupActions: CleanupActionConfig[] = [
   }
 ];
 
-const dataInventory = computed(() => store.getDataInventory());
-const dataSections = computed(() => dataInventory.value.sections);
-const managedDataLabel = computed(() => formatBytes(dataInventory.value.totalBytes));
-const browserUsageBytes = computed(() => browserStorage.value.usage || dataInventory.value.totalBytes);
-const browserUsageLabel = computed(() => formatBytes(browserUsageBytes.value));
-const storageQuotaValueLabel = computed(() => browserStorage.value.quota > 0 ? formatBytes(browserStorage.value.quota) : '未知');
-const storagePercent = computed(() => browserStorage.value.quota > 0 ? Math.min(100, browserUsageBytes.value / browserStorage.value.quota * 100) : 0);
-const storagePercentLabel = computed(() => browserStorage.value.quota > 0 ? `${storagePercent.value.toFixed(storagePercent.value >= 10 ? 0 : 1)}%` : '未返回');
-const meterStyle = computed(() => ({ width: `${Math.max(1.5, storagePercent.value)}%` }));
-const managedStoragePercent = computed(() => browserStorage.value.quota > 0 ? Math.min(100, dataInventory.value.totalBytes / browserStorage.value.quota * 100) : 0);
-const managedStoragePercentLabel = computed(() => browserStorage.value.quota > 0 ? `${managedStoragePercent.value.toFixed(managedStoragePercent.value >= 10 ? 0 : 1)}%` : '未知');
+const hasDataSnapshot = computed(() => Boolean(dataInventory.value));
+const dataSections = computed(() => dataInventory.value?.sections ?? []);
+const managedBytes = computed(() => dataInventory.value?.totalBytes ?? 0);
+const managedDataLabel = computed(() => hasDataSnapshot.value ? formatBytes(managedBytes.value) : '未刷新');
+const browserUsageBytes = computed(() => browserStorage.value.usage || managedBytes.value);
+const browserUsageLabel = computed(() => storageSnapshotReady.value ? formatBytes(browserUsageBytes.value) : '未刷新');
+const storageQuotaValueLabel = computed(() => storageSnapshotReady.value ? (browserStorage.value.quota > 0 ? formatBytes(browserStorage.value.quota) : '未知') : '未刷新');
+const storagePercent = computed(() => storageSnapshotReady.value && browserStorage.value.quota > 0 ? Math.min(100, browserUsageBytes.value / browserStorage.value.quota * 100) : 0);
+const meterStyle = computed(() => ({ width: storageSnapshotReady.value ? `${Math.max(1.5, storagePercent.value)}%` : '0%' }));
+const managedStoragePercent = computed(() => storageSnapshotReady.value && browserStorage.value.quota > 0 ? Math.min(100, managedBytes.value / browserStorage.value.quota * 100) : 0);
+const managedStoragePercentLabel = computed(() => storageSnapshotReady.value ? (browserStorage.value.quota > 0 ? `${managedStoragePercent.value.toFixed(managedStoragePercent.value >= 10 ? 0 : 1)}%` : '未知') : '未刷新');
 const rankedSections = computed(() => {
-  const totalBytes = Math.max(1, dataInventory.value.totalBytes);
+  const totalBytes = Math.max(1, managedBytes.value);
   return [...dataSections.value]
     .sort((left, right) => right.bytes - left.bytes)
     .map((section, index) => ({
@@ -180,20 +187,16 @@ const rankedSections = computed(() => {
     }));
 });
 const cleanupActionStats = computed(() => cleanupActions.map((action) => {
-  const freedBytes = store.estimateCleanupFreedBytes(action.id);
+  const freedBytes = cleanupEstimates.value[action.id];
   return {
     ...action,
     freedBytes,
-    freedLabel: freedBytes > 0 ? formatBytes(freedBytes) : '0 B'
+    freedLabel: typeof freedBytes === 'number' ? (freedBytes > 0 ? formatBytes(freedBytes) : '0 B') : '未统计'
   };
 }));
 const dataBusyLabel = computed(() => {
   const action = cleanupActions.find((item) => item.id === dataBusy.value);
   return action ? `正在清理${action.label}，请稍候。` : '正在处理本地数据，请稍候。';
-});
-
-onMounted(() => {
-  void refreshBrowserStorageEstimate();
 });
 
 function setDataFeedback(message: string, kind: 'success' | 'error' = 'success') {
@@ -218,16 +221,30 @@ function formatBytes(bytes: number) {
   return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
-async function refreshBrowserStorageEstimate() {
+async function refreshDataSnapshot() {
   storageRefreshing.value = true;
+  dataFeedback.value = '';
+  await waitForBusyPaint();
   try {
+    const nextInventory = store.getDataInventory();
+    const nextCleanupEstimates = cleanupActions.reduce<CleanupEstimateMap>((estimates, action) => {
+      estimates[action.id] = store.estimateCleanupFreedBytes(action.id);
+      return estimates;
+    }, {});
     const estimate = await navigator.storage?.estimate?.();
+    dataInventory.value = nextInventory;
+    cleanupEstimates.value = nextCleanupEstimates;
     browserStorage.value = {
       usage: Number(estimate?.usage ?? 0),
       quota: Number(estimate?.quota ?? 0)
     };
+    storageSnapshotReady.value = true;
   } catch {
+    dataInventory.value = null;
+    cleanupEstimates.value = {};
     browserStorage.value = { usage: 0, quota: 0 };
+    storageSnapshotReady.value = false;
+    setDataFeedback('刷新缓存统计失败，请稍后重试。', 'error');
   } finally {
     storageRefreshing.value = false;
   }
@@ -237,7 +254,9 @@ async function runCleanupAction(action: DataCleanupAction) {
   const cleanup = cleanupActionStats.value.find((item) => item.id === action);
   const actionLabel = cleanup?.label ?? '缓存';
   const freedLabel = cleanup?.freedLabel ?? '0 B';
-  const confirmMessage = cleanup?.freedBytes
+  const confirmMessage = typeof cleanup?.freedBytes !== 'number'
+    ? `即将清理「${actionLabel}」。当前未计算预计释放量，继续吗？`
+    : cleanup.freedBytes
     ? `即将清理「${actionLabel}」，预计释放 ${freedLabel}。继续吗？`
     : `「${actionLabel}」当前预计可释放 0 B。仍要执行清理吗？`;
   if (!window.confirm(confirmMessage)) return;
@@ -248,8 +267,11 @@ async function runCleanupAction(action: DataCleanupAction) {
 
   try {
     const changed = await store.cleanupData(action);
-    await refreshBrowserStorageEstimate();
-    setDataFeedback(changed ? `已清理 ${changed} 项，浏览器缓存统计已刷新。` : '没有需要清理的缓存。');
+    dataInventory.value = null;
+    cleanupEstimates.value = {};
+    browserStorage.value = { usage: 0, quota: 0 };
+    storageSnapshotReady.value = false;
+    setDataFeedback(changed ? `已清理 ${changed} 项，点击刷新查看最新统计。` : '没有需要清理的缓存。');
   } catch (error) {
     setDataFeedback(error instanceof Error ? error.message : '清理失败。', 'error');
   } finally {
@@ -548,6 +570,18 @@ async function runCleanupAction(action: DataCleanupAction) {
   padding: 10px;
   border-radius: 18px;
   background: #f6f8f8;
+}
+
+.composition-empty {
+  margin: 0;
+  padding: 14px 12px;
+  border-radius: 16px;
+  background: #f6f8f8;
+  color: #76737b;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .composition-row.protected {
