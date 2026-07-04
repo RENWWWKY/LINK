@@ -1358,8 +1358,8 @@ async function exitOffline() {
 
 .offline-toolbar {
   display: grid;
-  grid-template-columns: repeat(3, minmax(40px, 1fr)) repeat(5, 34px);
-  gap: 6px;
+  grid-template-columns: repeat(3, minmax(40px, 1.15fr)) repeat(5, minmax(29px, 0.85fr));
+  gap: 4px;
 }
 
 .tool-button,
@@ -1369,14 +1369,15 @@ async function exitOffline() {
   justify-content: center;
   gap: 6px;
   min-width: 0;
-  min-height: 34px;
-  padding: 0 9px;
+  min-height: 32px;
+  padding: 0 4px;
   border: 1px solid rgba(182, 154, 166, 0.26);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.72);
   color: #685b63;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 900;
+  white-space: nowrap;
 }
 
 .tool-button {
@@ -1384,7 +1385,7 @@ async function exitOffline() {
 }
 
 .icon-tool-button {
-  width: 34px;
+  width: 100%;
   padding: 0;
 }
 

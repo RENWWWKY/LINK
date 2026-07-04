@@ -62,6 +62,15 @@
             </div>
           </section>
 
+          <section v-else-if="item.message.theaterLink" class="favorite-theater-link-card">
+            <Globe2 :size="20" />
+            <div>
+              <small>网站链接</small>
+              <strong>{{ item.message.theaterLink.title }}</strong>
+              <em>{{ item.message.theaterLink.summary }}</em>
+            </div>
+          </section>
+
           <section v-else-if="item.message.voice" class="favorite-voice-card">
             <Mic2 :size="18" />
             <div>
@@ -86,7 +95,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { Bookmark, LoaderCircle, MapPin, Mic2, Trash2 } from 'lucide-vue-next';
+import { Bookmark, Globe2, LoaderCircle, MapPin, Mic2, Trash2 } from 'lucide-vue-next';
 import { useAppStore } from '@/stores/appStore';
 import type { FavoriteMessageRecord } from '@/types/domain';
 import { getStickerDisplayImageUrl } from '@/utils/stickers';
@@ -410,6 +419,7 @@ function openConversation(item: FavoriteMessageRecord) {
 
 .favorite-location-card,
 .favorite-transfer-card,
+.favorite-theater-link-card,
 .favorite-voice-card,
 .favorite-text {
   margin: 0 14px 4px;
@@ -420,6 +430,7 @@ function openConversation(item: FavoriteMessageRecord) {
 
 .favorite-location-card,
 .favorite-transfer-card,
+.favorite-theater-link-card,
 .favorite-voice-card {
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr);
@@ -434,14 +445,19 @@ function openConversation(item: FavoriteMessageRecord) {
 .favorite-location-card small,
 .favorite-transfer-card small,
 .favorite-transfer-card strong,
-.favorite-transfer-card em {
+.favorite-transfer-card em,
+.favorite-theater-link-card small,
+.favorite-theater-link-card strong,
+.favorite-theater-link-card em {
   display: block;
 }
 
 .favorite-location-card span,
 .favorite-location-card small,
 .favorite-transfer-card small,
-.favorite-transfer-card em {
+.favorite-transfer-card em,
+.favorite-theater-link-card small,
+.favorite-theater-link-card em {
   margin-top: 4px;
   color: #767d86;
   font-size: 12px;
@@ -451,12 +467,14 @@ function openConversation(item: FavoriteMessageRecord) {
 
 .favorite-location-card > div,
 .favorite-transfer-card > div,
+.favorite-theater-link-card > div,
 .favorite-voice-card > div {
   min-width: 0;
 }
 
 .favorite-location-card strong,
 .favorite-transfer-card strong,
+.favorite-theater-link-card strong,
 .favorite-voice-card strong {
   overflow-wrap: anywhere;
 }
@@ -470,6 +488,22 @@ function openConversation(item: FavoriteMessageRecord) {
   background: linear-gradient(180deg, #111111, #2c2f39);
   color: #ffffff;
   font-weight: 900;
+}
+
+.favorite-theater-link-card > svg {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 8px;
+  border-radius: 50%;
+  background: #effaf3;
+  color: #04a64b;
+}
+
+.favorite-theater-link-card strong {
+  font-size: 14px;
+  line-height: 1.25;
 }
 
 .favorite-transfer-card strong {
@@ -586,6 +620,7 @@ function openConversation(item: FavoriteMessageRecord) {
   .favorite-sticker-card,
   .favorite-location-card,
   .favorite-transfer-card,
+  .favorite-theater-link-card,
   .favorite-voice-card,
   .favorite-text {
     margin-right: 11px;
@@ -594,6 +629,7 @@ function openConversation(item: FavoriteMessageRecord) {
 
   .favorite-location-card,
   .favorite-transfer-card,
+  .favorite-theater-link-card,
   .favorite-voice-card,
   .favorite-text {
     padding: 12px;

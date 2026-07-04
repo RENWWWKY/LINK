@@ -784,7 +784,7 @@ const activeMessageIsSynthetic = computed(() => Boolean(activeMessage.value?.id.
 const activeMessageTransferIsReceipt = computed(() => Boolean(activeMessage.value?.transfer?.responseToMessageId));
 const canRecallActiveMessage = computed(() => Boolean(activeMessage.value && activeMessage.value.sender === 'user' && !activeMessageIsSynthetic.value));
 const canQuoteActiveMessage = computed(() => Boolean(activeMessage.value && canQuoteMessage(activeMessage.value)));
-const canEditActiveMessage = computed(() => Boolean(activeMessage.value && !activeMessageIsSynthetic.value && !activeMessageTransferIsReceipt.value));
+const canEditActiveMessage = computed(() => Boolean(activeMessage.value && !activeMessageIsSynthetic.value && !activeMessageTransferIsReceipt.value && !activeMessage.value.theaterLink));
 const isActiveMessageFavorited = computed(() => Boolean(activeMessage.value && store.isMessageFavorited(activeMessage.value.id)));
 const canRegenerateActiveVoice = computed(() => Boolean(activeMessage.value?.sender === 'char'
   && activeMessage.value.voice?.transcript.trim()
@@ -1524,6 +1524,7 @@ function messageActionText(message: ChatMessage) {
   if (message.voice) return `[语音] ${message.voice.transcript}`;
   if (message.location) return `[定位] ${[message.location.name, message.location.address, message.location.distance].filter(Boolean).join(' · ')}`;
   if (message.transfer) return `${message.transfer.responseToMessageId ? '[转账回执]' : '[转账]'} ¥${message.transfer.amount} · ${message.transfer.status === 'pending' ? '待处理' : message.transfer.status === 'accepted' ? '已接收' : '已拒绝'}`;
+  if (message.theaterLink) return `[网站链接] ${message.theaterLink.title} · ${message.theaterLink.summary} · ${message.theaterLink.url}`;
   return message.content;
 }
 
@@ -1624,6 +1625,10 @@ function detailReceiptMeta(message: ChatMessage) {
 }
 
 function openCardDetail(message: ChatMessage) {
+  if (message.theaterLink?.theaterId) {
+    void router.push({ name: 'small-theater-detail', params: { theaterId: message.theaterLink.theaterId } });
+    return;
+  }
   if (!message.location && !message.transfer) return;
   activeCardDetailMessageId.value = message.id;
   showCardDetailModal.value = true;

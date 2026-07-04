@@ -6,7 +6,7 @@ import { getUserAiName } from '@/utils/profile';
 import { defaultNovelAiModels, defaultPollinationsModels, getResolvedApiConfig, getResolvedOpenAiImageConfig, novelAiOfficialApiUrl, novelAiProxyApiUrl } from '@/utils/settings';
 import { estimateTokenCount } from '@/utils/memory';
 import { getStickerDisplayImageUrl } from '@/utils/stickers';
-import { assertRenderableSmallTheaterHtml, withSmallTheaterRuntimeGuard } from '@/utils/smallTheaterHtml';
+import { assertRenderableSmallTheaterHtml, getSmallTheaterVisibleText, withSmallTheaterRuntimeGuard } from '@/utils/smallTheaterHtml';
 import { renderTimeAwarenessPrompt } from '@/utils/timeAwareness';
 import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
 import { getVoomFrequencyChance, stripVoomCommentReplyPrefix } from '@/utils/voom';
@@ -2159,24 +2159,64 @@ function buildSmallTheaterPrompt(input: { context: PromptContext; topic: SmallTh
   ].join('\n\n');
 }
 
+function buildSmallTheaterContinuationPrompt(input: { context: PromptContext; topic: SmallTheaterTopic; sourceTheater: SmallTheater; continuationGuidance?: string; recentTheaters?: SmallTheater[] }) {
+  const characterName = getCharacterAiName(input.context.character);
+  const topicPrompt = input.topic.prompt.trim() || input.topic.title;
+  const continuationGuidance = input.continuationGuidance?.trim();
+  const previousContent = getSmallTheaterVisibleText(input.sourceTheater.html).slice(0, 16000);
+  return [
+    buildPrompt(input.context, { includeAvailableStickers: false }),
+    '现在基于一个已经生成过的「小剧场」独立 HTML 页面继续更新。你要输出一个新的完整 HTML 文件，它会作为新的小剧场卡片保存；原小剧场不会被覆盖。不要输出片段、差异或解释。',
+    '更新目标：承接原小剧场已经发生/展示的核心内容和页面玩法，在新的 HTML 页面里自然追加新的楼层、章节、帖子更新、时间线事件、评论、分支结果或后续互动。不要把原内容推翻、删除成摘要，也不要只重写开头。',
+    '生成结果仍然是正文之外的番外小页面：不要把内容写成角色已在当前会话里发送、发布或注入楼层；不要输出聊天事件、VOOM JSON、朋友圈、系统旁白或任何需要写回对话的内容。',
+    `本次角色：${characterName}（角色ID：${input.context.character.id}）`,
+    `本次小剧场题材：${input.topic.title}\n题材扩展：${topicPrompt}`,
+    `原小剧场标题：${input.sourceTheater.title}`,
+    `原小剧场摘要：${input.sourceTheater.summary}`,
+    `原小剧场可见正文：\n${previousContent || '原页面没有提取到可见正文，请根据标题和摘要继续生成。'}`,
+    continuationGuidance ? `用户这次希望引导小剧场往这个方向更新：\n${continuationGuidance}` : '',
+    `续写要求：
+1. 输出一个完整 HTML 文件代码块，形如：\n\`\`\`html\n<!doctype html>...\n\`\`\`。不要输出解释、JSON、Markdown 标题或代码块之外的文字。
+2. 新增内容必须明确承接原小剧场以及字数要求，体现“新的小剧场卡片继续往下发展”，例如增加新楼层、新章节、新消息、新帖子更新、新评论、新线索、新分支结果或下一天事件等等。
+3. 保留移动端适配、可滚动正文、至少 3 个原生 JS 交互点、无外部资源、脚本失败也可见正文等所有 HTML 质量要求。
+4. 页面里可以自然出现“更新”“新楼层”“续篇”等内容标签，但不要解释应用功能或 HTML 实现。
+5. 更新后的结尾继续留下可再次更新的钩子，方便后续无限迭代。`,
+    `HTML 质量要求：
+1. 必须包含 <!doctype html>、<html>、<head>、<meta charset="UTF-8">、<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">、<title>、完整 <style> 和 <script>。
+2. 使用 html, body { margin: 0; min-height: 100%; overflow-x: hidden; }，主容器使用 min-height: 100dvh 并提供 100svh/100vh 兼容兜底。
+3. 必须适配手机端 320px-480px 宽度，考虑安全区、竖屏滚动、触控目标、按钮状态、长文本换行、软键盘、深浅色视觉对比和浏览器地址栏高度变化。
+4. 页面默认只允许纵向滚动，不要产生横向滚动；任何宽图、表格、卡片、代码、长词、按钮组都必须 max-width: 100%、min-width: 0、overflow-wrap: anywhere 或在局部容器内可控滚动。
+5. 不要把正文塞进固定高度的内部滚动面板；除非是明确的短列表/弹层，内容应随页面自然向下延展，避免用户在手机上看不完整或出现双重滚动。
+6. 触控目标不小于 44px，高频按钮用 <button type="button">；按钮、选项、折叠项、弹层关闭、翻页等控件必须可点击，不要被透明遮罩、pointer-events、过高 z-index 或全屏装饰层挡住。
+7. 不要在 document/window/body 上拦截 touchstart、touchmove、pointermove、wheel 或调用 preventDefault；横向滑动/拖动只绑定在具体局部控件上，不能破坏手机浏览器边缘左右滑动返回。
+8. 有互动性：至少包含 3 个可点击/可切换/可展开/可选择/可拖动/可输入的交互点，交互由原生 JavaScript 实现，并且不依赖网络。
+9. 不允许加载外部 JS/CSS/字体/图片/接口；图片只能用 CSS、emoji、渐变、内嵌 SVG data URL 或纯 HTML/CSS 视觉替代。
+10. <body> 里必须先写出可见的静态 HTML 内容，JavaScript 只能增强交互，不能把全部正文放在脚本里动态生成；即使脚本失败，用户也要能看到标题、正文和主要控件。`
+  ].join('\n\n');
+}
+
 export async function generateSmallTheater(input: {
   context: PromptContext;
   topic: SmallTheaterTopic;
   recentTheaters?: SmallTheater[];
+  sourceTheater?: SmallTheater;
+  continuationGuidance?: string;
   settings?: AppSettings;
   modelOverride?: string;
 }): Promise<SmallTheaterGenerationResult> {
   requireTextGenerationConfig(input.settings, input.modelOverride, '小剧场生成');
-  const prompt = buildSmallTheaterPrompt({ context: input.context, topic: input.topic, recentTheaters: input.recentTheaters });
+  const prompt = input.sourceTheater
+    ? buildSmallTheaterContinuationPrompt({ context: input.context, topic: input.topic, sourceTheater: input.sourceTheater, continuationGuidance: input.continuationGuidance, recentTheaters: input.recentTheaters })
+    : buildSmallTheaterPrompt({ context: input.context, topic: input.topic, recentTheaters: input.recentTheaters });
   const apiReply = await callTextApi(input.settings, prompt, input.modelOverride);
-  let html = ensureCompleteHtmlDocument(apiReply, input.topic.title);
+  let html = ensureCompleteHtmlDocument(apiReply, input.sourceTheater?.title || input.topic.title);
   if (!html) throw new Error('小剧场模型没有返回 HTML 内容。');
   assertRenderableSmallTheaterHtml(html);
-  html = withSmallTheaterRuntimeGuard(html, input.topic.title);
+  html = withSmallTheaterRuntimeGuard(html, input.sourceTheater?.title || input.topic.title);
 
   const fallbackSummary = `由「${input.topic.title}」生成的互动番外小剧场。`;
   return {
-    title: extractSmallTheaterTitle(html, input.topic.title),
+    title: extractSmallTheaterTitle(html, input.sourceTheater?.title || input.topic.title),
     summary: extractSmallTheaterSummary(html, fallbackSummary),
     html,
     model: getResolvedTextApiConfig(input.settings, input.modelOverride).model

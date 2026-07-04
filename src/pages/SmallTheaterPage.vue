@@ -79,9 +79,18 @@
               <strong>{{ theater.title }}</strong>
               <em>{{ theater.summary }}</em>
             </span>
-            <button class="theater-card-delete" type="button" aria-label="删除小剧场" @click.stop="deleteTheater(theater.id)">
-              <X :size="18" stroke-width="2.6" />
-            </button>
+            <span class="theater-card-actions" aria-label="小剧场操作">
+              <button class="theater-card-action" type="button" aria-label="转发小剧场" title="转发" @click.stop="openForwardTheater(theater.id)">
+                <Send :size="16" stroke-width="2.5" />
+              </button>
+              <button class="theater-card-action" type="button" aria-label="更新小剧场" title="更新" :disabled="Boolean(updatingTheaterId)" :aria-busy="updatingTheaterId === theater.id" @click.stop="openUpdateTheater(theater.id)">
+                <LoaderCircle v-if="updatingTheaterId === theater.id" class="spin" :size="16" />
+                <RefreshCw v-else :size="16" stroke-width="2.5" />
+              </button>
+              <button class="theater-card-delete" type="button" aria-label="删除小剧场" title="删除" @click.stop="deleteTheater(theater.id)">
+                <X :size="18" stroke-width="2.6" />
+              </button>
+            </span>
           </article>
         </section>
 
@@ -126,6 +135,51 @@
         </div>
       </form>
     </AppModal>
+
+    <AppModal v-if="forwardTheaterTarget" v-model="showForwardModal" title="转发小剧场" :show-header="false" variant="ins">
+      <section class="theater-forward-sheet">
+        <header>
+          <span>Forward</span>
+          <h3>转发给角色</h3>
+          <p>{{ forwardTheaterTarget.title }}</p>
+        </header>
+        <button
+          v-for="target in forwardTargets"
+          :key="target.id"
+          type="button"
+          :disabled="Boolean(forwardingCharacterId)"
+          @click="forwardTheater(target.id)"
+        >
+          <img :src="target.avatar" :alt="target.name" />
+          <span>
+            <strong>{{ characterLabel(target) }}</strong>
+            <small>{{ forwardingCharacterId === target.id ? '转发中' : '发送为网站链接卡片' }}</small>
+          </span>
+        </button>
+        <p v-if="!forwardTargets.length" class="theater-forward-empty">当前账号还没有绑定可转发的角色。</p>
+      </section>
+    </AppModal>
+
+    <AppModal v-if="updateTheaterTarget" v-model="showUpdateModal" title="更新小剧场" :show-header="false" variant="ins">
+      <form class="theater-update-sheet" @submit.prevent="submitUpdateTheater">
+        <header>
+          <span>Update</span>
+          <h3>更新小剧场</h3>
+          <p>{{ updateTheaterTarget.title }}</p>
+        </header>
+        <label>
+          <span>发展方向</span>
+          <textarea v-model="updateGuidanceDraft" maxlength="1600" rows="5" placeholder="可选：例如想看后续误会升级、论坛继续扒细节、角色主动回应、转向甜一点或更刺激一点。"></textarea>
+        </label>
+        <div class="theater-update-actions">
+          <button class="secondary" type="button" :disabled="Boolean(updatingTheaterId)" @click="closeUpdateTheater">取消</button>
+          <button class="primary" type="submit" :disabled="Boolean(updatingTheaterId)">
+            <LoaderCircle v-if="updatingTheaterId" class="spin" :size="16" />
+            <span>{{ updateGuidanceDraft.trim() ? '按提示更新' : '直接更新' }}</span>
+          </button>
+        </div>
+      </form>
+    </AppModal>
   </section>
 
   <section v-else class="screen no-tabs small-theater-page missing-theater">
@@ -145,10 +199,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Clapperboard, ListChecks, LoaderCircle, PanelsTopLeft, Plus, Sparkles, X } from 'lucide-vue-next';
+import { Clapperboard, ListChecks, LoaderCircle, PanelsTopLeft, Plus, RefreshCw, Send, Sparkles, X } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
 import { useAppStore } from '@/stores/appStore';
-import type { SmallTheater, SmallTheaterTopic } from '@/types/domain';
+import type { CharacterProfile, SmallTheater, SmallTheaterTopic } from '@/types/domain';
+import { getCharacterDisplayName } from '@/utils/character';
 
 const props = defineProps<{ id: string }>();
 
@@ -163,6 +218,13 @@ const showTopicEditor = ref(false);
 const editingTopicId = ref<string | null>(null);
 const selectedTopicId = ref('');
 const generatingTheater = ref(false);
+const updatingTheaterId = ref('');
+const showForwardModal = ref(false);
+const forwardingTheaterId = ref('');
+const forwardingCharacterId = ref('');
+const showUpdateModal = ref(false);
+const updateTheaterId = ref('');
+const updateGuidanceDraft = ref('');
 const topicDraft = reactive({ title: '', prompt: '', enabled: true });
 
 const conversation = computed(() => store.conversationById(props.id));
@@ -171,9 +233,12 @@ const topics = computed(() => character.value ? store.smallTheaterTopicsForChara
 const theaters = computed(() => character.value ? store.smallTheatersForCharacter(character.value.id) : []);
 const enabledTopics = computed(() => topics.value.filter((topic) => topic.enabled));
 const theaterGroups = computed(() => groupTheatersByTopic(theaters.value));
+const forwardTheaterTarget = computed(() => forwardingTheaterId.value ? store.smallTheaterById(forwardingTheaterId.value) : null);
+const forwardTargets = computed(() => store.charactersForActiveUser.filter((target) => store.conversationsForActiveUser.some((conversationItem) => conversationItem.charId === target.id)));
+const updateTheaterTarget = computed(() => updateTheaterId.value ? store.smallTheaterById(updateTheaterId.value) : null);
 
 function normalizeTheaterTab(tab: unknown): SmallTheaterTab {
-  return tab === 'cards' ? 'cards' : 'topics';
+  return tab === 'topics' ? 'topics' : 'cards';
 }
 
 function groupTheatersByTopic(items: SmallTheater[]) {
@@ -280,6 +345,63 @@ async function generateTheater() {
 
 function openTheater(theaterId: string) {
   void router.push({ name: 'small-theater-detail', params: { theaterId } });
+}
+
+function characterLabel(target: CharacterProfile) {
+  return getCharacterDisplayName(target);
+}
+
+function openForwardTheater(theaterId: string) {
+  forwardingTheaterId.value = theaterId;
+  showForwardModal.value = true;
+}
+
+async function forwardTheater(characterId: string) {
+  if (forwardingCharacterId.value || !forwardingTheaterId.value) return;
+  forwardingCharacterId.value = characterId;
+  try {
+    const message = await store.forwardSmallTheaterToCharacter(forwardingTheaterId.value, characterId);
+    if (!message) return;
+    showForwardModal.value = false;
+    store.showConfigAlert('已作为网站链接卡片转发到对应线上聊天。', '转发成功');
+  } catch (error) {
+    store.showConfigAlert(error instanceof Error ? error.message : '小剧场转发失败。', '无法转发小剧场');
+  } finally {
+    forwardingCharacterId.value = '';
+  }
+}
+
+function openUpdateTheater(theaterId: string) {
+  updateTheaterId.value = theaterId;
+  updateGuidanceDraft.value = '';
+  showUpdateModal.value = true;
+}
+
+function closeUpdateTheater() {
+  if (updatingTheaterId.value) return;
+  showUpdateModal.value = false;
+  updateTheaterId.value = '';
+  updateGuidanceDraft.value = '';
+}
+
+async function submitUpdateTheater() {
+  if (updatingTheaterId.value || !updateTheaterId.value) return;
+  const theaterId = updateTheaterId.value;
+  const guidance = updateGuidanceDraft.value.trim();
+  updatingTheaterId.value = theaterId;
+  try {
+    const theater = await store.continueSmallTheater(theaterId, guidance || undefined);
+    if (theater) {
+      showUpdateModal.value = false;
+      updateTheaterId.value = '';
+      updateGuidanceDraft.value = '';
+      store.showConfigAlert('已生成新的小剧场 HTML 卡片，原卡片已保留。', '更新成功');
+    }
+  } catch (error) {
+    store.showConfigAlert(error instanceof Error ? error.message : '小剧场更新失败。', '无法更新小剧场');
+  } finally {
+    updatingTheaterId.value = '';
+  }
 }
 
 async function deleteTheater(theaterId: string) {
@@ -502,10 +624,17 @@ async function deleteTheater(theaterId: string) {
   transform: translateX(16px);
 }
 
-.theater-card-delete {
+.theater-card-actions {
   position: absolute;
   top: 8px;
   right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.theater-card-action,
+.theater-card-delete {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -516,6 +645,11 @@ async function deleteTheater(theaterId: string) {
   color: #4f9f6a;
 }
 
+.theater-card-action:disabled {
+  opacity: 0.52;
+}
+
+.theater-card-action:active,
 .theater-card-delete:active {
   background: rgba(201, 236, 213, 0.24);
 }
@@ -607,7 +741,7 @@ async function deleteTheater(theaterId: string) {
   gap: 8px;
   width: 100%;
   min-height: 62px;
-  padding: 12px 42px 12px 14px;
+  padding: 12px 104px 12px 14px;
   border-color: rgba(129, 171, 145, 0.14);
   border-radius: 18px;
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 252, 249, 0.92) 100%);
@@ -690,6 +824,197 @@ async function deleteTheater(theaterId: string) {
   font-size: 12px;
   font-style: normal;
   font-weight: 500;
+}
+
+.theater-forward-sheet {
+  display: grid;
+  gap: 10px;
+  color: #111827;
+}
+
+.theater-forward-sheet header {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding-bottom: 4px;
+}
+
+.theater-forward-sheet header span {
+  color: #7b828c;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.theater-forward-sheet h3,
+.theater-forward-sheet p {
+  margin: 0;
+}
+
+.theater-forward-sheet h3 {
+  font-size: 18px;
+  font-weight: 950;
+  line-height: 1.25;
+}
+
+.theater-forward-sheet header p {
+  color: #69717b;
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.theater-forward-sheet button {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 58px;
+  padding: 8px;
+  border-radius: 14px;
+  background: #f6f7f8;
+  color: #111827;
+  text-align: left;
+}
+
+.theater-forward-sheet button:disabled {
+  opacity: 0.72;
+}
+
+.theater-forward-sheet img {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.theater-forward-sheet button span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.theater-forward-sheet strong,
+.theater-forward-sheet small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theater-forward-sheet strong {
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.theater-forward-sheet small,
+.theater-forward-empty {
+  color: #69717b;
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.theater-update-sheet {
+  display: grid;
+  gap: 12px;
+  color: #111827;
+}
+
+.theater-update-sheet header {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.theater-update-sheet header span {
+  color: #7b828c;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.theater-update-sheet h3,
+.theater-update-sheet p {
+  margin: 0;
+}
+
+.theater-update-sheet h3 {
+  font-size: 18px;
+  font-weight: 950;
+  line-height: 1.25;
+}
+
+.theater-update-sheet header p {
+  color: #69717b;
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.theater-update-sheet label {
+  display: grid;
+  gap: 7px;
+  color: #5f6761;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.theater-update-sheet textarea {
+  width: 100%;
+  min-height: 128px;
+  padding: 11px 12px;
+  border: 1px solid rgba(42, 75, 60, 0.08);
+  border-radius: 14px;
+  background: #f6f7f8;
+  color: #151719;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.theater-update-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.theater-update-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.theater-update-actions button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.theater-update-actions .secondary {
+  background: #f1f3f2;
+  color: #5f6761;
+}
+
+.theater-update-actions .primary {
+  background: #c9ecd5;
+  color: #24613a;
+}
+
+.theater-update-actions button:disabled {
+  opacity: 0.58;
 }
 
 .theater-empty {

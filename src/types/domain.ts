@@ -411,6 +411,14 @@ export interface ChatTransferAttachment {
   responseToMessageId?: string;
 }
 
+export interface ChatSmallTheaterLinkAttachment {
+  theaterId: string;
+  title: string;
+  summary: string;
+  url: string;
+  content: string;
+}
+
 export type ChatOfflineInvitationStatus = 'pending' | 'accepted' | 'rejected';
 
 export interface ChatOfflineInvitationAttachment {
@@ -430,6 +438,7 @@ export interface ChatMessageQuote {
   voice?: ChatVoiceAttachment;
   location?: ChatLocationAttachment;
   transfer?: ChatTransferAttachment;
+  theaterLink?: ChatSmallTheaterLinkAttachment;
   offlineInvitation?: ChatOfflineInvitationAttachment;
 }
 
@@ -450,6 +459,7 @@ export interface ChatMessage {
   voice?: ChatVoiceAttachment;
   location?: ChatLocationAttachment;
   transfer?: ChatTransferAttachment;
+  theaterLink?: ChatSmallTheaterLinkAttachment;
   offlineInvitation?: ChatOfflineInvitationAttachment;
   quote?: ChatMessageQuote;
   replyBatchId?: string;
@@ -461,7 +471,7 @@ export interface ChatMessage {
   editedAt?: number;
 }
 
-export type FavoriteMessageKind = 'text' | 'image' | 'sticker' | 'voice' | 'location' | 'transfer' | 'offlineInvitation' | 'narration';
+export type FavoriteMessageKind = 'text' | 'image' | 'sticker' | 'voice' | 'location' | 'transfer' | 'theaterLink' | 'offlineInvitation' | 'narration';
 
 export interface FavoriteMessageRecord {
   id: string;
@@ -557,6 +567,7 @@ export interface SmallTheater {
   html: string;
   model?: string;
   createdAt: number;
+  updatedAt?: number;
 }
 
 export type MusicSource = 'netease' | 'kuwo' | 'joox' | 'tencent' | 'tidal' | 'qobuz' | 'bilibili' | 'apple' | 'ytmusic' | 'spotify';

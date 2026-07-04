@@ -535,7 +535,7 @@ function formatPromptMessageTime(timestamp: number) {
   return promptMessageTimeFormatter.format(timestamp);
 }
 
-function getMessageText(message: Pick<PromptContext['messages'][number], 'content' | 'sender' | 'sticker' | 'image' | 'voice' | 'location' | 'transfer' | 'offlineInvitation'>) {
+function getMessageText(message: Pick<PromptContext['messages'][number], 'content' | 'sender' | 'sticker' | 'image' | 'voice' | 'location' | 'transfer' | 'theaterLink' | 'offlineInvitation'>) {
   if (message.sticker) return `[Sticker] ${message.sticker.description}`;
   if (message.image) {
     if (message.image.kind === 'description') return `用户发送了一张图片，图片内容为“${message.image.description}”。`;
@@ -574,6 +574,12 @@ function getMessageText(message: Pick<PromptContext['messages'][number], 'conten
     }[message.transfer.status];
     const noteText = message.transfer.note ? `，备注为“${message.transfer.note}”` : '';
     return `${senderText}发起了一笔转账：金额 ¥${message.transfer.amount}${noteText}，当前状态：${statusText}。`;
+  }
+  if (message.theaterLink) {
+    const senderText = message.sender === 'user' ? '用户' : '角色';
+    const receiverText = message.sender === 'user' ? '角色' : '用户';
+    const summaryText = message.theaterLink.summary ? `摘要：${message.theaterLink.summary}。` : '';
+    return `${senderText}给${receiverText}转发了一个网站链接卡片：标题《${message.theaterLink.title}》，链接 ${message.theaterLink.url}。${summaryText}网站内容为：${message.theaterLink.content}`;
   }
   if (message.offlineInvitation) {
     const statusText = {
@@ -802,7 +808,7 @@ export function buildPrompt(context: PromptContext, options: { includeOnlineChat
     `记忆手册：\n${normalizePromptIdentityText(context.memorySummary || '暂无记忆手册。', context)}`,
     `世界书：\n${normalizePromptIdentityText(renderWorldBooks(selectedWorldBooks, context) || '无启用条目。', context)}`,
     context.mode === 'online'
-      ? 'Sticker / 图片 / 语音 / 定位 / 转账规则：用户发送 Sticker 时，文字描述是用户提供的贴纸含义。用户发送真实图片时，若本次请求附带图片，你可以观察图片内容；用户发送文字描述卡片时，必须理解为“用户发送了一张图片，图片内容为描述文本”，虽然没有真实图片文件，也要按图片内容参与对话。用户或角色发送语音时，必须理解为对方用语音消息说出了对应文字内容，不要把它当成普通打字消息；角色也可以在合适时用 voice 项主动发送语音条。用户发送定位时，必须理解为用户把自己的当前位置发给了你，并告知了用户与角色之间的距离；角色也可以在合适时用 location 项主动发送自己的定位。用户发送转账时，必须理解为用户确实向你发起了对应金额的转账；你可以在后续按角色意愿接收或拒绝。角色也可以在合适时用 transfer 项主动向用户转账，等待用户接收或拒绝。若未附带真实图片，不要臆造描述之外的图片细节。'
+      ? 'Sticker / 图片 / 语音 / 定位 / 转账 / 网站链接规则：用户发送 Sticker 时，文字描述是用户提供的贴纸含义。用户发送真实图片时，若本次请求附带图片，你可以观察图片内容；用户发送文字描述卡片时，必须理解为“用户发送了一张图片，图片内容为描述文本”，虽然没有真实图片文件，也要按图片内容参与对话。用户或角色发送语音时，必须理解为对方用语音消息说出了对应文字内容，不要把它当成普通打字消息；角色也可以在合适时用 voice 项主动发送语音条。用户发送定位时，必须理解为用户把自己的当前位置发给了你，并告知了用户与角色之间的距离；角色也可以在合适时用 location 项主动发送自己的定位。用户发送转账时，必须理解为用户确实向你发起了对应金额的转账；你可以在后续按角色意愿接收或拒绝。角色也可以在合适时用 transfer 项主动向用户转账，等待用户接收或拒绝。用户发送网站链接卡片时，必须理解为用户转发了一个真实可读的网页链接给你，链接卡片附带的“网站内容”为你已经能看到的页面正文，可直接按其中内容参与对话。若未附带真实图片，不要臆造描述之外的图片细节。'
       : '',
     context.mode === 'online' && options.includeAvailableStickers !== false ? `角色可用 Stickers：\n${renderAvailableStickers(context)}` : '',
     context.mode === 'online' && context.replyInstruction ? `本次生成任务：\n${context.replyInstruction}` : '',

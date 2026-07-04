@@ -2,13 +2,14 @@ import { computed, ref, toRaw } from 'vue';
 import { defineStore } from 'pinia';
 import { deleteEntity, loadSnapshot, putEntity, replaceSnapshot, scheduleStartupStorageMaintenance } from '@/data/db';
 import { defaultSettings } from '@/data/seed';
-import type { AppSettings, AppSnapshot, CharacterProfile, CharacterProfileHistoryEntry, CharacterProfileHistoryField, ChatImageAttachment, ChatImageCandidate, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatMode, ChatModelOverrides, ChatModelScope, ChatOfflineInvitationAttachment, ChatOfflineInvitationStatus, ChatTransferAttachment, ChatTransferStatus, ChatVoiceAttachment, Conversation, ConversationMemoryAtom, ConversationMemoryRecord, ConversationSettings, FavoriteMessageKind, FavoriteMessageRecord, GenerateReplyInput, GeneratedImageRecord, ImageModuleId, MusicCommentThread, MusicTrack, SmallTheater, SmallTheaterTopic, Sticker, StickerGroup, UserProfile, VisualProfile, VoomComment, VoomFrequency, VoomImageCandidate, VoomPost, VoomPostVisibility, WorldBookEntry } from '@/types/domain';
+import type { AppSettings, AppSnapshot, CharacterProfile, CharacterProfileHistoryEntry, CharacterProfileHistoryField, ChatImageAttachment, ChatImageCandidate, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatMode, ChatModelOverrides, ChatModelScope, ChatOfflineInvitationAttachment, ChatOfflineInvitationStatus, ChatSmallTheaterLinkAttachment, ChatTransferAttachment, ChatTransferStatus, ChatVoiceAttachment, Conversation, ConversationMemoryAtom, ConversationMemoryRecord, ConversationSettings, FavoriteMessageKind, FavoriteMessageRecord, GenerateReplyInput, GeneratedImageRecord, ImageModuleId, MusicCommentThread, MusicTrack, SmallTheater, SmallTheaterTopic, Sticker, StickerGroup, UserProfile, VisualProfile, VoomComment, VoomFrequency, VoomImageCandidate, VoomPost, VoomPostVisibility, WorldBookEntry } from '@/types/domain';
 import { createAccountId, createId } from '@/utils/id';
 import { getCharacterAiName, getCharacterInitialProfile, getCharacterVoomAuthorName, getCharacterVoomDisplayName, normalizeCharacterMindStateLines, normalizeCharacterProfile } from '@/utils/character';
 import { getUserAiName, getUserDisplayName, getUserVoomAuthorName, normalizeUserProfile, normalizeVisualProfile } from '@/utils/profile';
 import { getImageGenerationSize, getImagePromptPresetForProvider, getSelectedImageModelOption, isImageModelSelectionDisabled, mergeVendorModels, normalizeAppSettings, normalizeChatModelOverrides } from '@/utils/settings';
 import { normalizeWorldBookEntry, normalizeWorldBooks } from '@/utils/worldBook';
 import { createDefaultSmallTheaterTopics, defaultSmallTheaterTopicDrafts, normalizeSmallTheaterTopic } from '@/utils/smallTheater';
+import { getSmallTheaterVisibleText } from '@/utils/smallTheaterHtml';
 import { RECENT_STICKER_GROUP_NAME, cacheStickerImageUrl, createStickerFromDraft, createStickerGroup, getStickerDisplayImageUrl, isLegacyGanadiSticker, isLegacyGanadiStickerGroup, isRecentStickerGroupId, normalizeSticker, normalizeStickerGroup, shouldLocalizeStickerImageUrl, sortRecentStickers, type StickerImportDraft } from '@/utils/stickers';
 import { ageMemoryKind, collectIncrementalGrandSummaries, createMemoryRecord, estimateTokenCount, filterHighestMemoryLayers, getConversationActiveMessages, getConversationFloorCount, getGrandSummaryHiddenRange, getHiddenMessageIds, getMemoryContext, getMemoryMergeDepth, getMessageFloorMap, getMessagesInFloorRange, getNextSummaryRange, getNextSummaryStartFloor, getVisibleMessages, isIncrementalGrandSummary, normalizeConversationSettings, normalizeMemoryRecordEntries, renderCharacterMemoryPrompt, shouldCompressMemory } from '@/utils/memory';
 import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
@@ -118,6 +119,7 @@ function getTimelineMessagePreview(message: ChatMessage) {
   if (message.voice) return `[语音] ${message.voice.transcript}`.trim();
   if (message.location) return `[位置] ${message.location.name || message.location.address || message.location.distance || ''}`.trim();
   if (message.transfer) return `${message.transfer.responseToMessageId ? '[转账回执]' : '[转账]'} ${message.transfer.amount || ''} ${message.transfer.note || ''}`.trim();
+  if (message.theaterLink) return `[网站链接] ${message.theaterLink.title} ${message.theaterLink.summary}`.trim();
   if (message.offlineInvitation) return `[离线邀请] ${message.offlineInvitation.prompt || message.offlineInvitation.status || ''}`.trim();
   return message.content.trim();
 }
@@ -315,7 +317,7 @@ export const useAppStore = defineStore('app', () => {
   const conversationsForFriendsDisplay = computed(() => displayAllFriends.value ? conversations.value : conversationsForActiveUser.value);
   const sortedConversations = computed(() => [...conversationsForActiveUser.value].sort((a, b) => b.updatedAt - a.updatedAt));
   const sortedVoomPosts = computed(() => [...voomPosts.value].sort((a, b) => b.createdAt - a.createdAt));
-  const sortedSmallTheaters = computed(() => [...smallTheaters.value].sort((a, b) => b.createdAt - a.createdAt));
+  const sortedSmallTheaters = computed(() => [...smallTheaters.value].sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt)));
   const sortedStickerGroups = computed(() => [...stickerGroups.value].sort((a, b) => {
     const orderDiff = (a.sortOrder ?? a.createdAt) - (b.sortOrder ?? b.createdAt);
     if (orderDiff) return orderDiff;
@@ -1350,7 +1352,8 @@ export const useAppStore = defineStore('app', () => {
     return theaters.map((theater) => {
       const character = characterById(theater.charId) ?? (theater.conversationId ? characterById(conversationById(theater.conversationId)?.charId ?? '') : null);
       const authorName = character ? getCharacterAiName(character) : voomAiNameForIdentity(theater.authorName, theater.charId);
-      return authorName !== theater.authorName ? { ...theater, authorName } : theater;
+      const updatedAt = theater.updatedAt ?? theater.createdAt;
+      return authorName !== theater.authorName || updatedAt !== theater.updatedAt ? { ...theater, authorName, updatedAt } : theater;
     });
   }
 
@@ -1740,6 +1743,25 @@ export const useAppStore = defineStore('app', () => {
       : formatTransferContent(transfer);
   }
 
+  function createSmallTheaterUrl(theaterId: string) {
+    return `/theaters/${encodeURIComponent(theaterId)}`;
+  }
+
+  function normalizeSmallTheaterLinkAttachment(theater: SmallTheater): ChatSmallTheaterLinkAttachment {
+    const visibleContent = getSmallTheaterVisibleText(theater.html).slice(0, 20000);
+    return {
+      theaterId: theater.id,
+      title: theater.title.trim() || '小剧场',
+      summary: theater.summary.trim() || '互动番外页面',
+      url: createSmallTheaterUrl(theater.id),
+      content: visibleContent || theater.summary.trim() || theater.title.trim() || '这个小剧场暂时没有可提取的正文。'
+    };
+  }
+
+  function formatSmallTheaterLinkContent(link: Pick<ChatSmallTheaterLinkAttachment, 'title' | 'summary' | 'url'>) {
+    return `[网站链接] ${link.title}${link.summary ? ` · ${link.summary}` : ''} · ${link.url}`;
+  }
+
   function formatOfflineInvitationContent(invitation: Pick<ChatOfflineInvitationAttachment, 'status'>) {
     const statusText = {
       pending: '等待选择',
@@ -1809,6 +1831,7 @@ export const useAppStore = defineStore('app', () => {
       voice: quote.voice ? { ...quote.voice } : undefined,
       location: quote.location ? { ...quote.location } : undefined,
       transfer: quote.transfer ? { ...quote.transfer } : undefined,
+      theaterLink: quote.theaterLink ? { ...quote.theaterLink } : undefined,
       offlineInvitation: quote.offlineInvitation ? { ...quote.offlineInvitation } : undefined
     };
   }
@@ -1819,6 +1842,7 @@ export const useAppStore = defineStore('app', () => {
     if (message.voice) return `[语音] ${message.voice.transcript}`.trim();
     if (message.location) return formatLocationContent(message.location).trim();
     if (message.transfer) return formatTransferMessageContent(message.transfer).trim();
+    if (message.theaterLink) return formatSmallTheaterLinkContent(message.theaterLink).trim();
     if (message.offlineInvitation) return formatOfflineInvitationContent(message.offlineInvitation).trim();
     return message.content.trim();
   }
@@ -1829,6 +1853,7 @@ export const useAppStore = defineStore('app', () => {
     if (message.voice) return 'voice';
     if (message.location) return 'location';
     if (message.transfer) return 'transfer';
+    if (message.theaterLink) return 'theaterLink';
     if (message.offlineInvitation) return 'offlineInvitation';
     if (message.displayStyle === 'narration') return 'narration';
     return 'text';
@@ -1891,6 +1916,7 @@ export const useAppStore = defineStore('app', () => {
       voice: message.voice ? { ...message.voice } : undefined,
       location: message.location ? { ...message.location } : undefined,
       transfer: message.transfer ? { ...message.transfer } : undefined,
+      theaterLink: message.theaterLink ? { ...message.theaterLink } : undefined,
       offlineInvitation: message.offlineInvitation ? { ...message.offlineInvitation } : undefined
     };
   }
@@ -3993,6 +4019,32 @@ export const useAppStore = defineStore('app', () => {
     return userMessage;
   }
 
+  async function appendUserSmallTheaterLinkMessage(conversationId: string, theater: SmallTheater, quote?: ChatMessageQuote | null) {
+    const conversation = conversationById(conversationId);
+    if (!conversation) return;
+    const theaterLink = normalizeSmallTheaterLinkAttachment(theater);
+    const sentAt = Date.now();
+    const userMessage: ChatMessage = {
+      id: createId('msg'),
+      conversationId,
+      sender: 'user',
+      mode: 'online',
+      content: formatSmallTheaterLinkContent(theaterLink),
+      theaterLink,
+      quote: cloneMessageQuote(quote),
+      createdAt: sentAt,
+      status: 'sent'
+    };
+    messages.value.push(userMessage);
+    await putEntity('messages', userMessage);
+    const nextConversation = { ...conversation, activeMode: 'online' as const, updatedAt: sentAt, unreadCount: 0 };
+    const conversationIndex = conversations.value.findIndex((item) => item.id === conversationId);
+    if (conversationIndex >= 0) conversations.value[conversationIndex] = nextConversation;
+    await putEntity('conversations', nextConversation);
+    void maybeAutoSummarizeConversation(conversationId);
+    return userMessage;
+  }
+
   async function updateTransferStatus(messageId: string, status: ChatTransferStatus, actor: 'user' | 'char' = 'user') {
     if (status === 'pending') return null;
     const message = messages.value.find((item) => item.id === messageId);
@@ -5362,7 +5414,7 @@ export const useAppStore = defineStore('app', () => {
   function smallTheatersForCharacter(characterId: string) {
     return smallTheaters.value
       .filter((theater) => theater.charId === characterId)
-      .sort((first, second) => second.createdAt - first.createdAt);
+      .sort((first, second) => (second.updatedAt ?? second.createdAt) - (first.updatedAt ?? first.createdAt));
   }
 
   function smallTheaterById(theaterId: string) {
@@ -5549,7 +5601,8 @@ export const useAppStore = defineStore('app', () => {
         summary: result.summary,
         html: result.html,
         model: result.model,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        updatedAt: Date.now()
       };
       smallTheaters.value.unshift(theater);
       await putEntity('smallTheaters', theater);
@@ -5557,6 +5610,107 @@ export const useAppStore = defineStore('app', () => {
     } finally {
       generatingSmallTheaterConversationIds.delete(conversationId);
     }
+  }
+
+  async function continueSmallTheater(theaterId: string, updateGuidance?: string) {
+    const theater = smallTheaterById(theaterId);
+    if (!theater) return null;
+    const lockKey = `theater:${theater.id}`;
+    if (generatingSmallTheaterConversationIds.has(lockKey)) return null;
+    const conversation = theater.conversationId ? conversationById(theater.conversationId) : conversations.value.find((entry) => entry.charId === theater.charId);
+    if (!conversation) return null;
+    const character = characterById(theater.charId) ?? characterById(conversation.charId);
+    if (!character) return null;
+    const boundUser = userById(character.boundUserId) ?? user.value;
+    if (!boundUser) return null;
+    const chatSettings = settingsForConversation(conversation.id);
+    const modelOverride = getConversationTextModelOverride(chatSettings, 'theater');
+    if (!hasConfiguredTextModel(modelOverride)) {
+      showConfigAlert('请先在聊天菜单里配置小剧场模型，或在设置里配置全局默认 API 模型。', '需要配置 API 模型');
+      return null;
+    }
+
+    const topics = await ensureSmallTheaterTopicsForCharacter(character.id);
+    const now = Date.now();
+    const selectedTopic = topics.find((topic) => topic.id === theater.topicId)
+      ?? topics.find((topic) => topic.title === theater.topicTitle)
+      ?? {
+        id: theater.topicId || createId('topic'),
+        charId: character.id,
+        title: theater.topicTitle || '根据剧情随机发挥',
+        prompt: theater.topicTitle || '根据原小剧场继续更新后续内容。',
+        enabled: true,
+        createdAt: theater.createdAt,
+        updatedAt: now
+      } satisfies SmallTheaterTopic;
+
+    generatingSmallTheaterConversationIds.add(lockKey);
+    try {
+      const visibleMessages = visibleMessagesForConversation(conversation.id);
+      const recentVoomPosts = voomPosts.value
+        .filter((post) => post.authorType !== 'user' && (post.charId === character.id || post.conversationId === conversation.id || post.conversationIds?.includes(conversation.id)))
+        .sort((first, second) => second.createdAt - first.createdAt)
+        .slice(0, 16);
+      const result = await generateSmallTheater({
+        context: {
+          user: boundUser,
+          character,
+          boundUser,
+          mode: conversation.activeMode,
+          messages: visibleMessages,
+          recentVoomPosts,
+          worldBooks: worldBooks.value,
+          conversationSummary: conversation.summary,
+          memorySummary: await memoryContextForConversationAsync(conversation.id, visibleMessages.slice(-8).map((message) => messageReadableContent(message)).join('\n'), {
+            modelOverride: getConversationTextModelOverride(chatSettings, 'summary', conversation.activeMode)
+          }),
+          stickerVisionEnabled: chatSettings.stickerVisionEnabled,
+          timeAwareness: chatSettings.timeAwareness
+        },
+        topic: selectedTopic,
+        sourceTheater: theater,
+        continuationGuidance: updateGuidance?.trim() || undefined,
+        recentTheaters: smallTheatersForCharacter(character.id).filter((entry) => entry.id !== theater.id).slice(0, 8),
+        settings: settings.value ?? undefined,
+        modelOverride
+      });
+      const createdAt = Date.now();
+      const nextTheater: SmallTheater = {
+        id: createId('theater'),
+        charId: character.id,
+        conversationId: conversation.id,
+        topicId: selectedTopic.id,
+        topicTitle: selectedTopic.title,
+        authorName: getCharacterAiName(character),
+        authorAvatar: character.avatar,
+        title: result.title,
+        summary: result.summary,
+        html: result.html,
+        model: result.model,
+        createdAt,
+        updatedAt: createdAt
+      };
+      smallTheaters.value.unshift(nextTheater);
+      await putEntity('smallTheaters', nextTheater);
+      return nextTheater;
+    } finally {
+      generatingSmallTheaterConversationIds.delete(lockKey);
+    }
+  }
+
+  async function forwardSmallTheaterToCharacter(theaterId: string, targetCharacterId: string) {
+    const theater = smallTheaterById(theaterId);
+    const targetCharacter = characterById(targetCharacterId);
+    if (!theater || !targetCharacter) return null;
+    const boundUser = userById(targetCharacter.boundUserId) ?? user.value;
+    if (!boundUser) return null;
+    const targetConversation = conversations.value.find((conversation) => conversation.charId === targetCharacter.id && conversation.userId === boundUser.id)
+      ?? conversations.value.find((conversation) => conversation.charId === targetCharacter.id);
+    if (!targetConversation) {
+      showConfigAlert('没有找到这个角色的线上会话，暂时无法转发。', '无法转发小剧场');
+      return null;
+    }
+    return appendUserSmallTheaterLinkMessage(targetConversation.id, theater);
   }
 
   function getVoomImageSizeLabel(provider: ImageModuleId) {
@@ -6267,6 +6421,7 @@ export const useAppStore = defineStore('app', () => {
     appendUserVoiceMessage,
     appendUserLocationMessage,
     appendUserTransferMessage,
+    appendUserSmallTheaterLinkMessage,
     updateTransferStatus,
     deleteMessages,
     updateMessageContent,
@@ -6301,6 +6456,8 @@ export const useAppStore = defineStore('app', () => {
     saveSmallTheaterTopic,
     deleteSmallTheaterTopic,
     createSmallTheaterFromConversation,
+    continueSmallTheater,
+    forwardSmallTheaterToCharacter,
     deleteSmallTheater,
     regenerateVoomPostImage,
     applyVoomPostImageCandidate,

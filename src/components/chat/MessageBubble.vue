@@ -23,7 +23,7 @@
         @pointermove="handlePointerMove"
         @pointerup="handlePointerUp"
       >
-        <div class="bubble" :class="{ narration: message.displayStyle === 'narration', sticker: message.sticker, image: message.image, voice: message.voice, location: message.location, transfer: message.transfer, transferReceipt: message.transfer && linePayIsReceipt, offlineInvitation: message.offlineInvitation }" :style="bubbleStyle">
+        <div class="bubble" :class="{ narration: message.displayStyle === 'narration', sticker: message.sticker, image: message.image, voice: message.voice, location: message.location, transfer: message.transfer, transferReceipt: message.transfer && linePayIsReceipt, theaterLink: message.theaterLink, offlineInvitation: message.offlineInvitation }" :style="bubbleStyle">
           <template v-if="message.sticker">
             <img class="sticker-image" :src="getStickerDisplayImageUrl(message.sticker)" :alt="message.sticker.description" />
           </template>
@@ -108,6 +108,19 @@
               <span v-if="canRespondTransferCard" class="transfer-request-actions" @pointerdown.stop @pointerup.stop>
                 <button class="transfer-request-action transfer-request-action--reject" type="button" @click.stop="emit('reject-transfer')">拒绝</button>
                 <button class="transfer-request-action transfer-request-action--accept" type="button" @click.stop="emit('accept-transfer')">接收</button>
+              </span>
+            </section>
+          </template>
+          <template v-else-if="message.theaterLink">
+            <section class="line-website-card" aria-label="网站链接">
+              <span class="line-website-thumb" aria-hidden="true">
+                <Globe2 :size="22" stroke-width="2.4" />
+              </span>
+              <span class="line-website-body">
+                <span class="line-website-kicker">Website Link</span>
+                <strong>{{ message.theaterLink.title }}</strong>
+                <small>{{ message.theaterLink.summary }}</small>
+                <em>{{ message.theaterLink.url }}</em>
               </span>
             </section>
           </template>
@@ -213,7 +226,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { DoorOpen, LoaderCircle, Pause, Play, Quote, X } from 'lucide-vue-next';
+import { DoorOpen, Globe2, LoaderCircle, Pause, Play, Quote, X } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
 import type { CharacterProfile, ChatAppearanceSettings, ChatImageCandidate, ChatMessage, UserProfile } from '@/types/domain';
 import { useAppStore } from '@/stores/appStore';
@@ -371,6 +384,7 @@ const showInlineTranslation = computed(() => props.message.sender === 'char'
   && !props.message.sticker
   && !props.message.voice
   && !props.message.location
+  && !props.message.theaterLink
   && shouldShowChineseTranslation(displayContent.value, displayTranslation.value));
 const showVoiceTranslation = computed(() => props.message.sender === 'char'
   && props.message.mode === 'online'
@@ -400,12 +414,14 @@ const quoteText = computed(() => props.message.quote?.sticker
         ? props.message.quote.location.name
         : props.message.quote?.transfer
           ? `${props.message.quote.transfer.responseToMessageId ? '转账回执 ' : ''}¥${props.message.quote.transfer.amount}`
+          : props.message.quote?.theaterLink
+            ? props.message.quote.theaterLink.title
   : props.message.quote?.content ?? '');
 const quoteThumbnail = computed(() => props.message.quote?.sticker?.imageUrl ?? props.message.quote?.image?.url ?? '');
 const quoteAuthorLabel = computed(() => (props.message.quote?.authorName ? `${props.message.quote.authorName}：` : ''));
 
 const bubbleStyle = computed(() => {
-  if (props.message.sticker || props.message.image || props.message.location || props.message.transfer || props.message.offlineInvitation) return {};
+  if (props.message.sticker || props.message.image || props.message.location || props.message.transfer || props.message.theaterLink || props.message.offlineInvitation) return {};
   if (props.message.displayStyle === 'narration') {
     return {
       background: props.appearance.narrationBubbleColor,
@@ -701,7 +717,7 @@ function handleBubbleClick(event: MouseEvent) {
     return;
   }
   if (props.selectionMode) emit('toggle-select');
-  else if (props.message.location || props.message.transfer) emit('open-card-detail', props.message);
+  else if (props.message.location || props.message.transfer || props.message.theaterLink) emit('open-card-detail', props.message);
 }
 
 function stopVoicePlayback() {
@@ -1082,7 +1098,8 @@ onBeforeUnmount(stopVoicePlayback);
 }
 
 .bubble.location,
-.bubble.transfer {
+.bubble.transfer,
+.bubble.theaterLink {
   padding: 0;
   overflow: hidden;
   border-radius: 10px;
@@ -1100,6 +1117,14 @@ onBeforeUnmount(stopVoicePlayback);
 .bubble.transfer {
   width: min(254px, 74vw);
   min-width: min(224px, 64vw);
+  background: #ffffff;
+  border: 0;
+  box-shadow: 0 9px 22px rgba(22, 27, 33, 0.08);
+}
+
+.bubble.theaterLink {
+  width: min(266px, 76vw);
+  min-width: min(226px, 66vw);
   background: #ffffff;
   border: 0;
   box-shadow: 0 9px 22px rgba(22, 27, 33, 0.08);
@@ -1125,13 +1150,17 @@ onBeforeUnmount(stopVoicePlayback);
 .message-row.char .bubble.location,
 .message-row.user .bubble.transfer,
 .message-row.char .bubble.transfer,
+.message-row.user .bubble.theaterLink,
+.message-row.char .bubble.theaterLink,
 .message-row.char .bubble.offlineInvitation,
 .message-row.system .bubble.offlineInvitation {
   color: #111111;
 }
 
 .message-row.user .bubble.transfer,
-.message-row.char .bubble.transfer {
+.message-row.char .bubble.transfer,
+.message-row.user .bubble.theaterLink,
+.message-row.char .bubble.theaterLink {
   background: #ffffff;
 }
 
@@ -1496,6 +1525,79 @@ onBeforeUnmount(stopVoicePlayback);
   border-top: 2px solid #c6c6c6;
   border-right: 2px solid #c6c6c6;
   transform: rotate(45deg);
+}
+
+.line-website-card {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(12, 20, 28, 0.08);
+  border-radius: inherit;
+  background: #ffffff;
+  color: #111111;
+  cursor: pointer;
+}
+
+.line-website-thumb {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #effaf3, #edf3ff);
+  color: #04a64b;
+}
+
+.line-website-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.line-website-kicker {
+  color: #04a64b;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1.05;
+  text-transform: uppercase;
+}
+
+.line-website-body strong,
+.line-website-body small,
+.line-website-body em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.line-website-body strong {
+  color: #101010;
+  font-size: 12px;
+  font-weight: 930;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.line-website-body small {
+  display: -webkit-box;
+  color: #5f6670;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.line-website-body em {
+  color: #8d949c;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 760;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .transfer-request-card,

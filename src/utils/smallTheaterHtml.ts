@@ -112,6 +112,15 @@ function createSmallTheaterRuntimeGuard(fallbackTitle: string) {
 </script>`;
 }
 
+function injectRuntimeScript(html: string, script: string) {
+  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${script}\n</body>`);
+  return `${html}\n${script}`;
+}
+
+function removeSmallTheaterActionRuntime(html: string) {
+  return html.replace(/<script\b[^>]*data-link-theater-action-runtime="true"[\s\S]*?<\/script>\s*/gi, '');
+}
+
 export function getSmallTheaterVisibleText(html: string) {
   return compactText(stripInvisibleHtml(getBodyContent(html)));
 }
@@ -136,10 +145,11 @@ export function assertRenderableSmallTheaterHtml(html: string) {
 }
 
 export function withSmallTheaterRuntimeGuard(html: string, fallbackTitle = '小剧场') {
-  const trimmedHtml = html.trim();
+  const trimmedHtml = removeSmallTheaterActionRuntime(html.trim()).trim();
+  const guard = createSmallTheaterRuntimeGuard(fallbackTitle);
   if (!trimmedHtml) {
     const title = escapeHtmlText(fallbackTitle || '小剧场');
-    return `<!doctype html>
+    const emptyDocument = `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -148,10 +158,10 @@ export function withSmallTheaterRuntimeGuard(html: string, fallbackTitle = '小�
 </head>
 <body></body>
 </html>`;
+    return injectRuntimeScript(emptyDocument, guard);
   }
-  if (trimmedHtml.includes('data-link-theater-runtime-guard="true"')) return trimmedHtml;
 
-  const guard = createSmallTheaterRuntimeGuard(fallbackTitle);
-  if (/<\/body>/i.test(trimmedHtml)) return trimmedHtml.replace(/<\/body>/i, `${guard}\n</body>`);
-  return `${trimmedHtml}\n${guard}`;
+  let output = trimmedHtml;
+  if (!output.includes('data-link-theater-runtime-guard="true"')) output = injectRuntimeScript(output, guard);
+  return output;
 }
