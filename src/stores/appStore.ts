@@ -56,9 +56,19 @@ interface IncrementalGrandSummaryOptions {
 
 type BackupProgressCallback = (label: string, percent: number) => void;
 
+interface ImportBackupOptions {
+  sourceByteSize?: number;
+  onProgress?: BackupProgressCallback;
+}
+
+interface ImportBackupResult {
+  slimmedForMobile: boolean;
+  persistentStorageGranted: boolean;
+}
+
 type ConversationSummaryResultStatus = 'created' | 'updated' | 'existing' | 'busy';
 
-export type DataCleanupAction = 'generated-images' | 'message-media' | 'sticker-local-cache' | 'image-candidates' | 'voice-audio' | 'memory-vectors';
+export type DataCleanupAction = 'generated-images' | 'message-media' | 'user-sent-images' | 'sticker-local-cache' | 'image-candidates' | 'voice-audio' | 'memory-vectors';
 export type ClearableDataSection = 'messages' | 'voomPosts' | 'smallTheaters' | 'music' | 'worldBooks' | 'stickers' | 'conversationSettings' | 'conversationMemories' | 'conversationMemoryAtoms' | 'generatedImages';
 
 type ConversationSummaryResult =
@@ -79,6 +89,7 @@ const memoryTimelineTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
   second: '2-digit',
   hourCycle: 'h23'
 });
+const oversizedImportSourceBytes = 48 * 1024 * 1024;
 
 function formatMemoryTimelineTime(timestamp: number) {
   if (!Number.isFinite(timestamp) || timestamp <= 0) return '未知时间';
@@ -584,11 +595,135 @@ export const useAppStore = defineStore('app', () => {
     ready.value = true;
   }
 
+  function prepareSnapshotForStore(snapshot: AppSnapshot): AppSnapshot {
+    const normalizedMemories = dedupeConversationMemories(snapshot.conversationMemories).memories;
+    return {
+      ...snapshot,
+      messages: snapshot.messages.map((message) => normalizeStoredMessageIdentityReferences(message)),
+      voomPosts: snapshot.voomPosts.map((post) => normalizeStoredVoomPostIdentityReferences(post)),
+      smallTheaters: normalizeStoredSmallTheaters(snapshot.smallTheaters ?? []),
+      musicCommentThreads: normalizeStoredMusicCommentThreads(snapshot.musicCommentThreads ?? []),
+      conversationMemories: normalizedMemories,
+      conversationMemoryAtoms: normalizeConversationMemoryAtoms(snapshot.conversationMemoryAtoms ?? [], normalizedMemories),
+      favorites: normalizeFavorites(snapshot.favorites ?? [])
+    };
+  }
+
+  function shouldUseMobileSafeRestore(sourceByteSize = 0) {
+    return Number.isFinite(sourceByteSize) && sourceByteSize >= oversizedImportSourceBytes;
+  }
+
+  function stripMemoryVectorCache(memory: ConversationMemoryRecord): ConversationMemoryRecord {
+    const hasMemoryVector = Array.isArray(memory.vector) && memory.vector.length > 0;
+    const entries = memory.entries?.map((entry) => entry.vector?.length ? { ...entry, vector: [] } : entry);
+    const entriesChanged = Boolean(entries?.some((entry, index) => entry !== memory.entries?.[index]));
+    if (!hasMemoryVector && !entriesChanged) return memory;
+    return {
+      ...memory,
+      vector: [],
+      entries: entries ?? memory.entries
+    };
+  }
+
+  function memoryHasVectorCache(memory: ConversationMemoryRecord) {
+    return (Array.isArray(memory.vector) && memory.vector.length > 0) || Boolean(memory.entries?.some((entry) => entry.vector?.length));
+  }
+
+  async function purgeLegacyMemoryVectorData(legacyAtomIds: string[], shouldPersistMemories: boolean) {
+    const tasks: Array<Promise<unknown>> = legacyAtomIds.map((atomId) => deleteEntity('conversationMemoryAtoms', atomId));
+    if (shouldPersistMemories) {
+      tasks.push(...conversationMemories.value.map((memory) => putEntity('conversationMemories', stripMemoryVectorCache(memory))));
+    }
+    if (!tasks.length) return;
+    await Promise.all(tasks);
+  }
+
+  function stripRestoreVectorCaches(snapshot: AppSnapshot): AppSnapshot {
+    return {
+      ...snapshot,
+      conversationMemories: snapshot.conversationMemories.map((memory) => stripMemoryVectorCache(memory)),
+      conversationMemoryAtoms: []
+    };
+  }
+
+  function stripVoomPostMediaCache(post: VoomPost): VoomPost {
+    return {
+      ...post,
+      authorAvatar: stripInlineMediaUrl(post.authorAvatar),
+      image: stripInlineMediaUrl(post.image),
+      imageCandidates: undefined
+    };
+  }
+
+  function stripFavoriteMediaCache(record: FavoriteMessageRecord): FavoriteMessageRecord {
+    return {
+      ...record,
+      authorAvatar: stripInlineMediaUrl(record.authorAvatar),
+      characterAvatar: stripInlineMediaUrl(record.characterAvatar),
+      userAvatar: stripInlineMediaUrl(record.userAvatar),
+      message: stripMessageMediaCache(record.message)
+    };
+  }
+
+  function stripSettingsMediaCache(entry: AppSettings): AppSettings {
+    return normalizeAppSettings({
+      ...entry,
+      imageOpenAi: {
+        ...entry.imageOpenAi,
+        lastImageUrl: ''
+      },
+      imageNovelAi: {
+        ...entry.imageNovelAi,
+        lastImageUrl: ''
+      },
+      imagePollinations: {
+        ...entry.imagePollinations,
+        lastImageUrl: '',
+        referenceImage: stripInlineMediaUrl(entry.imagePollinations.referenceImage)
+      }
+    });
+  }
+
+  function slimOversizedRestoreSnapshot(snapshot: AppSnapshot): AppSnapshot {
+    const vectorSlimmedSnapshot = stripRestoreVectorCaches(snapshot);
+    return {
+      ...vectorSlimmedSnapshot,
+      messages: vectorSlimmedSnapshot.messages.map((message) => stripMessageMediaCache(message)),
+      voomPosts: vectorSlimmedSnapshot.voomPosts.map((post) => stripVoomPostMediaCache(post)),
+      stickers: vectorSlimmedSnapshot.stickers.map((sticker) => stripStickerLocalCache(sticker)),
+      generatedImages: [],
+      favorites: vectorSlimmedSnapshot.favorites.map((record) => stripFavoriteMediaCache(record)),
+      settings: stripSettingsMediaCache(vectorSlimmedSnapshot.settings)
+    };
+  }
+
+  async function requestPersistentStorage() {
+    const storage = typeof navigator === 'undefined' ? undefined : navigator.storage;
+    if (!storage?.persist) return false;
+    try {
+      if (storage.persisted && await storage.persisted()) return true;
+      return await storage.persist();
+    } catch {
+      return false;
+    }
+  }
+
+  function normalizeImportPersistenceError(error: unknown) {
+    const errorName = error instanceof Error ? error.name : '';
+    const message = error instanceof Error ? error.message : '';
+    if (/quota|storage|disk|space|abort/i.test(`${errorName} ${message}`)) {
+      return new Error('本机存储空间不足，导入没有写入。请先到“设置 > 数据管理”清理生成图历史、消息媒体缓存、语音音频缓存后再试，或改用安装后的 PWA/空间更大的浏览器。');
+    }
+    return error instanceof Error ? error : new Error('导入失败，当前本地数据未被替换。');
+  }
+
   async function hydrate() {
     if (ready.value) return;
     if (hydratePromise) return hydratePromise;
     hydratePromise = (async () => {
     const snapshot = await loadSnapshot();
+    const legacyMemoryAtomIds = (snapshot.conversationMemoryAtoms ?? []).map((atom) => atom.id);
+    const shouldPersistMemoryVectorCleanup = snapshot.conversationMemories.some((memory) => memoryHasVectorCache(memory));
     users.value = snapshot.users.map((entry) => normalizeUserProfile(entry));
     const fallbackUserId = snapshot.settings.activeUserId || snapshot.users[0]?.id || '';
     characters.value = snapshot.characters.map((entry) => normalizeCharacterProfile(entry, fallbackUserId));
@@ -632,11 +767,11 @@ export const useAppStore = defineStore('app', () => {
       ...entry,
       characterStickerGroupIds: entry.characterStickerGroupIds.filter((id) => !isRecentStickerGroupId(id) && !stickerLibrary.removedGroupIds.includes(id))
     }, entry.conversationId, snapshot.conversations.find((conversation) => conversation.id === entry.conversationId)?.activeMode));
-    conversationMemories.value = await removeDuplicateConversationMemories(snapshot.conversationMemories.map((memory) => ({
+    conversationMemories.value = await removeDuplicateConversationMemories(snapshot.conversationMemories.map((memory) => stripMemoryVectorCache({
       ...memory,
       kind: ageMemoryKind(memory.createdAt),
-      vector: Array.isArray(memory.vector) ? memory.vector : [],
-      entries: normalizeMemoryRecordEntries(memory)
+      vector: [],
+      entries: normalizeMemoryRecordEntries(memory).map((entry) => ({ ...entry, vector: [] }))
     })));
     conversationMemoryAtoms.value = [];
     generatedImages.value = normalizeGeneratedImages(snapshot.generatedImages ?? []);
@@ -646,6 +781,9 @@ export const useAppStore = defineStore('app', () => {
       activeUserId: snapshot.settings.activeUserId || snapshot.users[0]?.id || ''
     });
     ready.value = true;
+    if (legacyMemoryAtomIds.length || shouldPersistMemoryVectorCleanup) {
+      void purgeLegacyMemoryVectorData(legacyMemoryAtomIds, shouldPersistMemoryVectorCleanup).catch(() => undefined);
+    }
     scheduleStartupStorageMaintenance();
     void refreshEnabledVendorModels();
     })().finally(() => {
@@ -1402,6 +1540,37 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  function sampleArrayEntries<T>(entries: T[], maxSamples = 6) {
+    if (entries.length <= maxSamples) return entries;
+    const sampledEntries: T[] = [];
+    const step = Math.max(1, Math.floor(entries.length / maxSamples));
+    for (let index = 0; index < entries.length && sampledEntries.length < maxSamples; index += step) {
+      sampledEntries.push(entries[index]);
+    }
+    const lastEntry = entries.at(-1);
+    if (lastEntry && sampledEntries[sampledEntries.length - 1] !== lastEntry) sampledEntries[sampledEntries.length - 1] = lastEntry;
+    return sampledEntries;
+  }
+
+  function estimateArrayJsonBytes(entries: unknown[]) {
+    if (!entries.length) return 0;
+    if (entries.length <= 20) return estimateJsonBytes(entries);
+    const sampledEntries = sampleArrayEntries(entries);
+    const sampledBytes = sampledEntries.reduce<number>((total, entry) => total + estimateJsonBytes(entry), 0);
+    return Math.round(sampledBytes / Math.max(1, sampledEntries.length) * entries.length);
+  }
+
+  function estimateGroupedArrayJsonBytes(groups: unknown[][]) {
+    return groups.reduce((total, group) => total + estimateArrayJsonBytes(group), 0);
+  }
+
+  function estimateTransformedFreedBytes<T>(entries: T[], transform: (entry: T) => unknown) {
+    if (!entries.length) return 0;
+    const sampledEntries = entries.length <= 20 ? entries : sampleArrayEntries(entries);
+    const sampledFreedBytes = sampledEntries.reduce<number>((total, entry) => total + estimateFreedBytes(entry, transform(entry)), 0);
+    return Math.round(sampledFreedBytes / Math.max(1, sampledEntries.length) * entries.length);
+  }
+
   function isInlineMediaUrl(value = '') {
     return /^data:(?:image|audio)\//i.test(value.trim());
   }
@@ -1443,6 +1612,40 @@ export const useAppStore = defineStore('app', () => {
       url: stripInlineMediaUrl(image.url),
       candidates: image.candidates?.map((candidate) => ({ ...candidate, image: stripInlineMediaUrl(candidate.image) })).filter((candidate) => candidate.image)
     };
+  }
+
+  function isUserSentInlineImage(image: ChatImageAttachment | undefined) {
+    return Boolean(image && (image.kind === 'photo' || image.kind === 'local') && isInlineMediaUrl(image.url));
+  }
+
+  function stripUserSentImageAttachment(image: ChatImageAttachment): ChatImageAttachment {
+    return {
+      ...image,
+      kind: 'description',
+      url: '',
+      candidates: undefined
+    };
+  }
+
+  function stripUserSentImageData(message: ChatMessage): ChatMessage {
+    let changed = false;
+    const nextImage = message.sender === 'user' && isUserSentInlineImage(message.image)
+      ? stripUserSentImageAttachment(message.image!)
+      : message.image;
+    if (nextImage !== message.image) changed = true;
+
+    const nextQuoteImage = message.quote?.sender === 'user' && isUserSentInlineImage(message.quote.image)
+      ? stripUserSentImageAttachment(message.quote.image!)
+      : message.quote?.image;
+    if (nextQuoteImage !== message.quote?.image) changed = true;
+
+    return changed
+      ? {
+        ...message,
+        image: nextImage,
+        quote: message.quote ? { ...message.quote, image: nextQuoteImage } : message.quote
+      }
+      : message;
   }
 
   function stripVoiceAudioCache(voice: ChatVoiceAttachment): ChatVoiceAttachment {
@@ -2738,12 +2941,86 @@ export const useAppStore = defineStore('app', () => {
     await deleteEntity('worldBooks', worldBookId);
   }
 
+  async function compactChatImageForBackup(image: ChatImageAttachment): Promise<ChatImageAttachment> {
+    const sourceUrl = image.url?.trim() ?? '';
+    const nextUrl = sourceUrl ? await compactInlineDisplayImage(sourceUrl) : image.url;
+    const nextCandidates = sourceUrl && nextUrl
+      ? image.candidates
+        ?.filter((candidate) => candidate.image.trim() === sourceUrl)
+        .map((candidate) => ({ ...candidate, image: nextUrl }))
+      : undefined;
+    return {
+      ...image,
+      url: nextUrl,
+      candidates: nextCandidates?.length ? nextCandidates : undefined
+    };
+  }
+
+  async function compactMessageForBackup(message: ChatMessage): Promise<ChatMessage> {
+    const nextImage = message.image ? await compactChatImageForBackup(message.image) : message.image;
+    const nextQuoteImage = message.quote?.image ? await compactChatImageForBackup(message.quote.image) : message.quote?.image;
+    return {
+      ...message,
+      image: nextImage,
+      quote: message.quote ? { ...message.quote, image: nextQuoteImage } : message.quote
+    };
+  }
+
+  async function compactVoomPostForBackup(post: VoomPost): Promise<VoomPost> {
+    const sourceImage = post.image?.trim() ?? '';
+    const nextImage = sourceImage ? await compactInlineDisplayImage(sourceImage) : post.image;
+    const nextCandidates = sourceImage && nextImage
+      ? post.imageCandidates
+        ?.filter((candidate) => candidate.image.trim() === sourceImage)
+        .map((candidate) => ({ ...candidate, image: nextImage }))
+      : undefined;
+    return {
+      ...post,
+      image: nextImage,
+      imageCandidates: nextCandidates?.length ? nextCandidates : undefined
+    };
+  }
+
+  async function compactGeneratedImageForBackup(record: GeneratedImageRecord): Promise<GeneratedImageRecord> {
+    return {
+      ...record,
+      imageUrl: await compactInlineDisplayImage(record.imageUrl)
+    };
+  }
+
+  async function compactSnapshotMediaForBackup(snapshot: AppSnapshot): Promise<AppSnapshot> {
+    const messages: ChatMessage[] = [];
+    for (const message of snapshot.messages) messages.push(await compactMessageForBackup(message));
+
+    const voomPostsForBackup: VoomPost[] = [];
+    for (const post of snapshot.voomPosts) voomPostsForBackup.push(await compactVoomPostForBackup(post));
+
+    const generatedImagesForBackup: GeneratedImageRecord[] = [];
+    for (const record of snapshot.generatedImages ?? []) generatedImagesForBackup.push(await compactGeneratedImageForBackup(record));
+
+    const favoritesForBackup: FavoriteMessageRecord[] = [];
+    for (const favorite of snapshot.favorites ?? []) {
+      favoritesForBackup.push({
+        ...favorite,
+        message: await compactMessageForBackup(favorite.message)
+      });
+    }
+
+    return {
+      ...snapshot,
+      messages,
+      voomPosts: voomPostsForBackup,
+      generatedImages: generatedImagesForBackup,
+      favorites: favoritesForBackup
+    };
+  }
+
   async function createBackupFile(onProgress?: BackupProgressCallback) {
     if (!ready.value) await hydrate();
     onProgress?.('正在读取本地数据', 20);
     const snapshot = await loadSnapshot();
     onProgress?.('正在整理备份内容', 65);
-    return createLinkBackupFile({
+    const backupSnapshot = await compactSnapshotMediaForBackup({
       ...snapshot,
       messages: snapshot.messages.map((message) => normalizeStoredMessageIdentityReferences(message)),
       voomPosts: snapshot.voomPosts.map((post) => normalizeStoredVoomPostIdentityReferences(post)),
@@ -2751,23 +3028,30 @@ export const useAppStore = defineStore('app', () => {
       musicCommentThreads: normalizeStoredMusicCommentThreads(snapshot.musicCommentThreads ?? []),
       favorites: normalizeFavorites(snapshot.favorites ?? [])
     });
+    return createLinkBackupFile(backupSnapshot);
   }
 
-  async function importBackupSnapshot(snapshot: AppSnapshot) {
+  async function importBackupSnapshot(snapshot: AppSnapshot, options: ImportBackupOptions = {}): Promise<ImportBackupResult> {
+    options.onProgress?.('正在整理导入数据', 45);
     const normalizedSnapshot = keepDeviceGitHubBackupSettings(normalizeSnapshotForRestore(snapshot));
-    applySnapshotToStore(normalizedSnapshot);
-    await replaceSnapshot({
-      ...normalizedSnapshot,
-      users: users.value,
-      characters: characters.value,
-      messages: messages.value,
-      voomPosts: voomPosts.value,
-      musicCommentThreads: musicCommentThreads.value,
-      smallTheaters: smallTheaters.value,
-      favorites: favorites.value,
-      settings: settings.value ?? normalizedSnapshot.settings
-    });
+    const slimmedForMobile = shouldUseMobileSafeRestore(options.sourceByteSize);
+    const restorableSnapshot = slimmedForMobile
+      ? slimOversizedRestoreSnapshot(normalizedSnapshot)
+      : stripRestoreVectorCaches(normalizedSnapshot);
+    const preparedSnapshot = prepareSnapshotForStore(restorableSnapshot);
+    const persistentStorageGranted = await requestPersistentStorage();
+    options.onProgress?.(slimmedForMobile ? '备份较大，正在写入轻量数据' : '正在写入本地数据库', 75);
+
+    try {
+      await replaceSnapshot(preparedSnapshot);
+    } catch (error) {
+      throw normalizeImportPersistenceError(error);
+    }
+
+    options.onProgress?.('正在刷新本地数据', 92);
+    applySnapshotToStore(preparedSnapshot);
     void refreshEnabledVendorModels();
+    return { slimmedForMobile, persistentStorageGranted };
   }
 
   async function saveGitHubBackupState(overrides: Partial<AppSettings['githubBackup']>) {
@@ -2951,7 +3235,7 @@ export const useAppStore = defineStore('app', () => {
       const backupFile = parseLinkBackupFileText(backupText);
       const currentBackupConfig = settings.value.githubBackup;
       await saveGitHubBackupProgress('restoring', '正在恢复 GitHub 备份到本地', 75);
-      await importBackupSnapshot(backupFile.snapshot);
+      await importBackupSnapshot(backupFile.snapshot, { sourceByteSize: new Blob([backupText]).size });
       const history = await loadGitHubBackupHistory(3).catch(() => currentBackupConfig.history ?? []);
       const latest = history[0];
       await saveGitHubBackupState({
@@ -2993,11 +3277,10 @@ export const useAppStore = defineStore('app', () => {
   }
 
   async function addGeneratedImage(record: Omit<GeneratedImageRecord, 'id' | 'createdAt'> & { id?: string; createdAt?: number }) {
-    const compactImageUrl = await compactInlineDisplayImage(record.imageUrl);
     const normalizedRecord = normalizeGeneratedImages([{
       id: record.id || createId('image'),
       provider: record.provider,
-      imageUrl: compactImageUrl,
+      imageUrl: record.imageUrl,
       title: record.title,
       prompt: record.prompt,
       negativePrompt: record.negativePrompt,
@@ -3015,7 +3298,7 @@ export const useAppStore = defineStore('app', () => {
 
   async function updateGeneratedImageUrl(imageId: string, imageUrl: string) {
     const normalizedImageId = imageId.trim();
-    const normalizedImageUrl = (await compactInlineDisplayImage(imageUrl)).trim();
+    const normalizedImageUrl = imageUrl.trim();
     if (!normalizedImageId || !normalizedImageUrl) return null;
     const imageIndex = generatedImages.value.findIndex((entry) => entry.id === normalizedImageId);
     if (imageIndex < 0) return null;
@@ -3181,50 +3464,128 @@ export const useAppStore = defineStore('app', () => {
 
   function getDataInventory() {
     const sections = [
-      { id: 'users', label: '用户资料', count: users.value.length, bytes: estimateJsonBytes(users.value), protected: true },
-      { id: 'characters', label: '角色资料', count: characters.value.length, bytes: estimateJsonBytes(characters.value), protected: true },
-      { id: 'conversations', label: '会话索引', count: conversations.value.length, bytes: estimateJsonBytes(conversations.value), protected: true },
-      { id: 'messages', label: '聊天消息', count: messages.value.length, bytes: estimateJsonBytes(messages.value), clearable: true },
-      { id: 'voomPosts', label: 'VOOM 动态', count: voomPosts.value.length, bytes: estimateJsonBytes(voomPosts.value), clearable: true },
-      { id: 'smallTheaters', label: '小剧场', count: smallTheaterTopics.value.length + smallTheaters.value.length, bytes: estimateJsonBytes([smallTheaterTopics.value, smallTheaters.value]), clearable: true },
-      { id: 'music', label: '音乐收藏与评论', count: musicFavoriteTracks.value.length + musicCommentThreads.value.length, bytes: estimateJsonBytes([musicFavoriteTracks.value, musicCommentThreads.value]), clearable: true },
-      { id: 'worldBooks', label: '世界书', count: worldBooks.value.length, bytes: estimateJsonBytes(worldBooks.value), clearable: true },
-      { id: 'stickers', label: '贴纸库', count: stickerGroups.value.length + stickers.value.length, bytes: estimateJsonBytes([stickerGroups.value, stickers.value]), clearable: true },
-      { id: 'conversationSettings', label: '会话设置', count: conversationSettings.value.length, bytes: estimateJsonBytes(conversationSettings.value), clearable: true },
-      { id: 'conversationMemories', label: '记忆摘要', count: conversationMemories.value.length, bytes: estimateJsonBytes(conversationMemories.value), clearable: true },
-      { id: 'conversationMemoryAtoms', label: '旧版记忆索引', count: conversationMemoryAtoms.value.length, bytes: estimateJsonBytes(conversationMemoryAtoms.value), clearable: true },
-      { id: 'generatedImages', label: '生成图历史', count: generatedImages.value.length, bytes: estimateJsonBytes(generatedImages.value), clearable: true },
-      { id: 'settings', label: '全局设置', count: 1, bytes: estimateJsonBytes(settings.value), protected: true }
+      {
+        id: 'profiles',
+        label: '账号与角色',
+        description: '用户资料、角色资料、头像与绑定关系',
+        count: users.value.length + characters.value.length,
+        bytes: estimateGroupedArrayJsonBytes([users.value, characters.value]),
+        protected: true
+      },
+      {
+        id: 'chatData',
+        label: '聊天与会话',
+        description: '会话列表、聊天消息、单聊设置',
+        count: conversations.value.length + messages.value.length + conversationSettings.value.length,
+        bytes: estimateGroupedArrayJsonBytes([conversations.value, messages.value, conversationSettings.value]),
+        clearable: true
+      },
+      {
+        id: 'favorites',
+        label: '收藏夹',
+        description: '收藏消息与收藏时保存的快照',
+        count: favorites.value.length,
+        bytes: estimateArrayJsonBytes(favorites.value),
+        clearable: true
+      },
+      {
+        id: 'conversationMemories',
+        label: '记忆摘要',
+        description: '长期记忆摘要与回忆线索',
+        count: conversationMemories.value.length + conversationMemoryAtoms.value.length,
+        bytes: estimateGroupedArrayJsonBytes([conversationMemories.value, conversationMemoryAtoms.value]),
+        clearable: true
+      },
+      {
+        id: 'worldBooks',
+        label: '世界书',
+        description: '全局与角色绑定的世界书条目',
+        count: worldBooks.value.length,
+        bytes: estimateArrayJsonBytes(worldBooks.value),
+        clearable: true
+      },
+      {
+        id: 'voomPosts',
+        label: 'VOOM 动态',
+        description: '动态、评论、点赞与配图信息',
+        count: voomPosts.value.length,
+        bytes: estimateArrayJsonBytes(voomPosts.value),
+        clearable: true
+      },
+      {
+        id: 'smallTheaters',
+        label: '小剧场',
+        description: '小剧场主题与生成内容',
+        count: smallTheaterTopics.value.length + smallTheaters.value.length,
+        bytes: estimateGroupedArrayJsonBytes([smallTheaterTopics.value, smallTheaters.value]),
+        clearable: true
+      },
+      {
+        id: 'music',
+        label: '音乐',
+        description: '音乐收藏与评论线程',
+        count: musicFavoriteTracks.value.length + musicCommentThreads.value.length,
+        bytes: estimateGroupedArrayJsonBytes([musicFavoriteTracks.value, musicCommentThreads.value]),
+        clearable: true
+      },
+      {
+        id: 'stickers',
+        label: '贴纸',
+        description: '贴纸分组、贴纸条目与本地缓存',
+        count: stickerGroups.value.length + stickers.value.length,
+        bytes: estimateGroupedArrayJsonBytes([stickerGroups.value, stickers.value]),
+        clearable: true
+      },
+      {
+        id: 'generatedImages',
+        label: '生成图',
+        description: '聊天与 VOOM 生成图历史',
+        count: generatedImages.value.length,
+        bytes: estimateArrayJsonBytes(generatedImages.value),
+        clearable: true
+      },
+      {
+        id: 'settings',
+        label: '应用配置',
+        description: 'API、TTS、生图、备份与全局偏好',
+        count: 1,
+        bytes: estimateJsonBytes(settings.value),
+        protected: true
+      }
     ];
     const totalBytes = sections.reduce((total, section) => total + section.bytes, 0);
     return { sections, totalBytes };
   }
 
   function estimateCleanupFreedBytes(action: DataCleanupAction) {
-    if (action === 'generated-images') return estimateJsonBytes(generatedImages.value);
+    if (action === 'generated-images') return estimateArrayJsonBytes(generatedImages.value);
 
     if (action === 'message-media') {
-      return estimateFreedBytes(messages.value, messages.value.map((message) => stripMessageMediaCache(message)));
+      return estimateTransformedFreedBytes(messages.value, (message) => stripMessageMediaCache(message));
+    }
+
+    if (action === 'user-sent-images') {
+      const messageFreedBytes = estimateTransformedFreedBytes(messages.value, (message) => stripUserSentImageData(message));
+      const favoriteFreedBytes = estimateTransformedFreedBytes(favorites.value, (favorite) => ({ ...favorite, message: stripUserSentImageData(favorite.message) }));
+      return messageFreedBytes + favoriteFreedBytes;
     }
 
     if (action === 'sticker-local-cache') {
-      const nextStickers = stickers.value.map((sticker) => stripStickerLocalCache(sticker));
-      return estimateFreedBytes(stickers.value, nextStickers);
+      return estimateTransformedFreedBytes(stickers.value, (sticker) => stripStickerLocalCache(sticker));
     }
 
     if (action === 'image-candidates') {
-      const messageFreedBytes = estimateFreedBytes(messages.value, messages.value.map((message) => stripImageCandidates(message)));
-      const nextPosts = voomPosts.value.map((post) => post.imageCandidates?.length ? { ...post, imageCandidates: undefined } : post);
-      return messageFreedBytes + estimateFreedBytes(voomPosts.value, nextPosts);
+      const messageFreedBytes = estimateTransformedFreedBytes(messages.value, (message) => stripImageCandidates(message));
+      const postFreedBytes = estimateTransformedFreedBytes(voomPosts.value, (post) => post.imageCandidates?.length ? { ...post, imageCandidates: undefined } : post);
+      return messageFreedBytes + postFreedBytes;
     }
 
     if (action === 'voice-audio') {
-      return estimateFreedBytes(messages.value, messages.value.map((message) => stripVoiceAudio(message)));
+      return estimateTransformedFreedBytes(messages.value, (message) => stripVoiceAudio(message));
     }
 
-    const nextMemories = conversationMemories.value.map((memory) => memory.vector.length ? { ...memory, vector: [] } : memory);
-    const nextAtoms = conversationMemoryAtoms.value.map((atom) => atom.vector?.length ? { ...atom, vector: [] } : atom);
-    return estimateFreedBytes(conversationMemories.value, nextMemories) + estimateFreedBytes(conversationMemoryAtoms.value, nextAtoms);
+    return estimateTransformedFreedBytes(conversationMemories.value, (memory) => stripMemoryVectorCache(memory))
+      + estimateArrayJsonBytes(conversationMemoryAtoms.value);
   }
 
   async function cleanupData(action: DataCleanupAction) {
@@ -3235,6 +3596,23 @@ export const useAppStore = defineStore('app', () => {
       const changedMessages = nextMessages.filter((message, index) => JSON.stringify(message) !== JSON.stringify(messages.value[index]));
       if (changedMessages.length) await saveMessages(changedMessages);
       return changedMessages.length;
+    }
+
+    if (action === 'user-sent-images') {
+      const nextMessages = messages.value.map((message) => stripUserSentImageData(message));
+      const changedMessages = nextMessages.filter((message, index) => message !== messages.value[index]);
+      const nextFavorites = favorites.value.map((favorite) => {
+        const nextMessage = stripUserSentImageData(favorite.message);
+        return nextMessage === favorite.message ? favorite : { ...favorite, message: nextMessage, kind: favoriteKindForMessage(nextMessage), summary: messageReadableContent(nextMessage) };
+      });
+      const changedFavorites = nextFavorites.filter((favorite, index) => favorite !== favorites.value[index]);
+      if (changedMessages.length) await saveMessages(changedMessages);
+      if (changedFavorites.length) {
+        const favoriteMap = new Map(changedFavorites.map((favorite) => [favorite.id, favorite]));
+        favorites.value = normalizeFavorites(favorites.value.map((favorite) => favoriteMap.get(favorite.id) ?? favorite));
+        await Promise.all(changedFavorites.map((favorite) => putEntity('favorites', toRaw(favorite))));
+      }
+      return changedMessages.length + changedFavorites.length;
     }
 
     if (action === 'sticker-local-cache') {
@@ -3270,21 +3648,19 @@ export const useAppStore = defineStore('app', () => {
       return changedMessages.length;
     }
 
-    const nextMemories = conversationMemories.value.map((memory) => memory.vector.length ? { ...memory, vector: [] } : memory);
+    const nextMemories = conversationMemories.value.map((memory) => stripMemoryVectorCache(memory));
     const changedMemories = nextMemories.filter((memory, index) => memory !== conversationMemories.value[index]);
-    const nextAtoms = conversationMemoryAtoms.value.map((atom) => atom.vector?.length ? { ...atom, vector: [] } : atom);
-    const changedAtoms = nextAtoms.filter((atom, index) => atom !== conversationMemoryAtoms.value[index]);
+    const removedAtoms = [...conversationMemoryAtoms.value];
     if (changedMemories.length) {
       const memoryMap = new Map(changedMemories.map((memory) => [memory.id, memory]));
       conversationMemories.value = conversationMemories.value.map((memory) => memoryMap.get(memory.id) ?? memory);
       await Promise.all(changedMemories.map((memory) => putEntity('conversationMemories', memory)));
     }
-    if (changedAtoms.length) {
-      const atomMap = new Map(changedAtoms.map((atom) => [atom.id, atom]));
-      conversationMemoryAtoms.value = conversationMemoryAtoms.value.map((atom) => atomMap.get(atom.id) ?? atom);
-      await Promise.all(changedAtoms.map((atom) => putEntity('conversationMemoryAtoms', atom)));
+    if (removedAtoms.length) {
+      conversationMemoryAtoms.value = [];
+      await Promise.all(removedAtoms.map((atom) => deleteEntity('conversationMemoryAtoms', atom.id)));
     }
-    return changedMemories.length + changedAtoms.length;
+    return changedMemories.length + removedAtoms.length;
   }
 
   async function clearDataSections(sectionIds: ClearableDataSection[]) {
@@ -5051,7 +5427,7 @@ export const useAppStore = defineStore('app', () => {
     }
 
     const result = await generateImageByProvider(provider, imageSettings, imageOverrides);
-    const imageUrl = await compactInlineDisplayImage(result.imageUrl);
+    const imageUrl = result.imageUrl;
     return createChatImageCandidate({
       image: imageUrl,
       description: imageDescription,
@@ -5203,7 +5579,7 @@ export const useAppStore = defineStore('app', () => {
 
     try {
       const result = await generateImageByProvider(provider, imageSettings, imageOverrides);
-      const imageUrl = await compactInlineDisplayImage(result.imageUrl);
+      const imageUrl = result.imageUrl;
       const latestPost = voomPosts.value.find((entry) => entry.id === normalizedPostId);
       if (!latestPost) return null;
       const nextCandidate = createVoomImageCandidate({
@@ -5284,7 +5660,7 @@ export const useAppStore = defineStore('app', () => {
 
     try {
       const result = await generateImageByProvider(provider, imageSettings, imageOverrides);
-      const imageUrl = await compactInlineDisplayImage(result.imageUrl);
+      const imageUrl = result.imageUrl;
       const nextCandidate = createVoomImageCandidate({
         image: imageUrl,
         description: imageDescription,

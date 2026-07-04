@@ -145,7 +145,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { CloudUpload, Download, Github, Lock } from 'lucide-vue-next';
 import { buildGitHubLoginUrl, ensureGitHubBackupRepository, fetchGitHubViewer, findGitHubBackupRepository, formatGitHubBackupError, getGitHubOAuthWorkerOrigin } from '@/services/githubBackup';
 import { useAppStore } from '@/stores/appStore';
@@ -304,6 +304,23 @@ function formatHistoryTime(timestamp: number) {
   });
 }
 
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+async function waitForBusyPaint() {
+  await nextTick();
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+}
+
 function historyItemLabel(message: string) {
   return message.replace(/^Auto LINK backup |^Manual LINK backup /, '').trim() || 'GitHub 备份';
 }
@@ -330,18 +347,30 @@ async function importBackup(event: Event) {
   const file = input.files?.[0];
   if (!file) return;
 
-  if (!window.confirm('导入备份会替换当前本地数据，继续吗？')) {
+  const isLargeBackup = file.size >= 48 * 1024 * 1024;
+  const confirmMessage = isLargeBackup
+    ? `这个备份文件有 ${formatBytes(file.size)}，导入时会自动清理图片/语音缓存和生成图历史，避免手机白屏。导入会替换当前本地数据，继续吗？`
+    : '导入备份会替换当前本地数据，继续吗？';
+  if (!window.confirm(confirmMessage)) {
     input.value = '';
     return;
   }
 
   localBusy.value = 'import';
   localFeedback.value = '';
+  setLocalFeedback(`正在读取备份文件 ${formatBytes(file.size)}`);
+  await waitForBusyPaint();
 
   try {
     const backup = await parseLinkBackupBlob(file);
-    await store.importBackupSnapshot(backup.snapshot);
-    setLocalFeedback('备份已导入。');
+    const result = await store.importBackupSnapshot(backup.snapshot, {
+      sourceByteSize: file.size,
+      onProgress: (label, percent) => setLocalFeedback(`${label} ${Math.round(percent)}%`)
+    });
+    const persistenceHint = result.persistentStorageGranted ? '' : ' 当前浏览器未授予持久存储；如果退出后仍丢数据，建议安装为 PWA 后再导入。';
+    setLocalFeedback(`${result.slimmedForMobile
+      ? '备份已导入。文件较大，已自动清理图片/语音缓存和生成图历史。'
+      : '备份已导入。'}${persistenceHint}`);
   } catch (error) {
     setLocalFeedback(error instanceof Error ? error.message : '导入失败。', 'error');
   } finally {

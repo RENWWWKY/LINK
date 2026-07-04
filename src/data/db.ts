@@ -43,7 +43,9 @@ const legacyDefaultVoomPostIds = new Set(['voom_seed_1']);
 const inlineImageCompressionOptions = { maxDimension: 800, quality: 0.62, minBytes: 160 * 1024 };
 const inlineAvatarCompressionOptions = { maxDimension: 320, quality: 0.76, minBytes: 56 * 1024 };
 const inlineProfileImageCompressionOptions = { maxDimension: 960, quality: 0.72, minBytes: 160 * 1024 };
-const startupMaintenanceStorageKey = 'link:storage-maintenance:2026-06-inline-media-v1';
+const generatedImageFullQualityMs = 7 * 24 * 60 * 60 * 1000;
+const startupMaintenanceIntervalMs = 24 * 60 * 60 * 1000;
+const startupMaintenanceStorageKey = 'link:storage-maintenance:2026-07-generated-media-v2';
 let startupMaintenancePromise: Promise<void> | null = null;
 
 async function waitForBackupReadLock() {
@@ -79,6 +81,18 @@ async function compactInlineImageValue(value: string | undefined, options = inli
   } catch {
     return value;
   }
+}
+
+function isFreshGeneratedInlineImage(createdAt: number | undefined, provider: string | undefined) {
+  const normalizedProvider = String(provider ?? '').trim();
+  if (!normalizedProvider || normalizedProvider === 'local' || normalizedProvider === 'mock') return false;
+  const timestamp = Number(createdAt);
+  return Number.isFinite(timestamp) && Date.now() - timestamp < generatedImageFullQualityMs;
+}
+
+async function compactInlineImageValueByAge(value: string | undefined, createdAt: number | undefined, provider: string | undefined, options = inlineImageCompressionOptions) {
+  if (isFreshGeneratedInlineImage(createdAt, provider)) return value;
+  return await compactInlineImageValue(value, options);
 }
 
 async function compactVisualProfileInlineImages<T extends Partial<VisualProfile> | undefined>(profile: T): Promise<T> {
@@ -161,14 +175,14 @@ async function compactCharacterProfileInlineImages(character: CharacterProfile):
     : character;
 }
 
-async function compactChatImageAttachment(image: ChatImageAttachment): Promise<ChatImageAttachment> {
+async function compactChatImageAttachment(image: ChatImageAttachment, messageCreatedAt = 0): Promise<ChatImageAttachment> {
   let changed = false;
-  const nextUrl = await compactInlineImageValue(image.url);
+  const nextUrl = await compactInlineImageValueByAge(image.url, messageCreatedAt, image.provider);
   if (nextUrl !== image.url) changed = true;
 
   const nextCandidates = image.candidates
     ? await Promise.all(image.candidates.map(async (candidate) => {
-        const nextImage = await compactInlineImageValue(candidate.image) ?? candidate.image;
+        const nextImage = await compactInlineImageValueByAge(candidate.image, candidate.createdAt, candidate.provider) ?? candidate.image;
         if (nextImage !== candidate.image) changed = true;
         return nextImage === candidate.image ? candidate : { ...candidate, image: nextImage };
       }))
@@ -179,10 +193,10 @@ async function compactChatImageAttachment(image: ChatImageAttachment): Promise<C
 
 async function compactMessageInlineImages(message: ChatMessage): Promise<ChatMessage> {
   let changed = false;
-  const nextImage = message.image ? await compactChatImageAttachment(message.image) : message.image;
+  const nextImage = message.image ? await compactChatImageAttachment(message.image, message.createdAt) : message.image;
   if (nextImage !== message.image) changed = true;
 
-  const nextQuoteImage = message.quote?.image ? await compactChatImageAttachment(message.quote.image) : message.quote?.image;
+  const nextQuoteImage = message.quote?.image ? await compactChatImageAttachment(message.quote.image, message.createdAt) : message.quote?.image;
   if (nextQuoteImage !== message.quote?.image) changed = true;
 
   return changed
@@ -199,12 +213,12 @@ async function compactVoomPostInlineImages(post: VoomPost): Promise<VoomPost> {
   const nextAuthorAvatar = await compactInlineImageValue(post.authorAvatar, inlineAvatarCompressionOptions);
   if (nextAuthorAvatar !== post.authorAvatar) changed = true;
 
-  const nextImage = await compactInlineImageValue(post.image);
+  const nextImage = await compactInlineImageValueByAge(post.image, post.createdAt, post.imageProvider);
   if (nextImage !== post.image) changed = true;
 
   const nextCandidates = post.imageCandidates
     ? await Promise.all(post.imageCandidates.map(async (candidate) => {
-        const nextCandidateImage = await compactInlineImageValue(candidate.image) ?? candidate.image;
+        const nextCandidateImage = await compactInlineImageValueByAge(candidate.image, candidate.createdAt, candidate.provider) ?? candidate.image;
         if (nextCandidateImage !== candidate.image) changed = true;
         return nextCandidateImage === candidate.image ? candidate : { ...candidate, image: nextCandidateImage };
       }))
@@ -219,7 +233,7 @@ async function compactStickerInlineImages(sticker: Sticker): Promise<Sticker> {
 }
 
 async function compactGeneratedImageRecord(record: GeneratedImageRecord): Promise<GeneratedImageRecord> {
-  const nextImageUrl = await compactInlineImageValue(record.imageUrl) ?? record.imageUrl;
+  const nextImageUrl = await compactInlineImageValueByAge(record.imageUrl, record.createdAt, record.provider) ?? record.imageUrl;
   return nextImageUrl === record.imageUrl ? record : { ...record, imageUrl: nextImageUrl };
 }
 
@@ -371,8 +385,10 @@ export async function compactStoredInlineImages() {
 
 export function scheduleStartupStorageMaintenance() {
   if (typeof window === 'undefined') return;
+  const now = Date.now();
   try {
-    if (window.localStorage.getItem(startupMaintenanceStorageKey) === 'done') return;
+    const lastRunAt = Number(window.localStorage.getItem(startupMaintenanceStorageKey) ?? 0);
+    if (Number.isFinite(lastRunAt) && now - lastRunAt < startupMaintenanceIntervalMs) return;
   } catch {
     return;
   }
@@ -381,7 +397,7 @@ export function scheduleStartupStorageMaintenance() {
     startupMaintenancePromise ??= compactStoredInlineImages()
       .then(() => {
         try {
-          window.localStorage.setItem(startupMaintenanceStorageKey, 'done');
+          window.localStorage.setItem(startupMaintenanceStorageKey, String(Date.now()));
         } catch {
           return;
         }
