@@ -48,14 +48,13 @@ async function togglePortraitRequirement() {
   min-height: 34px;
   padding: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
+  background: transparent;
   color: #111111;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92);
 }
 
 .voom-portrait-button.active {
-  background: #111111;
-  color: #ffffff;
+  background: transparent;
+  color: #111111;
 }
 
 .voom-portrait-panel {

@@ -5395,6 +5395,33 @@ export const useAppStore = defineStore('app', () => {
     return getImageGenerationSize(settings.value, provider).size;
   }
 
+  function isVoomPortraitPromptRequired() {
+    return settings.value?.voomImageRequirePortrait !== false;
+  }
+
+  function buildVoomPortraitPrompt(post: VoomPost) {
+    if (!isVoomPortraitPromptRequired()) return '';
+    const authorName = voomAuthorNameForPost(post).trim();
+    const subject = authorName ? `发布角色「${authorName}」本人` : '发布角色本人';
+    return [
+      `VOOM 人物像模式开启：图片必须以${subject}为明确主体`,
+      '必须生成清晰可见的人像、半身像或全身像，人物占据画面主要视觉焦点',
+      '即使描述包含环境、物品或氛围，也要把人物放在前景主体位置，不能生成纯风景、纯物品、抽象图、空镜或无人物画面'
+    ].join(', ');
+  }
+
+  function buildVoomImagePositivePrompt(basePrompt: string, imageDescription: string, post: VoomPost) {
+    return [basePrompt, buildVoomPortraitPrompt(post), imageDescription].filter(Boolean).join(', ');
+  }
+
+  function buildVoomImageNegativePrompt(basePrompt: string) {
+    if (!isVoomPortraitPromptRequired()) return basePrompt;
+    return [
+      basePrompt,
+      '无人物, 空镜, 纯风景, 纯物品, 抽象背景, 看不到人物, no person, empty scene, scenery only, object only, abstract image, background only, missing person'
+    ].filter(Boolean).join(', ');
+  }
+
   async function generateChatImageCandidate(description: string) {
     const imageDescription = description.trim();
     const selectedModel = getSelectedImageModelOption(settings.value, 'onlineChat');
@@ -5553,12 +5580,13 @@ export const useAppStore = defineStore('app', () => {
     regeneratingVoomImagePostIds.add(normalizedPostId);
     const provider = selectedModel.provider;
     const promptPreset = getImagePromptPresetForProvider(settings.value, provider);
-    const positivePrompt = [promptPreset.positivePrompt, imageDescription].filter(Boolean).join(', ');
+    const positivePrompt = buildVoomImagePositivePrompt(promptPreset.positivePrompt, imageDescription, post);
+    const negativePrompt = buildVoomImageNegativePrompt(promptPreset.negativePrompt);
     const imageSize = getImageGenerationSize(settings.value, provider);
     let imageSettings = settings.value;
     const imageOverrides = {
       positivePrompt,
-      negativePrompt: promptPreset.negativePrompt,
+      negativePrompt,
       size: imageSize.size,
       width: imageSize.width,
       height: imageSize.height,
@@ -5602,7 +5630,7 @@ export const useAppStore = defineStore('app', () => {
         imageUrl,
         title: `${voomAuthorNameForPost(latestPost)} 的 VOOM 配图`,
         prompt: positivePrompt,
-        negativePrompt: promptPreset.negativePrompt,
+        negativePrompt,
         model: selectedModel.label,
         size: nextCandidate.size || getVoomImageSizeLabel(result.provider),
         source: 'voom'
@@ -5634,12 +5662,13 @@ export const useAppStore = defineStore('app', () => {
     regeneratingVoomImagePostIds.add(post.id);
     const provider = selectedModel.provider;
     const promptPreset = getImagePromptPresetForProvider(settings.value, provider);
-    const positivePrompt = [promptPreset.positivePrompt, imageDescription].filter(Boolean).join(', ');
+    const positivePrompt = buildVoomImagePositivePrompt(promptPreset.positivePrompt, imageDescription, post);
+    const negativePrompt = buildVoomImageNegativePrompt(promptPreset.negativePrompt);
     const imageSize = getImageGenerationSize(settings.value, provider);
     let imageSettings = settings.value;
     const imageOverrides = {
       positivePrompt,
-      negativePrompt: promptPreset.negativePrompt,
+      negativePrompt,
       size: imageSize.size,
       width: imageSize.width,
       height: imageSize.height,
@@ -5680,7 +5709,7 @@ export const useAppStore = defineStore('app', () => {
         imageUrl,
         title: `${voomAuthorNameForPost(post)} 的 VOOM 配图`,
         prompt: positivePrompt,
-        negativePrompt: promptPreset.negativePrompt,
+        negativePrompt,
         model: selectedModel.label,
         size: nextCandidate.size || getVoomImageSizeLabel(result.provider),
         source: 'voom'
