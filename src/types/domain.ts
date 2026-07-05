@@ -909,9 +909,13 @@ export interface ThemeStyleScopeSettings {
   presets: ThemeStylePreset[];
 }
 
+export interface ThemeGlobalSettings {
+  scale: number;
+}
+
 export interface AppThemeSettings {
   fonts: ThemeFontSettings;
-  global: ThemeStyleScopeSettings;
+  global: ThemeGlobalSettings;
   online: ThemeStyleScopeSettings;
   offline: ThemeStyleScopeSettings;
 }

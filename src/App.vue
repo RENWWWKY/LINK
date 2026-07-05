@@ -42,6 +42,7 @@ const githubBackupScheduleKey = computed(() => {
   return [backup.owner, backup.repo, backup.branch, backup.path, backup.intervalMinutes].join('|');
 });
 const themeFontSettings = computed(() => store.settings?.themeSettings.fonts ?? { activeFontId: '', entries: [] as ThemeFontEntry[] });
+const globalThemeSettings = computed(() => store.settings?.themeSettings.global ?? { scale: 1 });
 const onlineThemeSettings = computed(() => store.settings?.themeSettings.online ?? { activePresetId: '', presets: [] });
 const offlineThemeSettings = computed(() => store.settings?.themeSettings.offline ?? { activePresetId: '', presets: [] });
 const routeConversationId = computed(() => {
@@ -110,6 +111,25 @@ function setAppFontFamily(fontFamilyStack: string) {
     if (fontFamilyStack) target.style.setProperty('--app-font-family', fontFamilyStack);
     else target.style.removeProperty('--app-font-family');
   });
+}
+
+function applyGlobalThemeScale() {
+  if (typeof document === 'undefined') return;
+  const scale = Math.min(1.2, Math.max(0.85, Number(globalThemeSettings.value.scale) || 1));
+  const root = document.documentElement;
+  root.style.setProperty('--app-display-scale', scale.toFixed(2));
+  root.style.setProperty('--compact-page-font-size', `${13 * scale}px`);
+  root.style.setProperty('--compact-copy-font-size', `${12 * scale}px`);
+  root.style.setProperty('--compact-label-font-size', `${11 * scale}px`);
+  root.style.setProperty('--compact-heading-font-size', `${17 * scale}px`);
+  root.style.setProperty('--compact-control-font-size', `${13 * scale}px`);
+  root.style.setProperty('--ios-control-font-size', `${Math.max(16, 16 * scale)}px`);
+  root.style.setProperty('--top-title-size', `${22 * scale}px`);
+  root.style.setProperty('--top-icon-size', `${22 * scale}px`);
+  root.style.setProperty('--top-icon-button-width', `${28 * scale}px`);
+  root.style.setProperty('--top-icon-button-height', `${32 * scale}px`);
+  root.style.setProperty('--top-icon-gap', `${2 * scale}px`);
+  root.style.setProperty('--tab-height', `${54 * scale}px`);
 }
 
 function applyThemeFonts() {
@@ -208,6 +228,7 @@ watch(
 );
 
 watch(themeFontSettings, applyThemeFonts, { immediate: true, deep: true });
+watch(globalThemeSettings, applyGlobalThemeScale, { immediate: true, deep: true });
 watch(onlineThemeSettings, applyOnlineThemeStyles, { immediate: true, deep: true });
 watch(offlineThemeSettings, applyOfflineThemeStyles, { immediate: true, deep: true });
 watch(routeCharacter, () => {
@@ -223,6 +244,19 @@ onMounted(() => {
 onBeforeUnmount(() => {
   clearGitHubAutoBackupTimer();
   setAppFontFamily('');
+  document.documentElement.style.removeProperty('--app-display-scale');
+  document.documentElement.style.removeProperty('--compact-page-font-size');
+  document.documentElement.style.removeProperty('--compact-copy-font-size');
+  document.documentElement.style.removeProperty('--compact-label-font-size');
+  document.documentElement.style.removeProperty('--compact-heading-font-size');
+  document.documentElement.style.removeProperty('--compact-control-font-size');
+  document.documentElement.style.removeProperty('--ios-control-font-size');
+  document.documentElement.style.removeProperty('--top-title-size');
+  document.documentElement.style.removeProperty('--top-icon-size');
+  document.documentElement.style.removeProperty('--top-icon-button-width');
+  document.documentElement.style.removeProperty('--top-icon-button-height');
+  document.documentElement.style.removeProperty('--top-icon-gap');
+  document.documentElement.style.removeProperty('--tab-height');
   document.getElementById(themeFontStyleId)?.remove();
   document.getElementById(onlineThemeStyleId)?.remove();
   document.getElementById(offlineThemeStyleId)?.remove();

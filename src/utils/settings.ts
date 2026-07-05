@@ -1,4 +1,4 @@
-import type { ApiVendor, ApiVendorModel, AppKeepAliveSettings, AppRingtoneSettings, AppSettings, AppThemeSettings, ChatModelOverrides, CharacterRingtoneSettings, GitHubBackupSettings, ImageModelScope, ImageModelSelection, ImagePromptPreset, ImageProviderType, MinimaxTtsAudioFormat, MinimaxTtsSettings, NovelAiImageSettings, OpenAiImageSettings, OpenAiTtsAudioFormat, OpenAiTtsSettings, PollinationsImageSettings, RingtoneAsset, RingtoneEventType, ThemeFontEntry, ThemeFontSource, ThemeStylePreset, ThemeStylePresetSource, ThemeStyleScopeSettings, TtsProviderType } from '@/types/domain';
+import type { ApiVendor, ApiVendorModel, AppKeepAliveSettings, AppRingtoneSettings, AppSettings, AppThemeSettings, ChatModelOverrides, CharacterRingtoneSettings, GitHubBackupSettings, ImageModelScope, ImageModelSelection, ImagePromptPreset, ImageProviderType, MinimaxTtsAudioFormat, MinimaxTtsSettings, NovelAiImageSettings, OpenAiImageSettings, OpenAiTtsAudioFormat, OpenAiTtsSettings, PollinationsImageSettings, RingtoneAsset, RingtoneEventType, ThemeFontEntry, ThemeFontSource, ThemeGlobalSettings, ThemeStylePreset, ThemeStylePresetSource, ThemeStyleScopeSettings, TtsProviderType } from '@/types/domain';
 import { createId } from './id';
 
 export const novelAiOfficialApiUrl = 'https://image.novelai.net';
@@ -46,6 +46,8 @@ const defaultPromptPresetName = '默认预设';
 const defaultOpenAiPromptPresetId = 'openai_default';
 const defaultNovelAiPromptPresetId = 'novelai_default';
 const defaultPollinationsPromptPresetId = 'pollinations_default';
+const minGlobalThemeScale = 0.85;
+const maxGlobalThemeScale = 1.2;
 
 export const ringtoneEventTypes: RingtoneEventType[] = ['voom', 'message', 'theater'];
 export const defaultRingtoneFileName = '吉森信 - 前略 じーちゃん.mp3';
@@ -159,7 +161,7 @@ export function createDefaultThemeSettings(): AppThemeSettings {
       activeFontId: '',
       entries: []
     },
-    global: { ...emptyStyleScope },
+    global: { scale: 1 },
     online: { ...emptyStyleScope },
     offline: { ...emptyStyleScope }
   };
@@ -532,6 +534,13 @@ function normalizeThemeStyleScope(settings: Partial<ThemeStyleScopeSettings> | n
   };
 }
 
+function normalizeThemeGlobalSettings(settings: Partial<ThemeGlobalSettings> | null | undefined): ThemeGlobalSettings {
+  const scale = Number(settings?.scale ?? 1);
+  return {
+    scale: Math.min(maxGlobalThemeScale, Math.max(minGlobalThemeScale, Number.isFinite(scale) ? scale : 1))
+  };
+}
+
 export function normalizeThemeSettings(settings: Partial<AppThemeSettings> | null | undefined): AppThemeSettings {
   const entries = Array.isArray(settings?.fonts?.entries)
     ? settings.fonts.entries
@@ -545,7 +554,7 @@ export function normalizeThemeSettings(settings: Partial<AppThemeSettings> | nul
       activeFontId: entries.some((entry) => entry.id === activeFontId && entry.enabled) ? activeFontId : '',
       entries
     },
-    global: normalizeThemeStyleScope(settings?.global),
+    global: normalizeThemeGlobalSettings(settings?.global),
     online: normalizeThemeStyleScope(settings?.online),
     offline: normalizeThemeStyleScope(settings?.offline)
   };

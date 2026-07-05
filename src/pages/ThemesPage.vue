@@ -8,7 +8,7 @@
         <button v-if="isStyleTab" class="header-add-button" type="button" :aria-label="`分享${activeStyleLabel}样式`" :title="`分享${activeStyleLabel}样式`" @click="openStyleExporter">
           <Share2 :size="18" stroke-width="2.35" />
         </button>
-        <button class="header-add-button" type="button" :aria-label="isStyleTab ? `添加${activeStyleLabel}样式` : '导入字体'" :title="isStyleTab ? `添加${activeStyleLabel}样式` : '导入字体'" @click="openActiveImporter">
+        <button v-if="activeTab !== 'global'" class="header-add-button" type="button" :aria-label="isStyleTab ? `添加${activeStyleLabel}样式` : '导入字体'" :title="isStyleTab ? `添加${activeStyleLabel}样式` : '导入字体'" @click="openActiveImporter">
           <Plus :size="19" stroke-width="2.4" />
         </button>
       </div>
@@ -113,9 +113,40 @@
           <p v-if="feedbackMessage" class="sync-feedback success">{{ feedbackMessage }}</p>
         </section>
 
-        <section v-else class="empty-scope" :aria-label="activeMeta.label">
-          <component :is="activeMeta.icon" :size="24" stroke-width="2.2" />
-          <strong>{{ activeMeta.label }}</strong>
+        <section v-else class="global-library" aria-label="全局主题">
+          <article class="global-scale-card">
+            <header class="global-card-head">
+              <span class="font-mark"><Globe2 :size="18" /></span>
+              <div>
+                <p class="section-kicker">Global Scale</p>
+                <h2>整体显示</h2>
+              </div>
+              <strong>{{ globalScalePercent }}%</strong>
+            </header>
+
+            <input
+              class="scale-range"
+              type="range"
+              min="85"
+              max="120"
+              step="5"
+              :value="globalScalePercent"
+              aria-label="调整全站显示大小"
+              @input="updateGlobalScaleFromInput"
+            />
+
+            <footer class="scale-actions" aria-label="显示大小快捷操作">
+              <button class="scale-action" type="button" :disabled="globalScalePercent <= minGlobalScalePercent" aria-label="缩小显示" @click="nudgeGlobalScale(-5)">
+                <Minus :size="16" />
+              </button>
+              <button class="scale-reset" type="button" :disabled="globalScalePercent === 100" @click="setGlobalScale(100)">默认</button>
+              <button class="scale-action" type="button" :disabled="globalScalePercent >= maxGlobalScalePercent" aria-label="放大显示" @click="nudgeGlobalScale(5)">
+                <Plus :size="16" />
+              </button>
+            </footer>
+          </article>
+
+          <p v-if="feedbackMessage" class="sync-feedback success">{{ feedbackMessage }}</p>
         </section>
       </section>
     </main>
@@ -304,7 +335,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Check, FileCode2, Globe2, LoaderCircle, Moon, Plus, Share2, Trash2, Type, Upload, Wifi } from 'lucide-vue-next';
+import { Check, FileCode2, Globe2, LoaderCircle, Minus, Moon, Plus, Share2, Trash2, Type, Upload, Wifi } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
 import { useAppStore } from '@/stores/appStore';
 import type { AppSettings, AppThemeSettings, ThemeFontEntry, ThemeFontSource, ThemeStylePreset, ThemeStyleScopeSettings } from '@/types/domain';
@@ -347,6 +378,8 @@ const importTabs = [
 
 const fontFileAccept = '.woff,.woff2,.ttf,.otf,font/woff,font/woff2,font/ttf,font/otf,application/font-woff,application/x-font-ttf,application/x-font-otf';
 const supportedFontExtensions = ['woff', 'woff2', 'ttf', 'otf'];
+const minGlobalScalePercent = 85;
+const maxGlobalScalePercent = 120;
 const fontMimeByExtension: Record<string, string> = {
   woff: 'font/woff',
   woff2: 'font/woff2',
@@ -390,11 +423,11 @@ const currentSettings = computed<AppSettings>(() => normalizeAppSettings(store.s
 const themeSettings = computed(() => currentSettings.value.themeSettings);
 const fontSettings = computed(() => themeSettings.value.fonts);
 const fontEntries = computed(() => fontSettings.value.entries);
+const globalScalePercent = computed(() => Math.round((themeSettings.value.global?.scale ?? 1) * 100));
 const activeTab = computed<ThemeTab>(() => {
   const tab = String(route.query.tab ?? 'font');
   return tabs.some((item) => item.id === tab) ? tab as ThemeTab : 'font';
 });
-const activeMeta = computed(() => tabs.find((tab) => tab.id === activeTab.value) ?? tabs[0]);
 const activeFontEntry = computed(() => fontEntries.value.find((entry) => entry.id === fontSettings.value.activeFontId) ?? null);
 const isStyleTab = computed(() => activeTab.value === 'online' || activeTab.value === 'offline');
 const activeStyleScopeId = computed<StyleScopeId>(() => activeTab.value === 'offline' ? 'offline' : 'online');
@@ -455,10 +488,33 @@ function cloneThemeSettings(settings: AppThemeSettings): AppThemeSettings {
       activeFontId: settings.fonts.activeFontId,
       entries: settings.fonts.entries.map(cloneFontEntry)
     },
-    global: cloneStyleScope(settings.global),
+    global: { scale: settings.global.scale },
     online: cloneStyleScope(settings.online),
     offline: cloneStyleScope(settings.offline)
   };
+}
+
+function clampGlobalScalePercent(value: number) {
+  const rounded = Math.round(value / 5) * 5;
+  return Math.min(maxGlobalScalePercent, Math.max(minGlobalScalePercent, Number.isFinite(rounded) ? rounded : 100));
+}
+
+async function setGlobalScale(percent: number) {
+  const nextPercent = clampGlobalScalePercent(percent);
+  if (nextPercent === globalScalePercent.value) return;
+  const nextThemeSettings = cloneThemeSettings(themeSettings.value);
+  nextThemeSettings.global.scale = nextPercent / 100;
+  await saveThemeSettings(nextThemeSettings);
+  feedbackMessage.value = nextPercent === 100 ? '已恢复默认显示大小。' : `已调整为 ${nextPercent}% 显示大小。`;
+}
+
+function updateGlobalScaleFromInput(event: Event) {
+  const input = event.target as HTMLInputElement;
+  void setGlobalScale(Number(input.value));
+}
+
+function nudgeGlobalScale(delta: number) {
+  void setGlobalScale(globalScalePercent.value + delta);
 }
 
 function sanitizeFontFamily(value: string) {
@@ -1087,11 +1143,88 @@ function formatFontMeta(entry: ThemeFontEntry) {
 }
 
 .font-library,
+.global-library,
 .online-style-library,
 .font-card-list {
   display: grid;
   gap: 12px;
   min-width: 0;
+}
+
+.global-scale-card {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(17, 17, 17, 0.06);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top right, rgba(6, 199, 85, 0.11), transparent 36%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 250, 248, 0.95));
+  box-shadow: 0 12px 30px rgba(16, 24, 20, 0.06);
+}
+
+.global-card-head {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.global-card-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.global-card-head h2 {
+  margin: 0;
+  color: #111111;
+  font-size: 16px;
+  line-height: 1.2;
+  font-weight: 900;
+}
+
+.global-card-head > strong {
+  color: #057a35;
+  font-family: var(--app-default-font-family);
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.scale-range {
+  width: 100%;
+  height: 28px;
+  accent-color: var(--link-green);
+}
+
+.scale-actions {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 42px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.scale-action,
+.scale-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 38px;
+  border-radius: 14px;
+  background: #f3f6f4;
+  color: #30363d;
+  font-family: var(--app-default-font-family);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.scale-action:disabled,
+.scale-reset:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .font-library-head {
