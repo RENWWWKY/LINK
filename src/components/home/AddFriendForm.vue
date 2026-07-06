@@ -23,7 +23,7 @@
 
             <label class="field compact-field">
               <span>网名</span>
-              <input v-model="draft.nickname" required placeholder="" />
+              <input v-model="draft.nickname" placeholder="" />
             </label>
 
             <label class="field compact-field note-field">
@@ -41,7 +41,7 @@
 
       <label class="field wide-field">
         <span>角色资料</span>
-        <textarea v-model="draft.description" rows="7" required />
+        <textarea v-model="draft.description" rows="7" />
       </label>
 
       <label class="field wide-field">
@@ -51,20 +51,15 @@
         </select>
       </label>
 
-      <section class="local-book-bind wide-field" aria-labelledby="local-world-book-title">
-        <div class="local-book-header">
-          <strong id="local-world-book-title">绑定局部世界书</strong>
-          <span v-if="localBooks.length">{{ draft.localWorldBookIds.length }}/{{ localBooks.length }}</span>
-        </div>
-        <div v-if="localBooks.length" class="local-book-list">
-          <label v-for="book in localBooks" :key="book.id" class="local-book-row" :class="{ selected: draft.localWorldBookIds.includes(book.id) }">
-            <input :checked="draft.localWorldBookIds.includes(book.id)" type="checkbox" @change="toggleLocalWorldBook(draft, book.id, $event)" />
-            <span>{{ book.title }}</span>
-            <span class="book-check" aria-hidden="true"></span>
-          </label>
-        </div>
-        <p v-else class="local-book-empty">暂无局部世界书</p>
-      </section>
+      <label class="field wide-field">
+        <span>绑定局部世界书</span>
+        <select :value="localBookSelectValue" :disabled="!localBooks.length" @change="toggleLocalWorldBookFromSelect">
+          <option :value="localBookSelectValue" disabled>{{ localBookSummary }}</option>
+          <option v-for="book in localBooks" :key="book.id" :value="book.id">
+            {{ draft.localWorldBookIds.includes(book.id) ? '✓ ' : '' }}{{ book.title }}
+          </option>
+        </select>
+      </label>
 
     </form>
 
@@ -100,7 +95,7 @@
 
               <label class="field compact-field">
                 <span>网名</span>
-                <input v-model="scanDraft.nickname" required placeholder="" />
+                <input v-model="scanDraft.nickname" placeholder="" />
               </label>
 
               <label class="field compact-field note-field">
@@ -118,7 +113,7 @@
 
         <label class="field wide-field">
           <span>角色资料</span>
-          <textarea v-model="scanDraft.description" rows="7" required />
+          <textarea v-model="scanDraft.description" rows="7" />
         </label>
 
         <label class="field wide-field">
@@ -155,12 +150,9 @@ import { computed, reactive, ref } from 'vue';
 import { ImagePlus } from 'lucide-vue-next';
 import AvatarCropperModal from '@/components/image/AvatarCropperModal.vue';
 import type { UserProfile, WorldBookEntry } from '@/types/domain';
-import { defaultNewFriendSignature } from '@/utils/character';
 import { importSillyTavernCharacterCard, type ImportedCharacterCard } from '@/utils/characterCard';
 import { readImageFileFromInput } from '@/utils/imageFile';
 
-const defaultAvatarSeed = 'NewFriend';
-const defaultSignature = defaultNewFriendSignature;
 const defaultAvatar = `data:image/svg+xml;utf8,${encodeURIComponent(`
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="默认角色头像">
     <defs>
@@ -172,7 +164,6 @@ const defaultAvatar = `data:image/svg+xml;utf8,${encodeURIComponent(`
     <rect width="96" height="96" rx="28" fill="url(#friendCardBg)"/>
     <circle cx="48" cy="35" r="15" fill="#ffffff" fill-opacity="0.96"/>
     <path d="M24 79c3-14 14-22 24-22s21 8 24 22" fill="#ffffff" fill-opacity="0.96"/>
-    <text x="48" y="88" text-anchor="middle" font-size="10" font-family="Arial, sans-serif" fill="#3a4a43">${defaultAvatarSeed}</text>
   </svg>
 `)}`;
 
@@ -214,6 +205,7 @@ const importPreview = ref<ImportedCharacterCard | null>(null);
 const showAvatarEditor = ref(false);
 const avatarEditorSource = ref('');
 const avatarEditTarget = ref<'add' | 'scan'>('add');
+const localBookSelectValue = '__local_world_book_summary__';
 const localBooks = computed(() => props.localBooks.filter((book) => book.scope === 'local'));
 
 const draft = reactive({
@@ -221,7 +213,7 @@ const draft = reactive({
   name: '',
   userNote: '',
   avatar: '',
-  signature: defaultSignature,
+  signature: '',
   description: '',
   boundUserId: props.activeUserId || props.accounts[0]?.id || '',
   localWorldBookIds: [] as string[]
@@ -231,7 +223,7 @@ const scanDraft = reactive({
   name: '',
   userNote: '',
   avatar: '',
-  signature: defaultSignature,
+  signature: '',
   description: '',
   boundUserId: props.activeUserId || props.accounts[0]?.id || '',
   localWorldBookIds: [] as string[],
@@ -240,6 +232,13 @@ const scanDraft = reactive({
 const avatarPreview = computed(() => draft.avatar.trim() || defaultAvatar);
 const scanAvatarPreview = computed(() => scanDraft.avatar.trim() || defaultAvatar);
 const importedLoreEntryCount = computed(() => scanDraft.importedWorldBooks.reduce((total, book) => total + book.entries.length, 0));
+const selectedLocalBooks = computed(() => localBooks.value.filter((book) => draft.localWorldBookIds.includes(book.id)));
+const localBookSummary = computed(() => {
+  if (!localBooks.value.length) return '暂无局部世界书';
+  if (!selectedLocalBooks.value.length) return '请选择局部世界书';
+  if (selectedLocalBooks.value.length === 1) return selectedLocalBooks.value[0]?.title ?? '已绑定 1 本局部世界书';
+  return `已绑定 ${selectedLocalBooks.value.length} 本局部世界书`;
+});
 
 const accounts = props.accounts;
 
@@ -248,7 +247,7 @@ function resetDraft() {
   draft.name = '';
   draft.userNote = '';
   draft.avatar = '';
-  draft.signature = defaultSignature;
+  draft.signature = '';
   draft.description = '';
   draft.boundUserId = props.activeUserId || props.accounts[0]?.id || '';
   draft.localWorldBookIds = [];
@@ -259,7 +258,7 @@ function resetScanDraft() {
   scanDraft.name = '';
   scanDraft.userNote = '';
   scanDraft.avatar = '';
-  scanDraft.signature = defaultSignature;
+  scanDraft.signature = '';
   scanDraft.description = '';
   scanDraft.boundUserId = props.activeUserId || props.accounts[0]?.id || '';
   scanDraft.localWorldBookIds = [];
@@ -285,7 +284,7 @@ function submitAdd() {
     name: draft.name,
     userNote: draft.userNote,
     avatar: avatarPreview.value,
-    signature: draft.signature.trim() || defaultSignature,
+    signature: draft.signature.trim(),
     description: draft.description,
     boundUserId: draft.boundUserId,
     localWorldBookIds: [...draft.localWorldBookIds]
@@ -293,12 +292,15 @@ function submitAdd() {
   resetDraft();
 }
 
-function toggleLocalWorldBook(target: { localWorldBookIds: string[] }, bookId: string, event: Event) {
-  const checked = event.target instanceof HTMLInputElement ? event.target.checked : false;
-  const ids = new Set(target.localWorldBookIds);
-  if (checked) ids.add(bookId);
-  else ids.delete(bookId);
-  target.localWorldBookIds = [...ids];
+function toggleLocalWorldBookFromSelect(event: Event) {
+  if (!(event.target instanceof HTMLSelectElement)) return;
+  const bookId = event.target.value;
+  if (!bookId || bookId === localBookSelectValue) return;
+  const ids = new Set(draft.localWorldBookIds);
+  if (ids.has(bookId)) ids.delete(bookId);
+  else ids.add(bookId);
+  draft.localWorldBookIds = [...ids];
+  event.target.value = localBookSelectValue;
 }
 
 async function importCard(event: Event) {
@@ -307,11 +309,11 @@ async function importCard(event: Event) {
   if (!file) return;
   const imported = await importSillyTavernCharacterCard(file);
   importPreview.value = imported;
-  scanDraft.nickname = imported.nickname;
+  scanDraft.nickname = '';
   scanDraft.name = imported.name;
   scanDraft.userNote = '';
   scanDraft.avatar = imported.avatar;
-  scanDraft.signature = defaultSignature;
+  scanDraft.signature = '';
   scanDraft.description = imported.description;
   scanDraft.boundUserId = props.activeUserId || props.accounts[0]?.id || '';
   scanDraft.localWorldBookIds = [];
@@ -327,7 +329,7 @@ function submitImportedCharacter() {
     name: scanDraft.name,
     userNote: scanDraft.userNote,
     avatar: scanAvatarPreview.value,
-    signature: scanDraft.signature.trim() || defaultSignature,
+    signature: scanDraft.signature.trim(),
     description: scanDraft.description,
     boundUserId: scanDraft.boundUserId,
     localWorldBookIds: [...scanDraft.localWorldBookIds],
@@ -360,7 +362,6 @@ function submitImportedCharacter() {
 }
 
 .profile-section,
-.local-book-bind,
 .import-book-summary,
 .scan-panel,
 .placeholder-panel {
@@ -408,17 +409,17 @@ function submitImportedCharacter() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
+  min-height: 32px;
   max-width: 100%;
-  padding: 0 clamp(10px, 2.8vw, 12px);
-  border-radius: 999px;
-  border: 1px solid rgba(6, 199, 85, 0.16);
-  background: linear-gradient(135deg, rgba(232, 249, 239, 0.98), rgba(255, 242, 247, 0.96));
-  color: #16643e;
+  padding: 0 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(17, 17, 17, 0.07);
+  background: rgba(255, 255, 255, 0.82);
+  color: #50585c;
   font-size: 11px;
-  font-weight: 850;
+  font-weight: 800;
   white-space: nowrap;
-  box-shadow: 0 10px 20px rgba(31, 120, 74, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92);
 }
 
 .avatar-upload input,
@@ -490,7 +491,6 @@ function submitImportedCharacter() {
   box-shadow: inset 0 0 0 1px rgba(6, 199, 85, 0.35), 0 0 0 3px rgba(6, 199, 85, 0.1);
 }
 
-.local-book-bind,
 .import-book-summary {
   display: grid;
   gap: 10px;
@@ -511,7 +511,6 @@ function submitImportedCharacter() {
 }
 
 .local-book-header span,
-.local-book-empty,
 .panel-copy,
 .placeholder-panel p,
 .import-preview p,
@@ -520,100 +519,14 @@ function submitImportedCharacter() {
   line-height: 1.55;
 }
 
-.local-book-header span,
-.local-book-empty {
+.local-book-header span {
   font-size: 11px;
   font-weight: 800;
 }
 
-.local-book-empty,
 .panel-copy,
 .placeholder-panel p {
   margin: 0;
-}
-
-.local-book-list {
-  display: grid;
-  gap: 10px;
-  max-height: calc(58px * 4 + 10px * 3);
-  overflow-x: hidden;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-}
-
-.local-book-row {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  min-height: 58px;
-  padding: 0 14px;
-  border-radius: 16px;
-  border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.95);
-  color: #151719;
-  font-size: 13px;
-  font-weight: 850;
-  box-shadow: 0 8px 18px rgba(30, 55, 45, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease, color 0.18s ease;
-  touch-action: manipulation;
-}
-
-.local-book-row input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.book-check {
-  position: relative;
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
-  background: rgba(21, 23, 25, 0.05);
-  box-shadow: inset 0 0 0 1px rgba(21, 23, 25, 0.1);
-}
-
-.book-check::after {
-  content: '';
-  position: absolute;
-  left: 6px;
-  top: 3px;
-  width: 5px;
-  height: 9px;
-  border: solid #ffffff;
-  border-width: 0 2px 2px 0;
-  opacity: 0;
-  transform: rotate(45deg) scale(0.7);
-  transition: opacity 0.18s ease, transform 0.18s ease;
-}
-
-.local-book-row.selected {
-  border-color: rgba(6, 199, 85, 0.34);
-  background: #f7fffa;
-  color: #146b3f;
-  box-shadow: inset 0 0 0 1px rgba(6, 199, 85, 0.12), 0 8px 18px rgba(30, 55, 45, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.9);
-}
-
-.local-book-row.selected .book-check {
-  background: var(--link-green);
-  box-shadow: inset 0 0 0 1px rgba(6, 199, 85, 0.7), 0 6px 14px rgba(6, 199, 85, 0.22);
-}
-
-.local-book-row.selected .book-check::after {
-  opacity: 1;
-  transform: rotate(45deg) scale(1);
-}
-
-.local-book-row span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .import-book-list {

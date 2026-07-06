@@ -3,8 +3,6 @@ import { normalizeVisualProfile, removeVisualProfileAvatar, toCharacterVisualPro
 import { normalizeChatModelOverrides } from '@/utils/settings';
 import { normalizeVoomFrequency } from '@/utils/voom';
 
-export const defaultNewFriendSignature = '该用户很懒，什么也没留下';
-const defaultCharacterSignature = '这个角色还没有写个性签名。';
 const maxMindStateLines = 5;
 const profileHistoryFields = new Set<CharacterProfileHistoryField>(['nickname', 'signature', 'mood']);
 
@@ -47,7 +45,7 @@ export function getCharacterVoomDisplayName(character: Pick<CharacterProfile, 'u
 function normalizeCharacterInitialProfile(initialProfile: Partial<CharacterInitialProfile> | null | undefined, fallback: CharacterInitialProfile) {
   if (!initialProfile || typeof initialProfile !== 'object') return undefined;
   const nickname = String(initialProfile.nickname ?? '').trim() || fallback.nickname;
-  const signature = String(initialProfile.signature ?? '').trim() || fallback.signature || defaultNewFriendSignature;
+  const signature = String(initialProfile.signature ?? '').trim() || fallback.signature;
   return { nickname, signature };
 }
 
@@ -89,16 +87,16 @@ export function getCharacterInitialProfile(character: Pick<CharacterProfile, 'in
     || String(character.name ?? '').trim()
     || String(character.nickname ?? '').trim()
     || 'new.friend';
-  const signature = String(character.initialProfile?.signature ?? '').trim() || defaultNewFriendSignature;
+  const signature = String(character.initialProfile?.signature ?? '').trim();
   return { nickname, signature };
 }
 
 export function normalizeCharacterProfile(character: CharacterProfile, fallbackUserId = ''): CharacterProfile {
   const { initialProfile: rawInitialProfile, ...characterBase } = character;
-  const nickname = String(character.nickname ?? '').trim() || String(character.name ?? '').trim() || 'new.friend';
-  const name = String(character.name ?? '').trim() || nickname;
+  const nickname = String(character.nickname ?? '').trim();
+  const name = String(character.name ?? '').trim() || nickname || 'new.friend';
   const description = String(character.description ?? '').trim();
-  const signature = String(character.signature ?? '').trim() || String(character.subtitle ?? '').trim() || defaultCharacterSignature;
+  const signature = String(character.signature ?? '').trim();
   const boundUserId = String(character.boundUserId ?? '').trim() || fallbackUserId;
   const localWorldBookIds = Array.isArray(character.localWorldBookIds)
     ? [...new Set(character.localWorldBookIds.filter(Boolean))]

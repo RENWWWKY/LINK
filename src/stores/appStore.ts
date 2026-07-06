@@ -2821,7 +2821,7 @@ export const useAppStore = defineStore('app', () => {
       id: `conv_${character.id}`,
       userId: payload.boundUserId,
       charId: character.id,
-      title: character.nickname,
+      title: getCharacterVoomDisplayName(character),
       activeMode: 'online',
       updatedAt: Date.now(),
       unreadCount: 0,
