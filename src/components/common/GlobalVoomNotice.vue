@@ -37,10 +37,11 @@ import { useAppStore } from '@/stores/appStore';
 import { playRingtone } from '@/services/ringtone';
 import type { VoomComment, VoomPost } from '@/types/domain';
 import { getCharacterVoomAuthorName, getCharacterVoomDisplayName } from '@/utils/character';
+import { createVoomPostNoticeKey, globalVoomNoticeSeenStorageKey, readGlobalNoticeIds, writeGlobalNoticeIds } from '@/utils/globalNotices';
 import { formatContentWithChineseTranslation } from '@/utils/translation';
 import { stripVoomCommentReplyPrefix } from '@/utils/voom';
 
-const seenStorageKey = 'link:global-voom-notices:seen-posts';
+const seenStorageKey = globalVoomNoticeSeenStorageKey;
 
 const store = useAppStore();
 const router = useRouter();
@@ -63,16 +64,11 @@ const voomNoticeImageDescription = computed(() => activePost.value?.imageDescrip
 const voomNoticeComments = computed(() => activePost.value?.comments ?? []);
 
 function loadSeenPostIds() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(seenStorageKey) || '[]');
-    seenPostIds.value = new Set(Array.isArray(parsed) ? parsed.map((id) => String(id)) : []);
-  } catch {
-    seenPostIds.value = new Set();
-  }
+  seenPostIds.value = readGlobalNoticeIds(seenStorageKey);
 }
 
 function persistSeenPostIds() {
-  localStorage.setItem(seenStorageKey, JSON.stringify([...seenPostIds.value]));
+  writeGlobalNoticeIds(seenStorageKey, seenPostIds.value);
 }
 
 function markCurrentPostsSeen() {
@@ -124,7 +120,7 @@ function normalizeAuthorKey(name = '') {
 }
 
 function voomPostNoticeKey(post: VoomPost) {
-  return `post:${post.id}`;
+  return createVoomPostNoticeKey(post);
 }
 
 function currentVoomNoticeKeys(post: VoomPost) {
@@ -180,6 +176,11 @@ watch(
       markCurrentPostsSeen();
       initialized.value = true;
       return;
+    }
+    loadSeenPostIds();
+    if (activePost.value && seenPostIds.value.has(activeNoticeKey.value || voomNoticeKey(activePost.value))) {
+      activePost.value = null;
+      activeNoticeKey.value = '';
     }
     showNextVoomNotice();
   },

@@ -23,8 +23,9 @@ import { Clapperboard, X } from 'lucide-vue-next';
 import { playRingtone } from '@/services/ringtone';
 import { useAppStore } from '@/stores/appStore';
 import type { SmallTheater } from '@/types/domain';
+import { globalSmallTheaterNoticeSeenStorageKey, readGlobalNoticeIds, writeGlobalNoticeIds } from '@/utils/globalNotices';
 
-const seenStorageKey = 'link:global-small-theater-notices:seen-theaters';
+const seenStorageKey = globalSmallTheaterNoticeSeenStorageKey;
 
 const router = useRouter();
 const store = useAppStore();
@@ -42,16 +43,11 @@ const noticeSummary = computed(() => {
 });
 
 function loadSeenTheaterIds() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(seenStorageKey) || '[]');
-    seenTheaterIds.value = new Set(Array.isArray(parsed) ? parsed.map((id) => String(id)) : []);
-  } catch {
-    seenTheaterIds.value = new Set();
-  }
+  seenTheaterIds.value = readGlobalNoticeIds(seenStorageKey);
 }
 
 function persistSeenTheaterIds() {
-  localStorage.setItem(seenStorageKey, JSON.stringify([...seenTheaterIds.value]));
+  writeGlobalNoticeIds(seenStorageKey, seenTheaterIds.value);
 }
 
 function markCurrentTheatersSeen() {
@@ -91,6 +87,10 @@ watch(
       markCurrentTheatersSeen();
       initialized.value = true;
       return;
+    }
+    loadSeenTheaterIds();
+    if (activeTheater.value && seenTheaterIds.value.has(activeTheater.value.id)) {
+      activeTheater.value = null;
     }
     showNextNotice();
   },

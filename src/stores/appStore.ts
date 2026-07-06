@@ -19,6 +19,7 @@ import { showLinkNotification } from '@/services/keepAlive';
 import { playRingtone } from '@/services/ringtone';
 import { synthesizeSpeech } from '@/services/tts';
 import { createLinkBackupFile, parseLinkBackupFileText, parseLinkBackupText, stickerBackupPlaceholder, stringifyLinkBackupFile } from '@/utils/backup';
+import { markRestoredGlobalNoticesSeen } from '@/utils/globalNotices';
 import { getVoomFrequencyChance, stripVoomCommentReplyPrefix } from '@/utils/voom';
 import { compressInlineImageDataUrl } from '@/utils/imageFile';
 
@@ -55,7 +56,7 @@ interface IncrementalGrandSummaryOptions {
   visibleTailFloors?: number;
 }
 
-type BackupProgressCallback = (label: string, percent: number) => void;
+type BackupProgressCallback = (label: string, percent: number) => void | Promise<void>;
 
 interface ImportBackupOptions {
   sourceByteSize?: number;
@@ -3178,9 +3179,9 @@ export const useAppStore = defineStore('app', () => {
 
   async function createBackupFile(onProgress?: BackupProgressCallback) {
     if (!ready.value) await hydrate();
-    onProgress?.('正在读取本地数据', 20);
+    await onProgress?.('正在读取本地数据', 20);
     const snapshot = await loadSnapshot();
-    onProgress?.('正在整理备份内容', 65);
+    await onProgress?.('正在整理备份内容', 65);
     const backupSnapshot = await compactSnapshotMediaForBackup({
       ...snapshot,
       messages: snapshot.messages.map((message) => normalizeStoredMessageIdentityReferences(message)),
@@ -3193,7 +3194,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   async function importBackupSnapshot(snapshot: AppSnapshot, options: ImportBackupOptions = {}): Promise<ImportBackupResult> {
-    options.onProgress?.('正在整理导入数据', 45);
+    await options.onProgress?.('正在整理导入数据', 45);
     const normalizedSnapshot = keepDeviceGitHubBackupSettings(normalizeSnapshotForRestore(snapshot));
     const slimmedForMobile = shouldUseMobileSafeRestore(options.sourceByteSize);
     const restorableSnapshot = slimmedForMobile
@@ -3201,7 +3202,7 @@ export const useAppStore = defineStore('app', () => {
       : stripRestoreVectorCaches(normalizedSnapshot);
     const preparedSnapshot = prepareSnapshotForStore(restorableSnapshot);
     const persistentStorageGranted = await requestPersistentStorage();
-    options.onProgress?.(slimmedForMobile ? '备份较大，正在写入轻量数据' : '正在写入本地数据库', 75);
+    await options.onProgress?.(slimmedForMobile ? '备份较大，正在写入轻量数据' : '正在写入本地数据库', 75);
 
     try {
       await replaceSnapshot(preparedSnapshot);
@@ -3209,7 +3210,8 @@ export const useAppStore = defineStore('app', () => {
       throw normalizeImportPersistenceError(error);
     }
 
-    options.onProgress?.('正在刷新本地数据', 92);
+    await options.onProgress?.('正在刷新本地数据', 92);
+    markRestoredGlobalNoticesSeen(preparedSnapshot);
     applySnapshotToStore(preparedSnapshot);
     queueMissingStickerImageCaches(preparedSnapshot.stickers);
     void refreshEnabledVendorModels();
@@ -3379,6 +3381,11 @@ export const useAppStore = defineStore('app', () => {
     await saveGitHubBackupProgress('downloading', '正在下载 GitHub 备份', 25);
 
     try {
+      let downloadProgressPercent = 25;
+      const onDownloadProgress = async ({ label, percent }: { label: string; percent: number }) => {
+        downloadProgressPercent = Math.max(downloadProgressPercent, percent);
+        await saveGitHubBackupProgress('downloading', label, downloadProgressPercent);
+      };
       const backupText = ref
         ? await downloadGitHubBackupVersion({
             token: config.token,
@@ -3386,18 +3393,28 @@ export const useAppStore = defineStore('app', () => {
             repo: config.repo,
             branch: config.branch,
             path: config.path
-          }, ref)
+          }, ref, { onProgress: onDownloadProgress })
         : await downloadGitHubBackup({
             token: config.token,
             owner: config.owner,
             repo: config.repo,
             branch: config.branch,
             path: config.path
-          });
+          }, { onProgress: onDownloadProgress });
+      await saveGitHubBackupProgress('restoring', '正在解析 GitHub 备份', 76);
       const backupFile = parseLinkBackupFileText(backupText);
       const currentBackupConfig = settings.value.githubBackup;
-      await saveGitHubBackupProgress('restoring', '正在恢复 GitHub 备份到本地', 75);
-      await importBackupSnapshot(backupFile.snapshot, { sourceByteSize: new Blob([backupText]).size });
+      await saveGitHubBackupProgress('restoring', '正在恢复 GitHub 备份到本地', 77);
+      let restoreProgressPercent = 76;
+      await importBackupSnapshot(backupFile.snapshot, {
+        sourceByteSize: new Blob([backupText]).size,
+        onProgress: async (label, percent) => {
+          const mappedPercent = 76 + Math.round(Math.min(100, Math.max(0, percent)) * 0.18);
+          restoreProgressPercent = Math.max(restoreProgressPercent, mappedPercent);
+          await saveGitHubBackupProgress('restoring', label, restoreProgressPercent);
+        }
+      });
+      await saveGitHubBackupProgress('checking', '正在刷新 GitHub 备份记录', 96);
       const history = await loadGitHubBackupHistory(3).catch(() => currentBackupConfig.history ?? []);
       const latest = history[0];
       await saveGitHubBackupState({

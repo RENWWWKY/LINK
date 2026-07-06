@@ -722,14 +722,19 @@ async function resolveGitHubBackupText(target: GitHubBackupTarget, text: string,
   const chunks = [...parsed.chunks].sort((left, right) => left.index - right.index);
   const merged = new Uint8Array(parsed.originalByteLength);
   let offset = 0;
-  for (const chunk of chunks) {
+  await emitUploadProgress(options, `正在准备 GitHub 分片备份（${chunks.length} 个）`, 30);
+  for (const [index, chunk] of chunks.entries()) {
+    const chunkPercent = 30 + Math.round(index / Math.max(chunks.length, 1) * 40);
+    await emitUploadProgress(options, `正在下载 GitHub 分片 ${index + 1}/${chunks.length}`, chunkPercent);
     const chunkText = await downloadGitHubBackupTextAtPath(target, chunk.path, ref, `未找到 GitHub 分片备份：${chunk.path}`);
     const chunkBytes = decodeBytesBase64(chunkText, `GitHub 分片备份 ${chunk.path}`);
     if (chunkBytes.byteLength !== chunk.byteLength) throw new GitHubBackupError('GitHub 分片备份大小校验失败。');
     merged.set(chunkBytes, offset);
     offset += chunkBytes.byteLength;
+    await emitUploadProgress(options, `已下载 GitHub 分片 ${index + 1}/${chunks.length}`, 30 + Math.round((index + 1) / Math.max(chunks.length, 1) * 40));
   }
   if (offset !== parsed.originalByteLength) throw new GitHubBackupError('GitHub 分片备份不完整。');
+  await emitUploadProgress(options, '正在合并 GitHub 分片备份', 72);
   return new TextDecoder().decode(merged);
 }
 
