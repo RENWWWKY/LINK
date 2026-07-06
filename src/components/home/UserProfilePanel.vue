@@ -1,7 +1,7 @@
 <template>
   <button class="profile-panel" v-if="user" type="button" aria-label="打开个人资料" @click="emit('open')">
     <div>
-      <h1>{{ user.nickname }}</h1>
+      <h1>{{ displayName }}</h1>
       <p>{{ user.signature }}</p>
     </div>
     <img class="profile-avatar" :src="accountAvatar" :alt="user.nickname || user.name" />
@@ -11,7 +11,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { UserProfile } from '@/types/domain';
-import { defaultProfileAvatar } from '@/utils/profile';
+import { defaultProfileAvatar, getUserDisplayName } from '@/utils/profile';
 
 const props = defineProps<{
   user: UserProfile | null;
@@ -22,6 +22,7 @@ const emit = defineEmits<{
 }>();
 
 const accountAvatar = computed(() => props.user?.avatar || defaultProfileAvatar);
+const displayName = computed(() => getUserDisplayName(props.user));
 </script>
 
 <style scoped>

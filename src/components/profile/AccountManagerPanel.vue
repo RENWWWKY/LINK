@@ -6,7 +6,7 @@
           <ChevronLeft :size="18" />
         </button>
         <div class="switcher-copy">
-          <strong>{{ currentAccount.nickname }}</strong>
+          <strong>{{ getAccountDisplayName(currentAccount) }}</strong>
           <span>{{ currentIndex + 1 }} / {{ draftAccounts.length }}</span>
         </div>
         <button class="nav-button" type="button" aria-label="下一个账号" :disabled="draftAccounts.length <= 1" @click="showNextAccount">
@@ -19,11 +19,11 @@
           <span class="active-pill">{{ currentAccount.id === activeUserId ? '当前使用中' : currentAccountPersisted ? '可切换' : '自动保存中' }}</span>
 
           <div class="account-summary">
-            <img :src="currentAccount.avatar" :alt="currentAccount.nickname" />
+            <img :src="currentAccount.avatar" :alt="getAccountDisplayName(currentAccount)" />
             <div>
               <div class="summary-title-row">
-                <strong>{{ currentAccount.nickname }}</strong>
-                <span>{{ currentAccount.name }}</span>
+                <strong>{{ getAccountDisplayName(currentAccount) }}</strong>
+                <span v-if="currentAccount.nickname.trim()">{{ currentAccount.name }}</span>
               </div>
               <small>ID {{ currentAccount.id }}</small>
               <p>{{ currentAccount.signature || '这个账号还没有个性签名。' }}</p>
@@ -34,7 +34,7 @@
         <div class="form-grid account-form">
           <label class="field">
             <span>头像 URL</span>
-            <input v-model="currentAccount.avatar" placeholder="https://..." required />
+            <input v-model="currentAccount.avatar" placeholder="https://..." />
           </label>
 
           <label class="upload-pill">
@@ -44,7 +44,7 @@
 
           <label class="field">
             <span>网名</span>
-            <input v-model="currentAccount.nickname" required />
+            <input v-model="currentAccount.nickname" />
           </label>
 
           <label class="field">
@@ -59,7 +59,7 @@
 
           <label class="field wide-field">
             <span>用户设定</span>
-            <textarea v-model="currentAccount.description" rows="5" required />
+            <textarea v-model="currentAccount.description" rows="5" />
           </label>
         </div>
 
@@ -73,9 +73,9 @@
           </button>
           <div v-if="boundListExpanded && currentBoundCharacters.length" :id="boundPanelId" class="bound-rows">
             <div v-for="character in currentBoundCharacters" :key="character.id" class="bound-row-card">
-              <strong class="bound-row-name">{{ getCharacterDisplayName(character) }}</strong>
+              <strong class="bound-row-name">{{ getCharacterAiName(character) }}</strong>
               <select :value="moveTargets[character.id] || nextAccountId(currentAccount.id)" @change="setMoveTarget(character.id, $event)">
-                <option v-for="account in otherAccounts" :key="account.id" :value="account.id">移动到 {{ account.nickname }}</option>
+                <option v-for="account in otherAccounts" :key="account.id" :value="account.id">移动到 {{ getAccountTrueName(account) }}</option>
               </select>
               <button class="ghost-button" type="button" :disabled="!otherAccounts.length" @click="moveCharacter(character.id)">
                 移动角色
@@ -102,7 +102,7 @@
       <p class="eyebrow">Delete check</p>
       <h3>确认删除这个账号？</h3>
       <p>
-        <strong>{{ pendingDeleteAccount?.nickname || '当前账号' }}</strong>
+        <strong>{{ getAccountDisplayName(pendingDeleteAccount) }}</strong>
         ID {{ pendingDeleteAccount?.id || '-' }} 删除后不可恢复，绑定在这个账号下的 Friends 会自动转移到其他账号。
       </p>
       <p v-if="pendingDeleteBoundCharacters.length" class="confirm-note">
@@ -124,10 +124,10 @@ import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
 import AvatarCropperModal from '@/components/image/AvatarCropperModal.vue';
 import type { CharacterProfile, UserProfile } from '@/types/domain';
-import { getCharacterDisplayName } from '@/utils/character';
+import { getCharacterAiName } from '@/utils/character';
 import { createAccountId } from '@/utils/id';
 import { readImageFileFromInput } from '@/utils/imageFile';
-import { createUserVisualProfile, defaultProfileAvatar, normalizeUserProfile } from '@/utils/profile';
+import { createUserVisualProfile, defaultProfileAvatar, getUserAiName, getUserDisplayName, normalizeUserProfile } from '@/utils/profile';
 
 const props = defineProps<{
   accounts: UserProfile[];
@@ -258,6 +258,14 @@ function nextAccountId(currentUserId: string) {
   return draftAccounts.find((account) => account.id !== currentUserId)?.id ?? '';
 }
 
+function getAccountDisplayName(account: UserProfile | null | undefined) {
+  return account ? getUserDisplayName(account) : '当前账号';
+}
+
+function getAccountTrueName(account: UserProfile | null | undefined) {
+  return account ? getUserAiName(account) : '用户';
+}
+
 function setMoveTarget(characterId: string, event: Event) {
   const value = event.target instanceof HTMLSelectElement ? event.target.value : '';
   moveTargets[characterId] = value;
@@ -275,7 +283,15 @@ function switchAccount(userId: string) {
 function saveAccount(userId: string) {
   const account = draftAccounts.find((entry) => entry.id === userId);
   if (!account) return;
-  const normalizedAccount = normalizeUserProfile(account);
+  const name = account.name.trim();
+  if (!name) return;
+  const normalizedAccount = normalizeUserProfile({
+    ...account,
+    name,
+    nickname: account.nickname.trim(),
+    signature: account.signature.trim(),
+    description: account.description.trim()
+  });
   const snapshot = serializeAccount(normalizedAccount);
   if (savedAccountSnapshots.get(normalizedAccount.id) === snapshot) return;
   savedAccountSnapshots.set(normalizedAccount.id, snapshot);

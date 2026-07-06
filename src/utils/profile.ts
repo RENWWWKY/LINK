@@ -300,22 +300,27 @@ export function normalizeVisualProfile(profile?: Partial<VisualProfile>, user?: 
 
 export function normalizeUserProfile(user: UserProfile): UserProfile {
   const avatar = normalizeProfileAvatar(user.avatar) || defaultProfileAvatar;
-  const nickname = user.nickname?.trim() || user.name;
-  const signature = user.signature?.trim() || defaultProfileBio;
-  const profileOwner = { ...user, avatar, nickname, signature };
+  const nickname = user.nickname?.trim() ?? '';
+  const name = user.name?.trim() || nickname || '用户';
+  const signature = user.signature?.trim() ?? '';
+  const description = user.description?.trim() ?? '';
+  const displayName = nickname || name;
+  const profileOwner = { ...user, name, avatar, nickname: displayName, signature };
   const profile = isLegacyDefaultUser(user) && isLegacyDefaultVisualProfile(user.profile)
     ? createDefaultLinkerProfile()
     : normalizeVisualProfile(removeVisualProfileAvatar(user.profile as Partial<VisualProfile>), profileOwner);
 
   return {
     ...user,
+    name,
     avatar,
     nickname,
+    description,
     signature,
     boundCharacterIds: Array.isArray(user.boundCharacterIds) ? [...new Set(user.boundCharacterIds.filter(Boolean))] : [],
     profile: {
       ...toUserVisualProfile(profile),
-      nickname,
+      nickname: displayName,
       bio: signature
     }
   };
