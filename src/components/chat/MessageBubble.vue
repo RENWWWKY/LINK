@@ -88,7 +88,7 @@
                 <strong>¥{{ linePayAmount }}</strong>
                 <span>{{ linePayCardSubtext }}</span>
               </span>
-              <span v-if="showTransferRequestNoteRow" class="transfer-request-note">{{ linePayRequestNoteText }}</span>
+              <span class="transfer-request-note">{{ linePayRequestNoteText }}</span>
               <span v-if="canRespondTransferCard" class="transfer-request-actions" @pointerdown.stop @pointerup.stop>
                 <button class="transfer-request-action transfer-request-action--reject" type="button" @click.stop="emit('reject-transfer')">拒绝</button>
                 <button class="transfer-request-action transfer-request-action--accept" type="button" @click.stop="emit('accept-transfer')">接收</button>
@@ -490,8 +490,16 @@ const linePayStatusText = computed(() => ({
   accepted: '已接收',
   rejected: '已拒绝'
 }[linePayStatus.value]));
-const linePayDirectionLabel = computed(() => (linePayTransferSender.value === 'user' ? '转账给对方' : '对方向你转账'));
-const linePayCounterpartyText = computed(() => (linePayTransferSender.value === 'user' ? characterDisplayName.value : `来自 ${characterDisplayName.value}`));
+const linePayReceiptDirectionLabel = computed(() => {
+  if (linePayStatus.value === 'accepted') return linePayTransferSender.value === 'user' ? '对方已接收转账' : '你已接收转账';
+  if (linePayStatus.value === 'rejected') return linePayTransferSender.value === 'user' ? '对方已拒收转账' : '你已拒收转账';
+  return linePayTransferSender.value === 'user' ? '对方已回应转账' : '你已回应转账';
+});
+const linePayDirectionLabel = computed(() => {
+  if (linePayIsReceipt.value) return linePayReceiptDirectionLabel.value;
+  return linePayTransferSender.value === 'user' ? '转账给对方' : '对方向你转账';
+});
+const linePayCounterpartyText = computed(() => (linePayTransferSender.value === 'user' ? `收款方 ${characterDisplayName.value}` : `来自 ${characterDisplayName.value}`));
 const linePayPendingChip = computed(() => (linePayTransferSender.value === 'user' ? '等待确认' : '待处理'));
 const linePayCardChip = computed(() => (linePayStatus.value === 'pending' ? linePayPendingChip.value : linePayStatusText.value));
 const linePaySettledTitle = computed(() => {
@@ -500,10 +508,12 @@ const linePaySettledTitle = computed(() => {
 });
 const linePayNote = computed(() => props.message.transfer?.note?.trim() || '');
 const blankTransferRequestLine = '\u00a0';
-const linePayRequestSubtext = computed(() => (linePayTransferSender.value === 'user' ? linePayNote.value || blankTransferRequestLine : linePayCounterpartyText.value));
-const linePayCardSubtext = computed(() => (linePayStatus.value === 'pending' ? linePayRequestSubtext.value : linePaySettledTitle.value));
-const showTransferRequestNoteRow = computed(() => (linePayStatus.value === 'pending' && linePayTransferSender.value === 'user') || Boolean(linePayNote.value));
-const linePayRequestNoteText = computed(() => (linePayStatus.value !== 'pending' || linePayTransferSender.value !== 'user' ? linePayNote.value : blankTransferRequestLine));
+const linePayRequestSubtext = computed(() => linePayCounterpartyText.value);
+const linePayCardSubtext = computed(() => {
+  if (linePayIsReceipt.value || linePayStatus.value === 'pending') return linePayRequestSubtext.value;
+  return linePaySettledTitle.value;
+});
+const linePayRequestNoteText = computed(() => linePayNote.value || blankTransferRequestLine);
 const canRespondTransferCard = computed(() => props.message.sender === 'char' && !linePayIsReceipt.value && linePayStatus.value === 'pending');
 const offlineInvitationStatusLabel = computed(() => ({
   pending: '要进入线下模式继续这一幕吗？',
@@ -1112,8 +1122,8 @@ onBeforeUnmount(stopVoicePlayback);
 }
 
 .bubble.transfer {
-  width: min(196px, 57vw);
-  min-width: min(173px, 50vw);
+  width: min(178px, 52vw);
+  min-width: min(158px, 46vw);
   background: #ffffff;
   border: 0;
   box-shadow: 0 9px 22px rgba(22, 27, 33, 0.08);
@@ -1700,8 +1710,11 @@ onBeforeUnmount(stopVoicePlayback);
 }
 
 .transfer-request-note {
+  display: block;
   min-width: 0;
-  padding: 6px 8px 0;
+  min-height: 24px;
+  padding: 6px 8px;
+  background: #ffffff;
   color: #737983;
   font-size: 9px;
   font-weight: 680;
