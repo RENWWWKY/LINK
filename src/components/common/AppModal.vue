@@ -8,9 +8,6 @@
             <X :size="18" />
           </button>
         </header>
-        <button v-else-if="variant === 'profile-ins'" class="floating-close" type="button" aria-label="关闭" @click="$emit('update:modelValue', false)">
-          <X :size="18" />
-        </button>
         <div class="modal-body" :class="{ 'modal-body-headerless': !showHeader }">
           <slot />
         </div>
@@ -193,21 +190,14 @@ defineEmits<{
   width: min(100%, 364px);
   max-height: min(720px, calc(100dvh - var(--safe-top) - var(--safe-bottom) - 36px));
   max-height: min(720px, calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 36px));
-  border: 1px solid rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 28px;
-  background:
-    radial-gradient(circle at top left, rgba(255, 214, 222, 0.92), transparent 30%),
-    radial-gradient(circle at top right, rgba(255, 241, 229, 0.8), transparent 28%),
-    linear-gradient(180deg, rgba(255, 252, 250, 0.98), rgba(246, 239, 234, 0.96));
-  box-shadow: 0 26px 90px rgba(49, 34, 39, 0.28);
+  background: #ffffff;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.18);
 }
 
 .modal-panel-profile-ins::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.34), transparent 20%);
-  pointer-events: none;
+  content: none;
 }
 
 .modal-panel-profile-ins .modal-body {
@@ -436,24 +426,6 @@ defineEmits<{
   height: 17px !important;
 }
 
-.floating-close {
-  position: absolute;
-  top: 26px;
-  right: 20px;
-  z-index: 8;
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: #f5f3f1;
-  box-shadow: none;
-  filter: drop-shadow(0 2px 7px rgba(0, 0, 0, 0.45));
-}
-
-.floating-close,
 .modal-panel-profile-ins .modal-body :deep(.character-sheet .sheet-icon-button),
 .modal-panel-profile-ins .modal-body :deep(.user-profile-sheet .edit-button) {
   width: 30px !important;

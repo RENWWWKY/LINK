@@ -474,7 +474,14 @@
     </AppModal>
 
     <AppModal v-model="showProfile" title="角色主页" :show-header="false" variant="profile-ins">
-      <CharacterProfileSheet v-if="character" :character="character" :posts="store.sortedVoomPosts" @save="saveCharacterProfile" />
+      <CharacterProfileSheet
+        v-if="character"
+        :character="character"
+        :posts="store.sortedVoomPosts"
+        @save="saveCharacterProfile"
+        @delete-history-entry="deleteCharacterProfileHistoryEntry"
+        @clear-history="clearCharacterProfileHistory"
+      />
     </AppModal>
     <StickerLibraryModal
       v-model="showStickers"
@@ -1842,6 +1849,18 @@ async function saveUserProfile(user: UserProfile) {
 
 async function saveCharacterProfile(nextCharacter: CharacterProfile) {
   await store.saveCharacter(nextCharacter);
+}
+
+async function deleteCharacterProfileHistoryEntry(entryId: string) {
+  const currentCharacter = character.value;
+  if (!currentCharacter) return;
+  await store.deleteCharacterProfileHistoryEntry(currentCharacter.id, entryId);
+}
+
+async function clearCharacterProfileHistory() {
+  const currentCharacter = character.value;
+  if (!currentCharacter) return;
+  await store.clearCharacterProfileHistory(currentCharacter.id);
 }
 
 async function enterOffline() {

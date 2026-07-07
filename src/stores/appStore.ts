@@ -2426,6 +2426,26 @@ export const useAppStore = defineStore('app', () => {
     await syncCharacterAvatarReferences(normalizedCharacter);
   }
 
+  async function deleteCharacterProfileHistoryEntry(characterId: string, entryId: string) {
+    const character = characterById(characterId);
+    if (!character?.profileHistory?.length) return;
+    const nextProfileHistory = character.profileHistory.filter((entry) => entry.id !== entryId);
+    if (nextProfileHistory.length === character.profileHistory.length) return;
+    await saveCharacterSnapshot({
+      ...character,
+      profileHistory: nextProfileHistory
+    });
+  }
+
+  async function clearCharacterProfileHistory(characterId: string) {
+    const character = characterById(characterId);
+    if (!character?.profileHistory?.length) return;
+    await saveCharacterSnapshot({
+      ...character,
+      profileHistory: []
+    });
+  }
+
   async function updateCharacterMindState(characterId: string, lines: unknown, conversationId: string, options: { replyBatchId?: string } = {}) {
     const character = characterById(characterId);
     const mindStateLines = normalizeCharacterMindStateLines(lines);
@@ -6594,6 +6614,8 @@ export const useAppStore = defineStore('app', () => {
     markVoomCharactersRead,
     saveVisualProfile,
     saveCharacter,
+    deleteCharacterProfileHistoryEntry,
+    clearCharacterProfileHistory,
     markCharacterMindStateRead,
     addCharacter,
     saveConversationSettings,
