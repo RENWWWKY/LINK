@@ -97,6 +97,22 @@
           </div>
         </div>
 
+        <section class="editor-highlight-section" aria-label="主页展示图">
+          <div class="editor-section-title">
+            <span>展示图</span>
+          </div>
+          <div class="editor-highlight-grid">
+            <article v-for="(highlight, index) in editorForm.highlights" :key="highlight.id" class="editor-highlight-item">
+              <img :src="highlight.image || displayAvatar" :alt="`${highlight.title} 预览`" />
+              <span>{{ highlight.title }}</span>
+              <label class="mini-upload-button">
+                <input type="file" accept="image/*" @change="readHighlightImage(index, $event)" />
+                <span>选择</span>
+              </label>
+            </article>
+          </div>
+        </section>
+
         <div class="editor-actions">
           <button type="button" class="secondary-action" @click="cancelEditor">取消</button>
           <button type="submit" class="primary-action">保存</button>
@@ -165,9 +181,10 @@
 import { computed, reactive, ref } from 'vue';
 import { CheckCircle2, ChevronDown, MoreHorizontal, Pencil, UserPlus, X } from 'lucide-vue-next';
 import AvatarCropperModal from '@/components/image/AvatarCropperModal.vue';
-import type { CharacterProfile, CharacterProfileHistoryEntry, VoomPost } from '@/types/domain';
+import type { CharacterProfile, CharacterProfileHistoryEntry, VisualProfileHighlight, VoomPost } from '@/types/domain';
 import { normalizeCharacterMindStateLines } from '@/utils/character';
 import { readImageFileFromInput } from '@/utils/imageFile';
+import { createProfileHighlightItems, createProfileHighlightSlots } from '@/utils/profileHighlights';
 import { createVisualProfile, getCharacterVisualProfile, normalizeVisualProfile, toCharacterVisualProfile } from '@/utils/profile';
 
 const profileHistoryTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
@@ -183,8 +200,6 @@ const profileHistoryFieldLabels: Record<CharacterProfileHistoryEntry['field'], s
   signature: '个性签名',
   mood: 'Mood'
 };
-
-const highlightLabels = ['MOOD', 'VOOM', 'NOTE'];
 
 const props = defineProps<{
   character: CharacterProfile;
@@ -203,10 +218,16 @@ const showAvatarEditor = ref(false);
 const avatarEditorSource = ref('');
 const confirmClearHistory = ref(false);
 
-const editorForm = reactive({
+const editorForm = reactive<{
+  nickname: string;
+  signature: string;
+  avatar: string;
+  highlights: VisualProfileHighlight[];
+}>({
   nickname: '',
   signature: '',
-  avatar: ''
+  avatar: '',
+  highlights: []
 });
 
 const visualProfile = computed(() => getCharacterVisualProfile(props.character) ?? createVisualProfile(props.character));
@@ -233,21 +254,7 @@ const socialStats = computed(() => {
   ];
 });
 
-const highlightItems = computed(() => {
-  const voomItems = characterPosts.value
-    .slice(0, 3)
-    .map((post, index) => ({
-      id: post.id,
-      title: highlightLabels[index] ?? `VOOM ${index + 1}`,
-      image: post.image || displayAvatar.value
-    }));
-
-  return highlightLabels.map((title, index) => voomItems[index] ?? {
-    id: `fallback-highlight-${title.toLowerCase()}`,
-    title,
-    image: displayAvatar.value
-  });
-});
+const highlightItems = computed(() => createProfileHighlightItems(characterPosts.value, visualProfile.value.highlights));
 
 const profileHistoryItems = computed(() => (props.character.profileHistory ?? [])
   .slice()
@@ -278,6 +285,7 @@ function openEditor() {
   editorForm.nickname = props.character.nickname || props.character.name || '';
   editorForm.signature = props.character.signature || '';
   editorForm.avatar = props.character.avatar || '';
+  editorForm.highlights = createProfileHighlightSlots(visualProfile.value.highlights);
   isEditing.value = true;
 }
 
@@ -307,6 +315,15 @@ function applyEditedAvatar(value: string) {
   editorForm.avatar = value;
 }
 
+async function readHighlightImage(index: number, event: Event) {
+  const image = await readImageFileFromInput(event);
+  if (!image || !editorForm.highlights[index]) return;
+  editorForm.highlights[index] = {
+    ...editorForm.highlights[index],
+    image
+  };
+}
+
 function deleteHistoryEntry(entryId: string) {
   emit('delete-history-entry', entryId);
 }
@@ -321,6 +338,7 @@ function saveEditor() {
   const nextNickname = editorForm.nickname.trim() || props.character.nickname || props.character.name;
   const nextSignature = editorForm.signature.trim();
   const nextAvatar = editorForm.avatar.trim() || props.character.avatar;
+  const nextHighlights = createProfileHighlightSlots(editorForm.highlights);
 
   emit('save', {
     ...props.character,
@@ -333,6 +351,7 @@ function saveEditor() {
       nickname: nextNickname,
       avatar: nextAvatar,
       bio: nextSignature,
+      highlights: nextHighlights,
       avatarBorderColor: '#ffffff',
       textColor: '#111111'
     }, {
@@ -730,6 +749,57 @@ function saveEditor() {
   display: grid;
   gap: 8px;
   min-width: 0;
+}
+
+.editor-highlight-section {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.editor-section-title span,
+.editor-highlight-item > span {
+  color: #777777;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.editor-highlight-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.editor-highlight-item {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.editor-highlight-item img {
+  width: 52px;
+  height: 52px;
+  border: 2px solid #dedede;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.mini-upload-button {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 30px;
+  border-radius: 10px;
+  background: #f1f1f1;
+  color: #111111;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.mini-upload-button input {
+  display: none;
 }
 
 .upload-button {
