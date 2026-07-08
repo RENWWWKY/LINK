@@ -1501,7 +1501,6 @@ onBeforeUnmount(() => {
   gap: 2px;
   min-width: 0;
   padding: 5px 7px 6px;
-  border-bottom: 1px solid #eeeeee;
   background: #ffffff;
 }
 

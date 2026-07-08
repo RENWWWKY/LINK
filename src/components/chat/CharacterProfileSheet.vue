@@ -530,17 +530,22 @@ function saveEditor() {
   place-items: center;
   width: 86px;
   height: 86px;
+  aspect-ratio: 1;
   padding: 3px;
+  overflow: hidden;
   border: 2px solid #dddddd;
   border-radius: 999px;
   background: #ffffff;
 }
 
 .avatar-ring img {
+  display: block;
   width: 100%;
   height: 100%;
+  aspect-ratio: 1;
   border: 0;
-  border-radius: inherit;
+  border-radius: 50%;
+  clip-path: circle(50% at 50% 50%);
   object-fit: cover;
 }
 

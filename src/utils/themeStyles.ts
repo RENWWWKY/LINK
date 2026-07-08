@@ -197,6 +197,7 @@ export const defaultOnlineThemeCss = `/* LINK 线上页默认完整样式。
   display: grid;
   gap: 2px;
   padding: 5px 7px 6px;
+  border-bottom: 0;
 }
 
 .chat-room .line-location-footer,
@@ -260,7 +261,6 @@ export const defaultOnlineThemeCss = `/* LINK 线上页默认完整样式。
   line-height: 1;
 }
 
-.chat-room .transfer-request-actions,
 .chat-room .offline-invitation-actions,
 .chat-room .location-actions,
 .chat-room .transfer-actions,
@@ -268,6 +268,13 @@ export const defaultOnlineThemeCss = `/* LINK 线上页默认完整样式。
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.chat-room .transfer-request-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 7px;
+  padding: 7px 8px 8px;
 }
 
 .chat-room .transfer-request-action,
@@ -278,6 +285,13 @@ export const defaultOnlineThemeCss = `/* LINK 线上页默认完整样式。
   padding: 0 12px;
   border-radius: 10px;
   font-weight: 800;
+}
+
+.chat-room .transfer-request-action {
+  min-width: 0;
+  min-height: 26px;
+  padding: 0;
+  border-radius: 9px;
 }
 
 .chat-room .transfer-request-action--accept,
@@ -312,14 +326,18 @@ export const defaultOnlineThemeCss = `/* LINK 线上页默认完整样式。
 }
 
 .chat-room .composer-input {
-  height: 34px;
-  padding: 0 10px;
+  align-items: center;
+  height: auto;
+  min-height: 34px;
+  padding: 5px 10px;
   border-radius: 17px;
   background: #f0f1f2;
   color: #777b80;
 }
 
-.chat-room .composer-input input {
+.chat-room .composer-input textarea {
+  min-height: 22px;
+  line-height: 1.35;
   color: #111111;
 }
 

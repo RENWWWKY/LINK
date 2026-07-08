@@ -381,15 +381,15 @@ defineExpose({ focusInput });
 
 .composer-input {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   align-self: end;
   gap: 5px;
   min-width: 0;
   height: auto;
-  min-height: 30px;
+  min-height: 34px;
   max-height: 104px;
   padding: 5px 9px;
-  border-radius: 15px;
+  border-radius: 17px;
   background: #f0f1f2;
   color: #777b80;
   overflow: hidden;
@@ -398,7 +398,7 @@ defineExpose({ focusInput });
 .composer-input textarea {
   display: block;
   flex: 1 1 auto;
-  min-height: 20px;
+  min-height: 22px;
   max-height: 92px;
   padding: 0;
   resize: none;
@@ -493,7 +493,7 @@ defineExpose({ focusInput });
 }
 
 .composer--text-mode .composer-input {
-  min-height: 32px;
+  min-height: 34px;
   border-radius: 16px;
   font-size: 14px;
 }
