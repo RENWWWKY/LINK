@@ -315,7 +315,7 @@ export const defaultConversationSettings: Omit<ConversationSettings, 'conversati
   narrationModeEnabled: true,
   autoGenerateVoom: true,
   voomFrequency: 'medium',
-  voomImageMode: 'manual',
+  voomImageMode: 'character-choice',
   voomImageEnabled: true,
   voomImageFrequency: 'always',
   autoGenerateTheater: true,

@@ -171,7 +171,6 @@ export const defaultSettings: AppSettings = {
   },
   voomImageProvider: '',
   voomImageModel: '',
-  voomImageRequirePortrait: true,
   voomReadAtByUser: {},
   voomAutoCleanup: {},
   smallTheaterAutoCleanup: {},

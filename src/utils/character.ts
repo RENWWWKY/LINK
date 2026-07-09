@@ -88,9 +88,10 @@ function normalizeCharacterImageProfile(profile: Partial<CharacterImageProfile> 
     facePrompt: String(profile?.facePrompt ?? '').trim(),
     referenceImage: String(profile?.referenceImage ?? '').trim(),
     referenceImageEnabled: profile?.referenceImageEnabled !== false,
+    voomPortraitModeEnabled: profile?.voomPortraitModeEnabled !== false,
     seed: String(profile?.seed ?? '').trim()
   };
-  return normalized.appearancePrompt || normalized.facePrompt || normalized.referenceImage || normalized.seed ? normalized : undefined;
+  return normalized.appearancePrompt || normalized.facePrompt || normalized.referenceImage || normalized.seed || normalized.voomPortraitModeEnabled === false ? normalized : undefined;
 }
 
 export function getCharacterInitialProfile(character: Pick<CharacterProfile, 'initialProfile' | 'nickname' | 'name'>): CharacterInitialProfile {

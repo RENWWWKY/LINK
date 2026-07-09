@@ -116,6 +116,13 @@ export interface ImageGenerationOverrides {
   seed?: string;
 }
 
+interface PreparedReferenceImage {
+  dataUrl: string;
+  base64: string;
+  mimeType: string;
+  filename: string;
+}
+
 function sanitizePrompt(positivePrompt: string, negativePrompt = '') {
   const positive = positivePrompt.trim();
   const negative = negativePrompt.trim();
@@ -126,6 +133,36 @@ function sanitizePrompt(positivePrompt: string, negativePrompt = '') {
 
 function toDataUrlFromBase64(base64: string, mimeType = 'image/png') {
   return `data:${mimeType};base64,${base64}`;
+}
+
+function parseDataUrlImage(value: string): PreparedReferenceImage | null {
+  const match = value.trim().match(/^data:(image\/[^;,]+)(?:;[^,]*)?;base64,([\s\S]+)$/i);
+  if (!match) return null;
+  const mimeType = normalizeImageMimeType(match[1], 'image/png');
+  const base64 = match[2].replace(/\s+/g, '');
+  return {
+    dataUrl: toDataUrlFromBase64(base64, mimeType),
+    base64,
+    mimeType,
+    filename: `reference.${imageExtensionFromMimeType(mimeType)}`
+  };
+}
+
+function imageExtensionFromMimeType(mimeType: string) {
+  if (/webp/i.test(mimeType)) return 'webp';
+  if (/jpe?g/i.test(mimeType)) return 'jpg';
+  if (/gif/i.test(mimeType)) return 'gif';
+  if (/svg/i.test(mimeType)) return 'svg';
+  return 'png';
+}
+
+async function prepareReferenceImage(source: string, fallbackMimeType = 'image/png', apiKey = ''): Promise<PreparedReferenceImage | null> {
+  const trimmed = source.trim();
+  if (!trimmed) return null;
+  const dataUrl = parseDataUrlImage(trimmed)?.dataUrl
+    ?? (/^https?:\/\//i.test(trimmed) ? await fetchGeneratedImageUrlAsDataUrl(trimmed, fallbackMimeType, apiKey) : normalizeImageSourceWithMime(trimmed, fallbackMimeType).imageUrl);
+  const parsed = parseDataUrlImage(dataUrl);
+  return parsed;
 }
 
 function readBlobAsDataUrl(blob: Blob) {
@@ -303,15 +340,37 @@ function isOpenAiResponsesEndpoint(endpoint: string) {
   }
 }
 
+function getOpenAiReferenceImageEndpoint(endpoint: string) {
+  if (isOpenAiResponsesEndpoint(endpoint)) return endpoint;
+  const convertPath = (value: string) => value.replace(/\/images\/generations(?=\/?(?:[?#]|$))/i, '/images/edits');
+  if (!endpoint.startsWith('/__image-proxy')) return convertPath(endpoint);
+  try {
+    const proxyUrl = new URL(endpoint, window.location.origin);
+    const targetUrl = proxyUrl.searchParams.get('url') ?? '';
+    if (targetUrl) proxyUrl.searchParams.set('url', convertPath(targetUrl));
+    return `${proxyUrl.pathname}${proxyUrl.search}`;
+  } catch {
+    return endpoint;
+  }
+}
+
 function supportsB64JsonResponseFormat(model: string) {
   return /^dall-e-(?:2|3)$/i.test(model.trim());
 }
 
-function buildOpenAiImageRequestBody(endpoint: string, model: string, prompt: string, size: string, preferBase64ImageResponse = false) {
+function buildOpenAiImageRequestBody(endpoint: string, model: string, prompt: string, size: string, preferBase64ImageResponse = false, referenceImage?: PreparedReferenceImage | null) {
   if (isOpenAiResponsesEndpoint(endpoint)) {
     return {
       model,
-      input: prompt,
+      input: referenceImage
+        ? [{
+            role: 'user',
+            content: [
+              { type: 'input_text', text: prompt },
+              { type: 'input_image', image_url: referenceImage.dataUrl }
+            ]
+          }]
+        : prompt,
       tools: [{
         type: 'image_generation',
         action: 'generate',
@@ -328,6 +387,17 @@ function buildOpenAiImageRequestBody(endpoint: string, model: string, prompt: st
     ...(preferBase64ImageResponse && supportsB64JsonResponseFormat(model) ? { response_format: 'b64_json' } : {}),
     n: 1
   };
+}
+
+function buildOpenAiImageEditFormData(model: string, prompt: string, size: string, referenceImage: PreparedReferenceImage) {
+  const formData = new FormData();
+  const bytes = Uint8Array.from(atob(referenceImage.base64), (character) => character.charCodeAt(0));
+  formData.set('model', model);
+  formData.set('prompt', prompt);
+  if (size) formData.set('size', size);
+  formData.set('n', '1');
+  formData.set('image', new Blob([bytes], { type: referenceImage.mimeType }), referenceImage.filename);
+  return formData;
 }
 
 const httpStatusText: Record<number, string> = {
@@ -1920,6 +1990,7 @@ export async function generateOpenAiImage(settings: AppSettings, overrides: Imag
   const resolved = getResolvedOpenAiImageConfig(settings);
   const positivePrompt = overrides.positivePrompt ?? settings.imageOpenAi.positivePrompt;
   const negativePrompt = overrides.negativePrompt ?? settings.imageOpenAi.negativePrompt;
+  const referenceImage = await prepareReferenceImage(overrides.referenceImage ?? '', 'image/png', resolved.apiKey);
   const prompt = sanitizePrompt(positivePrompt, negativePrompt);
   const model = String(overrides.model ?? resolved.model).trim();
   const size = String(overrides.size ?? resolved.size).trim();
@@ -1938,13 +2009,19 @@ export async function generateOpenAiImage(settings: AppSettings, overrides: Imag
 
   let response: Response;
   try {
-    response = await fetchOpenAiImageWithRetry(resolved.endpoint, {
+    const requestEndpoint = referenceImage ? getOpenAiReferenceImageEndpoint(resolved.endpoint) : resolved.endpoint;
+    const useMultipartReference = Boolean(referenceImage && !isOpenAiResponsesEndpoint(requestEndpoint));
+    response = await fetchOpenAiImageWithRetry(requestEndpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${resolved.apiKey}`
-      },
-      body: JSON.stringify(buildOpenAiImageRequestBody(resolved.endpoint, model, prompt, size, resolved.preferBase64ImageResponse))
+      headers: useMultipartReference
+        ? { Authorization: `Bearer ${resolved.apiKey}` }
+        : {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${resolved.apiKey}`
+          },
+      body: useMultipartReference && referenceImage
+        ? buildOpenAiImageEditFormData(model, prompt, size, referenceImage)
+        : JSON.stringify(buildOpenAiImageRequestBody(resolved.endpoint, model, prompt, size, resolved.preferBase64ImageResponse, referenceImage))
     });
   } catch (error) {
     throw new Error(createNetworkErrorMessage(error, 'OpenAI 图片网络请求失败', resolved.endpoint));
@@ -1989,6 +2066,7 @@ export async function generateNovelAiImage(settings: AppSettings, overrides: Ima
   const config = settings.imageNovelAi;
   const positivePrompt = overrides.positivePrompt ?? config.positivePrompt;
   const negativePrompt = overrides.negativePrompt ?? config.negativePrompt;
+  const referenceImage = await prepareReferenceImage(overrides.referenceImage ?? '', 'image/png');
   const endpointBase = resolveNovelAiEndpointBase(settings);
   const generationEndpoint = `${endpointBase}/ai/generate-image`;
 
@@ -2007,7 +2085,7 @@ export async function generateNovelAiImage(settings: AppSettings, overrides: Ima
       Authorization: `Bearer ${config.apiKey.trim()}`
     },
     body: JSON.stringify({
-      action: 'generate',
+      action: referenceImage ? 'img2img' : 'generate',
       input: positivePrompt.trim(),
       model: overrides.model ?? config.model,
       parameters: {
@@ -2028,7 +2106,15 @@ export async function generateNovelAiImage(settings: AppSettings, overrides: Ima
         add_original_image: false,
         uncond_scale: 1,
         cfg_rescale: config.cfgRescale,
-        noise_schedule: config.noiseSchedule
+        noise_schedule: config.noiseSchedule,
+        ...(referenceImage
+          ? {
+              image: referenceImage.base64,
+              strength: 0.45,
+              noise: 0.15,
+              add_original_image: true
+            }
+          : {})
       }
     })
   });

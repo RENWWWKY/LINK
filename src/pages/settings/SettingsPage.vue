@@ -14,7 +14,6 @@
         </button>
       </div>
       <div v-else-if="activeTab === 'image'" class="settings-header-actions image-header-actions">
-        <VoomPortraitToggleButton />
         <ImageModelPickerButton />
       </div>
       <TtsModelPickerButton v-else-if="activeTab === 'tts'" />
@@ -64,7 +63,6 @@ import ImageSettingsEditor from '@/components/settings/ImageSettingsEditor.vue';
 import ImageModelPickerButton from '@/components/settings/ImageModelPickerButton.vue';
 import TtsModelPickerButton from '@/components/settings/TtsModelPickerButton.vue';
 import TtsSettingsEditor from '@/components/settings/TtsSettingsEditor.vue';
-import VoomPortraitToggleButton from '@/components/settings/VoomPortraitToggleButton.vue';
 import { useAppStore } from '@/stores/appStore';
 import type { AppSettings } from '@/types/domain';
 import { normalizeAppSettings } from '@/utils/settings';

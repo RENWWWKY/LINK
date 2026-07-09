@@ -630,22 +630,6 @@
             <textarea v-model="characterDraft.imageProfile.facePrompt" rows="4" placeholder="Face shape, eyes, nose, mouth, skin tone, hairstyle framing..." @change="saveCharacterDraft"></textarea>
           </label>
 
-          <div class="image-profile-grid">
-            <label class="field compact-field">
-              <span>固定种子</span>
-              <input v-model="characterDraft.imageProfile.seed" type="text" placeholder="可留空" @change="saveCharacterDraft" />
-              <small>同角色固定 seed 能提升构图和脸部稳定性。</small>
-            </label>
-            <label class="switch-card image-reference-toggle">
-              <input v-model="characterDraft.imageProfile.referenceImageEnabled" type="checkbox" @change="saveCharacterDraft" />
-              <span class="switch-track"></span>
-              <div>
-                <strong>启用参考图</strong>
-                <span>Pollinations 会实际传入参考图。</span>
-              </div>
-            </label>
-          </div>
-
           <section class="image-reference-card">
             <div class="image-reference-preview">
               <img v-if="characterDraft.imageProfile.referenceImage" :src="characterDraft.imageProfile.referenceImage" alt="角色参考图预览" />
@@ -662,6 +646,30 @@
               </label>
             </div>
           </section>
+
+          <div class="image-profile-grid">
+            <label class="field compact-field image-profile-row">
+              <span>固定种子</span>
+              <input v-model="characterDraft.imageProfile.seed" type="text" placeholder="可留空" @change="saveCharacterDraft" />
+              <small>同角色固定 seed 能提升构图和脸部稳定性。</small>
+            </label>
+            <label class="switch-card image-profile-row image-reference-toggle">
+              <input v-model="characterDraft.imageProfile.voomPortraitModeEnabled" type="checkbox" @change="saveCharacterDraft" />
+              <span class="switch-track"></span>
+              <div>
+                <strong>VOOM 人像模式</strong>
+                <span>开启后该角色的 VOOM 配图会优先生成本人。</span>
+              </div>
+            </label>
+            <label class="switch-card image-profile-row image-reference-toggle">
+              <input v-model="characterDraft.imageProfile.referenceImageEnabled" type="checkbox" @change="saveCharacterDraft" />
+              <span class="switch-track"></span>
+              <div>
+                <strong>启用参考图</strong>
+                <span>开启时会实际传入参考图。</span>
+              </div>
+            </label>
+          </div>
         </section>
       </section>
 
@@ -1351,13 +1359,14 @@ function createCharacterImageProfileDraft(profile: Partial<CharacterImageProfile
     facePrompt: String(profile?.facePrompt ?? '').trim(),
     referenceImage: String(profile?.referenceImage ?? '').trim(),
     referenceImageEnabled: profile?.referenceImageEnabled !== false,
+    voomPortraitModeEnabled: profile?.voomPortraitModeEnabled !== false,
     seed: String(profile?.seed ?? '').trim()
   };
 }
 
 function normalizeCharacterImageProfileDraft(profile: CharacterImageProfile): CharacterImageProfile | undefined {
   const normalized = createCharacterImageProfileDraft(profile);
-  return normalized.appearancePrompt || normalized.facePrompt || normalized.referenceImage || normalized.seed ? normalized : undefined;
+  return normalized.appearancePrompt || normalized.facePrompt || normalized.referenceImage || normalized.seed || normalized.voomPortraitModeEnabled === false ? normalized : undefined;
 }
 
 function createThemeStyleOptions(scope: ThemeStyleBindingScope, presets: ThemeStylePreset[]) {
@@ -2154,12 +2163,15 @@ function applyEditedAvatar(value: string) {
 
 .image-profile-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
 }
 
+.image-profile-row {
+  width: 100%;
+}
+
 .image-reference-toggle {
-  min-height: 74px;
+  min-height: 62px;
 }
 
 .image-reference-card {

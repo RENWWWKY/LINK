@@ -6620,12 +6620,12 @@ export const useAppStore = defineStore('app', () => {
     return getImageGenerationSize(settings.value, provider).size;
   }
 
-  function isVoomPortraitPromptRequired() {
-    return settings.value?.voomImageRequirePortrait !== false;
+  function isVoomPortraitPromptRequired(characterId = '') {
+    return characterById(characterId)?.imageProfile?.voomPortraitModeEnabled !== false;
   }
 
   function buildVoomPortraitPrompt(post: VoomPost) {
-    if (!isVoomPortraitPromptRequired()) return '';
+    if (!isVoomPortraitPromptRequired(post.charId)) return '';
     const authorName = voomAuthorNameForPost(post).trim();
     const subject = authorName ? `发布角色「${authorName}」本人` : '发布角色本人';
     return [
@@ -6912,7 +6912,7 @@ export const useAppStore = defineStore('app', () => {
     const negativePrompt = buildImageNegativePrompt(
       promptPreset.negativePrompt,
       promptPreset.defaultNegativePrompt,
-      isVoomPortraitPromptRequired() ? 'no person, empty scene, scenery only, object only, abstract image, background only, missing person' : ''
+      isVoomPortraitPromptRequired(post.charId) ? 'no person, empty scene, scenery only, object only, abstract image, background only, missing person' : ''
     );
     const imageSize = getImageGenerationSize(settings.value, provider);
     let imageSettings = settings.value;
@@ -7038,7 +7038,7 @@ export const useAppStore = defineStore('app', () => {
     const negativePrompt = buildImageNegativePrompt(
       promptPreset.negativePrompt,
       promptPreset.defaultNegativePrompt,
-      isVoomPortraitPromptRequired() ? 'no person, empty scene, scenery only, object only, abstract image, background only, missing person' : ''
+      isVoomPortraitPromptRequired(post.charId) ? 'no person, empty scene, scenery only, object only, abstract image, background only, missing person' : ''
     );
     const imageSize = getImageGenerationSize(settings.value, provider);
     let imageSettings = settings.value;

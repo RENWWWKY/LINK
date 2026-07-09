@@ -134,6 +134,7 @@ export interface CharacterImageProfile {
   facePrompt: string;
   referenceImage: string;
   referenceImageEnabled: boolean;
+  voomPortraitModeEnabled: boolean;
   seed: string;
 }
 
@@ -1066,7 +1067,6 @@ export interface AppSettings {
   imageModelOverrides: Record<ImageModelScope, ImageModelSelection>;
   voomImageProvider: ImageProviderType | '';
   voomImageModel: string;
-  voomImageRequirePortrait: boolean;
   voomReadAtByUser: Record<string, Record<string, number>>;
   voomAutoCleanup: Record<string, CharacterVoomAutoCleanupSettings>;
   smallTheaterAutoCleanup: Record<string, CharacterSmallTheaterAutoCleanupSettings>;
