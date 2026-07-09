@@ -1238,10 +1238,11 @@ onBeforeUnmount(() => {
 }
 
 .bubble.offlineInvitation {
-  min-width: min(248px, 74vw);
+  width: min(196px, 58vw);
+  min-width: min(178px, 52vw);
   padding: 0;
   overflow: hidden;
-  border-radius: 16px;
+  border-radius: 14px;
   background: #ffffff;
   color: #202329;
   border: 1px solid #e6e8eb;
@@ -1415,33 +1416,33 @@ onBeforeUnmount(() => {
 
 .offline-invitation-message {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  padding: 12px;
+  padding: 10px;
 }
 
 .offline-invitation-copy {
   display: grid;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
 
 .offline-invitation-copy span {
   color: #69717b;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 860;
 }
 
 .offline-invitation-copy strong {
   color: #202329;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 930;
   line-height: 1.28;
 }
 
 .offline-invitation-copy small {
   color: #69717b;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 720;
   line-height: 1.36;
 }
@@ -1449,7 +1450,7 @@ onBeforeUnmount(() => {
 .offline-invitation-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 7px;
 }
 
 .offline-invitation-actions button {
@@ -1457,12 +1458,12 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  min-height: 32px;
+  min-height: 28px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 9px;
   background: #f0f2f5;
   color: #333943;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 860;
 }
 

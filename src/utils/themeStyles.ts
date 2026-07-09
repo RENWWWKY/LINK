@@ -261,10 +261,8 @@ export const defaultOnlineThemeCss = `/* LINK 线上页默认完整样式。
   line-height: 1;
 }
 
-.chat-room .offline-invitation-actions,
 .chat-room .location-actions,
-.chat-room .transfer-actions,
-.chat-room .selection-toolbar {
+.chat-room .transfer-actions {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -306,8 +304,11 @@ export const defaultOnlineThemeCss = `/* LINK 线上页默认完整样式。
   color: #2b3036;
 }
 
-.chat-room .line-website-card,
-.chat-room .offline-invitation-message {
+.chat-room .selection-toolbar .secondary-action {
+  background: transparent;
+}
+
+.chat-room .line-website-card {
   display: grid;
   gap: 10px;
   width: min(222px, 64vw);
@@ -347,7 +348,11 @@ export const defaultOnlineThemeCss = `/* LINK 线上页默认完整样式。
   color: #2d333a;
 }
 
-.chat-room .text-action,
+.chat-room .text-action {
+  background: #eff1f3;
+  color: #2d333a;
+}
+
 .chat-room .send-button {
   background: #06c755;
   color: #ffffff;

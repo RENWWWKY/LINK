@@ -59,12 +59,10 @@
 
     <section v-if="selectionMode" class="selection-toolbar">
       <button class="secondary-action" type="button" @click="cancelSelection">
-        <X :size="16" />
         <span>取消</span>
       </button>
       <strong>已选 {{ selectedMessageCount }} 条</strong>
       <button class="danger-action" type="button" :disabled="!selectedMessageCount" @click="deleteSelectedMessages">
-        <Trash2 :size="16" />
         <span>删除</span>
       </button>
     </section>
@@ -540,7 +538,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Trash2, X } from 'lucide-vue-next';
+import { X } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
 import ChatHeader from '@/components/chat/ChatHeader.vue';
 import ChatModelSwitchPanel from '@/components/chat/ChatModelSwitchPanel.vue';
@@ -3381,6 +3379,10 @@ onBeforeUnmount(() => {
   padding: 0 10px;
   border-radius: 8px;
   font-weight: 800;
+}
+
+.selection-toolbar .secondary-action {
+  background: transparent;
 }
 
 .selection-toolbar button:disabled {
