@@ -14,6 +14,20 @@ export const defaultNovelAiModels = [
   { id: 'nai-diffusion-furry-3', label: 'NAI Diffusion Furry V3' }
 ];
 
+const novelAiV4UcPresetValues = new Set([3, 4, 5, 6, 7]);
+
+export function isNovelAiV4FamilyModel(model: string) {
+  return /^nai-diffusion-4(?:-|$)/i.test(model.trim());
+}
+
+export function normalizeNovelAiUcPreset(model: string, ucPreset: unknown) {
+  const normalized = Math.round(Number(ucPreset));
+  if (isNovelAiV4FamilyModel(model)) {
+    return novelAiV4UcPresetValues.has(normalized) ? normalized : 4;
+  }
+  return Number.isFinite(normalized) ? Math.min(7, Math.max(0, normalized)) : 0;
+}
+
 export const defaultPollinationsModels = [
   { id: 'zimage', label: 'Z-Image' },
   { id: 'flux', label: 'Flux' },
@@ -257,7 +271,7 @@ export const defaultAppSettings: AppSettings = {
     guidance: 6.5,
     steps: 28,
     sampler: 'k_euler_ancestral',
-    ucPreset: 0,
+    ucPreset: 4,
     qualityToggle: true,
     sm: false,
     smDyn: false,
@@ -892,7 +906,7 @@ function normalizeNovelAiImageSettings(settings: Partial<NovelAiImageSettings> |
     guidance: Math.max(1, Number(settings?.guidance ?? defaultAppSettings.imageNovelAi.guidance) || defaultAppSettings.imageNovelAi.guidance),
     steps: Math.max(1, Math.round(Number(settings?.steps ?? defaultAppSettings.imageNovelAi.steps) || defaultAppSettings.imageNovelAi.steps)),
     sampler: String(settings?.sampler ?? defaultAppSettings.imageNovelAi.sampler).trim() || defaultAppSettings.imageNovelAi.sampler,
-    ucPreset: Math.min(4, Math.max(0, Math.round(Number(settings?.ucPreset ?? defaultAppSettings.imageNovelAi.ucPreset) || 0))),
+    ucPreset: normalizeNovelAiUcPreset(selectedModel, settings?.ucPreset ?? defaultAppSettings.imageNovelAi.ucPreset),
     qualityToggle: settings?.qualityToggle ?? defaultAppSettings.imageNovelAi.qualityToggle,
     sm: settings?.sm ?? defaultAppSettings.imageNovelAi.sm,
     smDyn: settings?.smDyn ?? defaultAppSettings.imageNovelAi.smDyn,

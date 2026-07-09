@@ -112,14 +112,13 @@
         <div class="visual-actions">
           <button class="visual-secondary" type="button" @click="toggleVisualFlip">翻转</button>
           <button class="visual-secondary" type="button" :disabled="!modalImageSrc || modalImageSrc === '/load.jpg'" @click="downloadCurrentVisual">下载</button>
-          <button v-if="visualCandidates.length" class="visual-secondary" type="button" :disabled="regeneratingImage || !canApplySelectedCandidate" @click="applySelectedCandidate">应用</button>
+          <button class="visual-secondary" type="button" :disabled="regeneratingImage || !canApplySelectedCandidate" @click="applySelectedCandidate">应用</button>
           <button
-            v-if="canRegenerateImage"
             class="visual-primary"
             type="button"
             :class="{ busy: regeneratingImage }"
-            :aria-disabled="regeneratingImage"
-            :disabled="regeneratingImage || !descriptionDraft.trim()"
+            :aria-disabled="regeneratingImage || !canRegenerateImage"
+            :disabled="regeneratingImage || !canRegenerateImage || !descriptionDraft.trim()"
             @click="regenerateImage"
           >
             <LoaderCircle v-if="regeneratingImage" class="loading-icon" :size="15" />
@@ -698,12 +697,8 @@ time {
 
 .visual-actions {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
-  gap: 10px;
-}
-
-.visual-actions:has(.visual-secondary:only-child) {
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .visual-secondary,
@@ -713,9 +708,13 @@ time {
   align-items: center;
   justify-content: center;
   gap: 6px;
+  min-width: 0;
   min-height: 40px;
+  padding-inline: 4px;
   border-radius: 8px;
+  font-size: 13px;
   font-weight: 900;
+  white-space: nowrap;
 }
 
 .visual-secondary {

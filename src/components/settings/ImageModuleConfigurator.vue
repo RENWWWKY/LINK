@@ -149,7 +149,7 @@
           <div class="field-grid two-up compact-grid">
             <label class="field">
               <span>模型</span>
-              <select v-model="draft.imageNovelAi.model">
+              <select v-model="novelAiModelModel">
                 <option v-for="model in novelAiModelOptions" :key="model.id" :value="model.id">
                   {{ model.label }}
                 </option>
@@ -214,11 +214,9 @@
             <label class="field">
               <span>UC 预设</span>
               <select v-model.number="draft.imageNovelAi.ucPreset">
-                <option :value="0">Preset 0</option>
-                <option :value="1">Preset 1</option>
-                <option :value="2">Preset 2</option>
-                <option :value="3">Preset 3</option>
-                <option :value="4">Preset 4</option>
+                <option v-for="preset in novelAiUcPresetOptions" :key="preset.value" :value="preset.value">
+                  {{ preset.label }}
+                </option>
               </select>
             </label>
           </div>
@@ -600,7 +598,7 @@ import { checkNovelAiImageAccess, checkPollinationsImageAccess, fetchNovelAiMode
 import type { ApiVendor, ApiVendorModel, AppSettings, ImageModuleId, ImagePromptPreset } from '@/types/domain';
 import { createId } from '@/utils/id';
 import { readImageFileFromInput } from '@/utils/imageFile';
-import { createImageApiVendor, mergeImageVendorModels, normalizeAppSettings } from '@/utils/settings';
+import { createImageApiVendor, isNovelAiV4FamilyModel, mergeImageVendorModels, normalizeAppSettings, normalizeNovelAiUcPreset } from '@/utils/settings';
 
 type PreviewState = 'idle' | 'loading' | 'success' | 'error';
 type VendorComposerTab = 'provider' | 'models' | 'personalize';
@@ -704,9 +702,37 @@ const novelAiSizePresets = [
   { label: 'Landscape 1216 x 832', value: '1216x832', width: 1216, height: 832 },
   { label: 'Landscape 1152 x 768', value: '1152x768', width: 1152, height: 768 }
 ];
+const novelAiLegacyUcPresetOptions = [
+  { label: 'Preset 0', value: 0 },
+  { label: 'Preset 1', value: 1 },
+  { label: 'Preset 2', value: 2 },
+  { label: 'None', value: 3 },
+  { label: 'Heavy', value: 4 }
+];
+const novelAiV4UcPresetOptions = [
+  { label: 'Heavy', value: 4 },
+  { label: 'Light', value: 5 },
+  { label: 'Human Focus', value: 6 },
+  { label: 'Furry Focus', value: 7 },
+  { label: 'None', value: 3 }
+];
 const pollinationsSizePresets = novelAiSizePresets;
 const novelAiModelOptions = computed(() => draft.value.imageNovelAi.availableModels);
+const novelAiUcPresetOptions = computed(() => isNovelAiV4FamilyModel(draft.value.imageNovelAi.model) ? novelAiV4UcPresetOptions : novelAiLegacyUcPresetOptions);
 const pollinationsModelOptions = computed(() => draft.value.imagePollinations.availableModels);
+const novelAiModelModel = computed({
+  get: () => draft.value.imageNovelAi.model,
+  set: (model: string) => {
+    draft.value = normalizeAppSettings({
+      ...draft.value,
+      imageNovelAi: {
+        ...draft.value.imageNovelAi,
+        model,
+        ucPreset: normalizeNovelAiUcPreset(model, draft.value.imageNovelAi.ucPreset)
+      }
+    });
+  }
+});
 const novelAiSizePresetModel = computed({
   get: () => {
     const width = draft.value.imageNovelAi.width;

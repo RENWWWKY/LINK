@@ -212,14 +212,13 @@
       <div class="image-actions">
         <button class="image-secondary" type="button" @click="toggleImageFlip">翻转</button>
         <button class="image-secondary" type="button" :disabled="!modalImageSrc" @click="downloadCurrentImage">下载</button>
-        <button v-if="imageCandidates.length" class="image-secondary" type="button" :disabled="regeneratingImage || !canApplySelectedCandidate" @click="applySelectedCandidate">应用</button>
+        <button class="image-secondary" type="button" :disabled="regeneratingImage || !canApplySelectedCandidate" @click="applySelectedCandidate">应用</button>
         <button
-          v-if="canRegenerateImage"
           class="image-primary"
           type="button"
           :class="{ busy: regeneratingImage }"
-          :aria-disabled="regeneratingImage"
-          :disabled="regeneratingImage || !imageDescriptionDraft.trim()"
+          :aria-disabled="regeneratingImage || !canRegenerateImage"
+          :disabled="regeneratingImage || !canRegenerateImage || !imageDescriptionDraft.trim()"
           @click="regenerateImage"
         >
           <LoaderCircle v-if="regeneratingImage" class="loading-icon" :size="15" />
@@ -2384,8 +2383,8 @@ onBeforeUnmount(() => {
 
 .image-actions {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .image-secondary,
@@ -2395,9 +2394,13 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 6px;
+  min-width: 0;
   min-height: 38px;
+  padding-inline: 4px;
   border-radius: 10px;
+  font-size: 13px;
   font-weight: 900;
+  white-space: nowrap;
 }
 
 .image-secondary {

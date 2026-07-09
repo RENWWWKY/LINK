@@ -3,7 +3,7 @@ import type { ApiVendor, AppSettings, CharacterProfile, ConversationTimeAwarenes
 import { createId } from '@/utils/id';
 import { getCharacterAiName } from '@/utils/character';
 import { getUserAiName } from '@/utils/profile';
-import { defaultNovelAiModels, defaultPollinationsModels, getResolvedApiConfig, getResolvedOpenAiImageConfig, novelAiOfficialApiUrl, novelAiProxyApiUrl } from '@/utils/settings';
+import { defaultNovelAiModels, defaultPollinationsModels, getResolvedApiConfig, getResolvedOpenAiImageConfig, isNovelAiV4FamilyModel, normalizeNovelAiUcPreset, novelAiOfficialApiUrl, novelAiProxyApiUrl } from '@/utils/settings';
 import { estimateTokenCount } from '@/utils/memory';
 import { getStickerDisplayImageUrl } from '@/utils/stickers';
 import { assertRenderableSmallTheaterHtml, getSmallTheaterVisibleText, withSmallTheaterRuntimeGuard } from '@/utils/smallTheaterHtml';
@@ -212,6 +212,79 @@ function parseSeed(seed: string) {
   if (!trimmed) return Math.floor(Math.random() * 2_147_483_647);
   const numericSeed = Number(trimmed);
   return Number.isFinite(numericSeed) ? Math.floor(numericSeed) : Math.floor(Math.random() * 2_147_483_647);
+}
+
+function buildNovelAiImageRequestBody(
+  config: AppSettings['imageNovelAi'],
+  positivePrompt: string,
+  negativePrompt: string,
+  referenceImage: PreparedReferenceImage | null,
+  overrides: ImageGenerationOverrides
+) {
+  const prompt = positivePrompt.trim();
+  const uc = negativePrompt.trim();
+  const model = String(overrides.model ?? config.model).trim();
+  const parameters: Record<string, unknown> = {
+    negative_prompt: uc,
+    width: Math.max(320, Math.floor(overrides.width ?? config.width)),
+    height: Math.max(320, Math.floor(overrides.height ?? config.height)),
+    scale: config.guidance,
+    sampler: config.sampler,
+    steps: config.steps,
+    seed: parseSeed(overrides.seed ?? config.seed),
+    n_samples: 1,
+    ucPreset: normalizeNovelAiUcPreset(model, config.ucPreset),
+    qualityToggle: config.qualityToggle,
+    sm: config.sm,
+    sm_dyn: config.smDyn,
+    dynamic_thresholding: config.dynamicThresholding,
+    legacy: false,
+    add_original_image: false,
+    uncond_scale: 1,
+    cfg_rescale: config.cfgRescale,
+    noise_schedule: config.noiseSchedule,
+    controlnet_strength: 1
+  };
+
+  if (isNovelAiV4FamilyModel(model)) {
+    Object.assign(parameters, {
+      params_version: 3,
+      legacy_v3_extend: false,
+      legacy_uc: false,
+      deliberate_euler_ancestral_bug: false,
+      prefer_brownian: true,
+      reference_image_multiple: [],
+      reference_information_extracted_multiple: [],
+      reference_strength_multiple: [],
+      normalize_reference_strength_multiple: true,
+      characterPrompts: [],
+      v4_prompt: {
+        caption: { base_caption: prompt, char_captions: [] },
+        use_coords: false,
+        use_order: true
+      },
+      v4_negative_prompt: {
+        caption: { base_caption: uc, char_captions: [] },
+        legacy_uc: false
+      }
+    });
+  }
+
+  if (referenceImage) {
+    Object.assign(parameters, {
+      image: referenceImage.base64,
+      strength: 0.45,
+      noise: 0.15,
+      add_original_image: true
+    });
+  }
+
+  return {
+    action: referenceImage ? 'img2img' : 'generate',
+    input: prompt,
+    model,
+    parameters
+  };
 }
 
 function normalizeBaseUrl(url: string) {
@@ -624,11 +697,11 @@ function createTextApiStatusHint(response: Response, endpoint: string) {
 function createNovelAiNetworkErrorMessage(error: unknown, endpoint: string, requestEndpoint: string) {
   return createNetworkErrorMessage(
     error,
-    'NovelAI 生图接口预检网络请求失败',
+    'NovelAI 接口网络请求失败',
     endpoint,
     requestEndpoint.startsWith(textProxyPath)
-      ? 'NovelAI 预检请求无法通过本地同源代理到达后台。请确认正在通过 npm run dev 或 npm run preview 访问应用，并检查本机网络、代理节点和 Token 是否可用。'
-      : 'NovelAI 预检请求无法到达后台。请确认连接方式、网络代理和 Token 可用。本地开发/预览会优先通过同源代理转发官方接口。'
+      ? 'NovelAI 请求无法通过本地同源代理到达后台。请确认正在通过 npm run dev 或 npm run preview 访问应用，并检查本机网络、代理节点和 Token 是否可用。'
+      : 'NovelAI 请求无法到达后台。请确认连接方式、网络代理和 Token 可用。本地开发/预览会优先通过同源代理转发官方接口。'
   );
 }
 
@@ -2082,41 +2155,10 @@ export async function generateNovelAiImage(settings: AppSettings, overrides: Ima
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      Accept: 'application/x-zip-compressed, application/zip, application/octet-stream, image/*, */*',
       Authorization: `Bearer ${config.apiKey.trim()}`
     },
-    body: JSON.stringify({
-      action: referenceImage ? 'img2img' : 'generate',
-      input: positivePrompt.trim(),
-      model: overrides.model ?? config.model,
-      parameters: {
-        negative_prompt: negativePrompt.trim(),
-        width: Math.max(320, Math.floor(overrides.width ?? config.width)),
-        height: Math.max(320, Math.floor(overrides.height ?? config.height)),
-        scale: config.guidance,
-        sampler: config.sampler,
-        steps: config.steps,
-        seed: parseSeed(overrides.seed ?? config.seed),
-        n_samples: 1,
-        ucPreset: config.ucPreset,
-        qualityToggle: config.qualityToggle,
-        sm: config.sm,
-        sm_dyn: config.smDyn,
-        dynamic_thresholding: config.dynamicThresholding,
-        legacy: false,
-        add_original_image: false,
-        uncond_scale: 1,
-        cfg_rescale: config.cfgRescale,
-        noise_schedule: config.noiseSchedule,
-        ...(referenceImage
-          ? {
-              image: referenceImage.base64,
-              strength: 0.45,
-              noise: 0.15,
-              add_original_image: true
-            }
-          : {})
-      }
-    })
+    body: JSON.stringify(buildNovelAiImageRequestBody(config, positivePrompt, negativePrompt, referenceImage, overrides))
   });
 
   if (!response.ok) {
