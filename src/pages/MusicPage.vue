@@ -233,7 +233,7 @@
             <span v-for="track in favoritePreviewTracks" :key="track.id"><img :src="coverImageSrc(track)" alt="" aria-hidden="true" @error="handleCoverError" /></span>
             <Heart v-if="!favoritePreviewTracks.length" :size="46" fill="currentColor" />
           </div>
-          <div><span>PRIVATE MIX</span><h2>我的喜欢音乐</h2><p>{{ favoriteTracks.length }}首</p></div>
+          <div><span>PRIVATE MIX</span><h2>我的喜欢</h2><p>{{ favoriteTracks.length }}首</p></div>
         </div>
         <div v-if="favoriteTracks.length" class="track-list">
           <article v-for="track in favoriteTracks" :key="track.id" class="track-row" :class="{ active: activeTrack?.id === track.id }">
@@ -255,7 +255,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { Disc3, Hash, Heart, ListMusic, ListOrdered, LoaderCircle, MessageCircle, MessageSquareText, Pause, Play, Repeat, Repeat1, Search, Send, Shuffle, SkipBack, SkipForward, Smile, ThumbsUp, X } from 'lucide-vue-next';
 import { deleteEntity, getDb, putEntity } from '@/data/db';
 import { generateMusicCommentThread, hasTextGenerationConfig } from '@/services/ai';
-import { fetchMusicAudioUrl, fetchMusicCoverUrl, fetchMusicLyricText, mergeMusicTrack, searchMusicTracks } from '@/services/music';
+import { fetchMusicCoverUrl, fetchMusicLyricText, mergeMusicTrack, refreshPlayableMusicTrack, searchMusicTracks } from '@/services/music';
 import { useAppStore } from '@/stores/appStore';
 import { useMusicPlayerStore } from '@/stores/musicPlayerStore';
 import type { MusicComment, MusicCommentThread, MusicSource, MusicTrack, UserProfile, VisualProfile } from '@/types/domain';
@@ -620,14 +620,9 @@ function parseLyricLines(lyricText: string) {
 
 async function ensurePlayableTrack(track: MusicTrack) {
   const existing = findTrack(track.id) ?? track;
-  if (existing.audioUrl) return existing;
   musicPlayer.setLoadingAudioTrackId(track.id);
   try {
-    const [audioUrl, coveredTrack] = await Promise.all([
-      fetchMusicAudioUrl(existing),
-      withCover(existing)
-    ]);
-    const nextTrack = mergeMusicTrack(coveredTrack, { audioUrl });
+    const nextTrack = await refreshPlayableMusicTrack(existing);
     updateTrackEverywhere(nextTrack);
     if (isFavorite(nextTrack.id)) await store.saveMusicFavoriteTrack(nextTrack);
     return nextTrack;

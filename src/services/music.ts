@@ -2,6 +2,7 @@ import type { MusicSource, MusicTrack } from '@/types/domain';
 
 const musicApiEndpoint = 'https://music-api.gdstudio.xyz/api.php';
 const textProxyPath = '/__text-proxy';
+const playbackRepairSources: MusicSource[] = ['netease', 'kuwo', 'joox'];
 
 interface RawMusicTrack {
   id?: string | number;
@@ -121,6 +122,22 @@ function isLikelySameTrack(candidate: MusicTrack, track: MusicTrack) {
   return sameName && sameArtist;
 }
 
+function musicTrackSearchKeywords(track: MusicTrack) {
+  return Array.from(new Set([
+    [track.name, track.artists[0]].filter(Boolean).join(' '),
+    [track.name, ...track.artists.slice(0, 2)].filter(Boolean).join(' '),
+    track.name
+  ].map((keyword) => keyword.trim()).filter(Boolean)));
+}
+
+function musicTrackRepairSources(track: MusicTrack) {
+  const normalizedSource = String(track.source ?? '').trim() as MusicSource;
+  return Array.from(new Set([
+    playbackRepairSources.includes(normalizedSource) ? normalizedSource : '',
+    ...playbackRepairSources
+  ].filter(Boolean))) as MusicSource[];
+}
+
 async function fetchMirroredAudioUrl(track: MusicTrack, br: number) {
   if (track.source === 'netease') return '';
   const keywords = Array.from(new Set([
@@ -165,6 +182,72 @@ export async function fetchMusicCoverUrl(track: MusicTrack, size = 300) {
   if (!track.picId) return '';
   const data = await fetchMusicJson(buildMusicApiUrl({ types: 'pic', source: track.source, id: track.picId, size }));
   return String(data?.url ?? '').trim();
+}
+
+async function withFreshMusicCover(track: MusicTrack) {
+  if (!track.picId) return track;
+  const coverUrl = track.coverUrl || await fetchMusicCoverUrl(track);
+  return coverUrl ? mergeMusicTrack(track, { coverUrl }) : track;
+}
+
+async function fetchPlayableMusicTrackCandidate(track: MusicTrack) {
+  const coveredTrack = await withFreshMusicCover(track);
+  const audioUrl = await fetchMusicAudioUrl(coveredTrack);
+  return mergeMusicTrack(coveredTrack, { audioUrl });
+}
+
+function mergeRepairedMusicTrack(originalTrack: MusicTrack, playableTrack: MusicTrack) {
+  return mergeMusicTrack(originalTrack, {
+    id: originalTrack.id || playableTrack.id,
+    platformId: playableTrack.platformId,
+    urlId: playableTrack.urlId,
+    source: playableTrack.source,
+    name: playableTrack.name || originalTrack.name,
+    artists: playableTrack.artists.length ? playableTrack.artists : originalTrack.artists,
+    album: playableTrack.album,
+    picId: playableTrack.picId,
+    lyricId: playableTrack.lyricId,
+    coverUrl: playableTrack.coverUrl,
+    audioUrl: playableTrack.audioUrl,
+    duration: playableTrack.duration,
+    addedAt: originalTrack.addedAt
+  });
+}
+
+async function searchPlayableMusicTrackFallback(track: MusicTrack) {
+  const candidates: MusicTrack[] = [];
+  for (const source of musicTrackRepairSources(track)) {
+    for (const keyword of musicTrackSearchKeywords(track)) {
+      try {
+        candidates.push(...await searchMusicTracks(keyword, source, 1, 8));
+      } catch {
+        // Try the next source/keyword pair.
+      }
+    }
+  }
+  const uniqueCandidates = Array.from(new Map(candidates.map((candidate) => [candidate.id, candidate])).values());
+  const orderedCandidates = [
+    ...uniqueCandidates.filter((candidate) => isLikelySameTrack(candidate, track)),
+    ...uniqueCandidates.filter((candidate) => !isLikelySameTrack(candidate, track))
+  ];
+  for (const candidate of orderedCandidates) {
+    try {
+      return mergeRepairedMusicTrack(track, await fetchPlayableMusicTrackCandidate(candidate));
+    } catch {
+      // Try the next search candidate.
+    }
+  }
+  return null;
+}
+
+export async function refreshPlayableMusicTrack(track: MusicTrack) {
+  try {
+    return await fetchPlayableMusicTrackCandidate(track);
+  } catch (error) {
+    const repairedTrack = await searchPlayableMusicTrackFallback(track);
+    if (repairedTrack) return repairedTrack;
+    throw error;
+  }
 }
 
 export async function fetchMusicLyricText(track: MusicTrack) {

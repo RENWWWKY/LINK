@@ -15,7 +15,7 @@ import { RECENT_STICKER_GROUP_NAME, cacheStickerImageUrl, createStickerFromDraft
 import { ageMemoryKind, collectIncrementalGrandSummaries, createMemoryRecord, estimateTokenCount, filterHighestMemoryLayers, getConversationActiveMessages, getConversationFloorCount, getGrandSummaryHiddenRange, getHiddenMessageIds, getMemoryContext, getMemoryMergeDepth, getMessageFloorMap, getMessagesInFloorRange, getNextSummaryRange, getNextSummaryStartFloor, getVisibleMessages, isIncrementalGrandSummary, normalizeConversationSettings, normalizeMemoryRecordEntries, renderCharacterMemoryPrompt, shouldCompressMemory } from '@/utils/memory';
 import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
 import { estimateRoleplayReplyInputTokens, fetchVendorModels, generateConversationSummary, generateImageByProvider, generateRoleplayReply, generateSmallTheater, generateUserVoomComments, generateVoomCommentReplies, generateVoomPost, hasTextGenerationConfig, shouldAutoGenerateMoment, type ConversationSummaryIdentityRule, type RoleplayReplyResult, type RoleplayReplySegment } from '@/services/ai';
-import { fetchMusicAudioUrl, fetchMusicCoverUrl, mergeMusicTrack, searchMusicTracks } from '@/services/music';
+import { fetchMusicCoverUrl, mergeMusicTrack, refreshPlayableMusicTrack, searchMusicTracks } from '@/services/music';
 import { useMusicPlayerStore } from '@/stores/musicPlayerStore';
 import { GitHubBackupError, downloadGitHubBackup, downloadGitHubBackupVersion, ensureGitHubBackupRepository, formatGitHubBackupError, listGitHubBackupHistory, uploadGitHubBackup } from '@/services/githubBackup';
 import { showLinkNotification } from '@/services/keepAlive';
@@ -1907,10 +1907,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   async function ensurePlayableMusicTrack(track: MusicTrack) {
-    const coveredTrack = await withMusicCover(track);
-    if (coveredTrack.audioUrl) return coveredTrack;
-    const audioUrl = await fetchMusicAudioUrl(coveredTrack);
-    return mergeMusicTrack(coveredTrack, { audioUrl });
+    return refreshPlayableMusicTrack(track);
   }
 
   async function resolveMusicTrackFromAction(action: { query?: string; source?: string; track?: Partial<MusicTrack> } | null | undefined) {
