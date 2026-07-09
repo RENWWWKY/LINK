@@ -1957,6 +1957,10 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  async function saveMusicFavoriteTrackIfNeeded(track: MusicTrack) {
+    if (musicFavoriteTracks.value.some((entry) => entry.id === track.id)) await saveMusicFavoriteTrack(track);
+  }
+
   function playbackQueueWithCurrent() {
     const storedQueue = musicPlayer.playbackQueue.length ? musicPlayer.playbackQueue : musicFavoriteTracks.value;
     const currentTrack = musicPlayer.currentTrack;
@@ -1971,11 +1975,11 @@ export const useAppStore = defineStore('app', () => {
     return candidates[Math.floor(Math.random() * candidates.length)] ?? queue[0] ?? null;
   }
 
-  function nextPlaybackQueueTrack(direction: -1 | 1 = 1) {
+  function nextPlaybackQueueTrack(direction: -1 | 1 = 1, options: { ignoreRepeatOne?: boolean } = {}) {
     const queue = playbackQueueWithCurrent();
     if (!queue.length) return null;
     const currentTrack = musicPlayer.currentTrack;
-    if (musicPlayer.playbackMode === 'repeat-one' && currentTrack) return currentTrack;
+    if (!options.ignoreRepeatOne && musicPlayer.playbackMode === 'repeat-one' && currentTrack) return currentTrack;
     if (musicPlayer.playbackMode === 'shuffle') return randomPlaybackQueueTrack(queue);
     const currentIndex = currentTrack ? queue.findIndex((track) => track.id === currentTrack.id) : -1;
     const normalizedIndex = currentIndex >= 0 ? currentIndex : 0;
@@ -1994,9 +1998,54 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  async function playNextMusicTrackAfterRecoveryFailure(failedTrackId: string) {
+    const nextTrack = nextPlaybackQueueTrack(1, { ignoreRepeatOne: true });
+    if (!nextTrack || nextTrack.id === failedTrackId) return;
+    try {
+      await playMusicQueueTrack(nextTrack);
+    } catch (error) {
+      console.warn('Music queue recovery fallback failed.', error);
+    }
+  }
+
+  let recoveringMusicPlayback = false;
+
+  async function recoverCurrentMusicPlayback() {
+    if (recoveringMusicPlayback) return;
+    const track = musicPlayer.currentTrack;
+    if (!track) return;
+    recoveringMusicPlayback = true;
+    const resumeSecond = musicPlayer.lastGoodTime || musicPlayer.currentTime || 0;
+    const safeResumeSecond = Math.max(0, resumeSecond - 1);
+    musicPlayer.setLoadingAudioTrackId(track.id);
+    let lastError: unknown = null;
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const playableTrack = await ensurePlayableMusicTrack(track);
+          await musicPlayer.playTrack(playableTrack, { restart: true, resumeAt: safeResumeSecond });
+          await saveMusicFavoriteTrackIfNeeded(playableTrack);
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      console.warn('Music playback recovery failed.', musicPlayer.playbackRecoveryReason, lastError);
+      await playNextMusicTrackAfterRecoveryFailure(track.id);
+    } finally {
+      recoveringMusicPlayback = false;
+      if (musicPlayer.loadingAudioTrackId === track.id) musicPlayer.setLoadingAudioTrackId('');
+    }
+  }
+
   watch(() => musicPlayer.playbackEndedTick, (tick, previousTick) => {
     if (!tick || tick === previousTick) return;
     void playNextMusicTrackAfterEnded();
+  });
+
+  watch(() => musicPlayer.playbackRecoveryTick, (tick, previousTick) => {
+    if (!tick || tick === previousTick) return;
+    void recoverCurrentMusicPlayback();
   });
 
   function startMusicListenTogether(conversationId: string, inviter: 'user' | 'char') {

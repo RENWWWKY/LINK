@@ -24,7 +24,16 @@ export const useMusicPlayerStore = defineStore('musicPlayer', () => {
   const listeningPartner = ref<MusicListenTogetherPartner | null>(null);
   const currentLyricLine = ref('');
   const playbackEndedTick = ref(0);
+  const playbackRecoveryTick = ref(0);
+  const playbackRecoveryReason = ref('');
+  const lastGoodTime = ref(0);
   let audio: HTMLAudioElement | null = null;
+  let stallTimer: ReturnType<typeof setTimeout> | null = null;
+  let progressWatchTimer: ReturnType<typeof setInterval> | null = null;
+  let pendingResumeAt: number | null = null;
+  let lastProgressSecond = 0;
+  let lastProgressAt = 0;
+  let lastRecoveryRequestedAt = 0;
 
   const activeTrackId = computed(() => currentTrack.value?.id || '');
   const progressValue = computed(() => duration.value ? (currentTime.value / duration.value) * 100 : 0);
@@ -35,41 +44,175 @@ export const useMusicPlayerStore = defineStore('musicPlayer', () => {
     duration.value = Number.isFinite(audio.duration) ? audio.duration : 0;
   }
 
+  function clearStallTimer() {
+    if (!stallTimer) return;
+    clearTimeout(stallTimer);
+    stallTimer = null;
+  }
+
+  function stopProgressWatch() {
+    if (!progressWatchTimer) return;
+    clearInterval(progressWatchTimer);
+    progressWatchTimer = null;
+  }
+
+  function rememberAudioProgress() {
+    if (!audio || audio.paused || audio.ended) return;
+    const nextSecond = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    if (nextSecond > 0) lastGoodTime.value = nextSecond;
+    if (nextSecond > lastProgressSecond + 0.25) {
+      lastProgressSecond = nextSecond;
+      lastProgressAt = Date.now();
+    }
+  }
+
+  function applyPendingResume() {
+    if (!audio || pendingResumeAt === null) return;
+    try {
+      const safeResumeAt = duration.value ? Math.min(pendingResumeAt, Math.max(0, duration.value - 2)) : pendingResumeAt;
+      audio.currentTime = safeResumeAt;
+      pendingResumeAt = null;
+      syncAudioProgress();
+    } catch {
+      // Some remote streams only allow seeking after metadata is ready.
+    }
+  }
+
+  function shouldRecoverPlayback() {
+    if (!audio || !currentTrack.value || audio.paused || audio.ended) return false;
+    const currentSecond = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    const totalSeconds = Number.isFinite(audio.duration) ? audio.duration : 0;
+    if (totalSeconds && currentSecond >= totalSeconds - 2) return false;
+    return true;
+  }
+
+  function requestPlaybackRecovery(reason: string) {
+    if (!shouldRecoverPlayback()) return;
+    const now = Date.now();
+    if (now - lastRecoveryRequestedAt < 4500) return;
+    lastRecoveryRequestedAt = now;
+    playbackRecoveryReason.value = reason;
+    playbackRecoveryTick.value += 1;
+  }
+
+  function scheduleStallRecovery(reason: string) {
+    clearStallTimer();
+    const scheduledSecond = audio && Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    stallTimer = setTimeout(() => {
+      const nextSecond = audio && Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+      if (nextSecond > scheduledSecond + 0.5) return;
+      requestPlaybackRecovery(reason);
+    }, 5200);
+  }
+
+  function startProgressWatch() {
+    if (progressWatchTimer || !audio) return;
+    lastProgressSecond = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    lastProgressAt = Date.now();
+    progressWatchTimer = setInterval(() => {
+      const player = audio;
+      if (!player || !shouldRecoverPlayback()) return;
+      const nextSecond = Number.isFinite(player.currentTime) ? player.currentTime : 0;
+      if (nextSecond > lastProgressSecond + 0.25) {
+        lastProgressSecond = nextSecond;
+        lastProgressAt = Date.now();
+        return;
+      }
+      if (Date.now() - lastProgressAt > 7600) requestPlaybackRecovery('播放流长时间没有推进');
+    }, 2500);
+  }
+
+  function handleAudioTimeUpdate() {
+    syncAudioProgress();
+    rememberAudioProgress();
+  }
+
+  function handleAudioLoadedMetadata() {
+    syncAudioProgress();
+    applyPendingResume();
+  }
+
   function bindAudioEvents(nextAudio: HTMLAudioElement) {
-    nextAudio.addEventListener('timeupdate', syncAudioProgress);
-    nextAudio.addEventListener('loadedmetadata', syncAudioProgress);
+    nextAudio.addEventListener('timeupdate', handleAudioTimeUpdate);
+    nextAudio.addEventListener('loadedmetadata', handleAudioLoadedMetadata);
     nextAudio.addEventListener('ended', handleAudioEnded);
     nextAudio.addEventListener('pause', handleAudioPaused);
     nextAudio.addEventListener('play', handleAudioPlayed);
+    nextAudio.addEventListener('error', handleAudioError);
+    nextAudio.addEventListener('stalled', handleAudioStalled);
+    nextAudio.addEventListener('waiting', handleAudioWaiting);
+    nextAudio.addEventListener('emptied', handleAudioEmptied);
+    nextAudio.addEventListener('suspend', handleAudioSuspended);
+    nextAudio.addEventListener('canplay', handleAudioCanPlay);
   }
 
   function unbindAudioEvents(currentAudio: HTMLAudioElement) {
-    currentAudio.removeEventListener('timeupdate', syncAudioProgress);
-    currentAudio.removeEventListener('loadedmetadata', syncAudioProgress);
+    currentAudio.removeEventListener('timeupdate', handleAudioTimeUpdate);
+    currentAudio.removeEventListener('loadedmetadata', handleAudioLoadedMetadata);
     currentAudio.removeEventListener('ended', handleAudioEnded);
     currentAudio.removeEventListener('pause', handleAudioPaused);
     currentAudio.removeEventListener('play', handleAudioPlayed);
+    currentAudio.removeEventListener('error', handleAudioError);
+    currentAudio.removeEventListener('stalled', handleAudioStalled);
+    currentAudio.removeEventListener('waiting', handleAudioWaiting);
+    currentAudio.removeEventListener('emptied', handleAudioEmptied);
+    currentAudio.removeEventListener('suspend', handleAudioSuspended);
+    currentAudio.removeEventListener('canplay', handleAudioCanPlay);
   }
 
   function handleAudioEnded() {
     isPlaying.value = false;
+    clearStallTimer();
+    stopProgressWatch();
     syncAudioProgress();
     playbackEndedTick.value += 1;
   }
 
   function handleAudioPaused() {
     isPlaying.value = false;
+    clearStallTimer();
+    stopProgressWatch();
     syncAudioProgress();
   }
 
   function handleAudioPlayed() {
     isPlaying.value = true;
+    clearStallTimer();
+    startProgressWatch();
     syncAudioProgress();
+    rememberAudioProgress();
+  }
+
+  function handleAudioCanPlay() {
+    clearStallTimer();
+    syncAudioProgress();
+  }
+
+  function handleAudioError() {
+    requestPlaybackRecovery('音频流错误');
+  }
+
+  function handleAudioStalled() {
+    scheduleStallRecovery('音频流中断');
+  }
+
+  function handleAudioWaiting() {
+    scheduleStallRecovery('音频缓冲超时');
+  }
+
+  function handleAudioEmptied() {
+    scheduleStallRecovery('音频流被清空');
+  }
+
+  function handleAudioSuspended() {
+    scheduleStallRecovery('音频加载被挂起');
   }
 
   function setAudioElement(element: HTMLAudioElement | null) {
     if (audio === element) return;
     if (audio) unbindAudioEvents(audio);
+    clearStallTimer();
+    stopProgressWatch();
     audio = element;
     if (!audio) return;
     bindAudioEvents(audio);
@@ -109,15 +252,22 @@ export const useMusicPlayerStore = defineStore('musicPlayer', () => {
     playbackQueue.value = [...dedupedTracks.values()];
   }
 
-  async function playTrack(track: MusicTrack, options: { restart?: boolean } = {}) {
+  async function playTrack(track: MusicTrack, options: { restart?: boolean; resumeAt?: number } = {}) {
     const player = ensureAudio();
     if (!player) throw new Error('当前环境无法播放音频。');
     if (!track.audioUrl) throw new Error('歌曲暂无可播放地址。');
     currentTrack.value = track;
     playbackError.value = '';
+    clearStallTimer();
     const sourceChanged = player.src !== track.audioUrl;
     if (sourceChanged) player.src = track.audioUrl;
     if (options.restart || sourceChanged || player.ended) player.currentTime = 0;
+    if (typeof options.resumeAt === 'number' && Number.isFinite(options.resumeAt) && options.resumeAt > 0) {
+      pendingResumeAt = options.resumeAt;
+      applyPendingResume();
+    } else {
+      pendingResumeAt = null;
+    }
     await player.play();
   }
 
@@ -174,6 +324,9 @@ export const useMusicPlayerStore = defineStore('musicPlayer', () => {
     playbackError,
     playbackMode,
     playbackQueue,
+    playbackRecoveryTick,
+    playbackRecoveryReason,
+    lastGoodTime,
     listeningPartner,
     currentLyricLine,
     playbackEndedTick,
