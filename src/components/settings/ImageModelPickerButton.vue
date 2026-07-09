@@ -50,7 +50,6 @@ const store = useAppStore();
 const showPicker = ref(false);
 
 const imageModelScopes: Array<{ id: ImageModelScope; label: string }> = [
-  { id: 'worldBook', label: '世界书封面' },
   { id: 'voom', label: 'VOOM' },
   { id: 'onlineChat', label: '线上聊天' }
 ];

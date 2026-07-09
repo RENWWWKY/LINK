@@ -734,16 +734,13 @@ export interface WorldBookEntry {
   scope: WorldBookScope;
   enabled: boolean;
   coverImage: string;
-  coverPrompt: string;
-  coverNegativePrompt: string;
-  coverProvider: ImageProviderType | '';
 }
 
 export type ImageProviderType = 'openai' | 'novelai' | 'pollinations';
 
 export type ImageModuleId = ImageProviderType;
 
-export type ImageModelScope = 'worldBook' | 'voom' | 'onlineChat';
+export type ImageModelScope = 'voom' | 'onlineChat';
 
 export interface ImageModelSelection {
   provider: ImageProviderType | '';

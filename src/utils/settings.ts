@@ -269,7 +269,6 @@ export const defaultAppSettings: AppSettings = {
     lastImageUrl: ''
   },
   imageModelOverrides: {
-    worldBook: { provider: '', model: '' },
     voom: { provider: '', model: '' },
     onlineChat: { provider: '', model: '' }
   },
@@ -349,7 +348,6 @@ function normalizeImageModelOverrides(settings?: Partial<AppSettings> | null) {
   if (settings?.imageGenerationEnabled === false) {
     const disabledSelection = { provider: '', model: disabledImageModelSelectionValue } satisfies ImageModelSelection;
     return {
-      worldBook: disabledSelection,
       voom: disabledSelection,
       onlineChat: disabledSelection
     } satisfies Record<ImageModelScope, ImageModelSelection>;
@@ -360,7 +358,6 @@ function normalizeImageModelOverrides(settings?: Partial<AppSettings> | null) {
   };
   const overrides = settings?.imageModelOverrides;
   return {
-    worldBook: normalizeImageModelSelection(overrides?.worldBook, legacySelection),
     voom: normalizeImageModelSelection(overrides?.voom, legacySelection),
     onlineChat: normalizeImageModelSelection(overrides?.onlineChat, legacySelection)
   } satisfies Record<ImageModelScope, ImageModelSelection>;

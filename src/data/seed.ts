@@ -166,7 +166,6 @@ export const defaultSettings: AppSettings = {
     lastImageUrl: ''
   },
   imageModelOverrides: {
-    worldBook: { provider: '', model: '' },
     voom: { provider: '', model: '' },
     onlineChat: { provider: '', model: '' }
   },

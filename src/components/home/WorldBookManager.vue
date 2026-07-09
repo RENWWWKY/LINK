@@ -204,10 +204,7 @@ function createDraft(scope: WorldBookEntry['scope'] = 'local'): WorldBookEntry {
     entries: [createWorldBookLoreEntry({ title: '默认条目', activation: 'constant' })],
     scope,
     enabled: true,
-    coverImage: '',
-    coverPrompt: '',
-    coverNegativePrompt: '',
-    coverProvider: ''
+    coverImage: ''
   };
 }
 

@@ -1,7 +1,7 @@
 import { unzipSync } from 'fflate';
 import type { WorldBookEntry, WorldBookEntryActivation, WorldBookInsertionPosition, WorldBookLoreEntry, WorldBookScope } from '@/types/domain';
 import { createId } from './id';
-import { createWorldBookLoreEntry, normalizeCoverProvider, normalizeWorldBookEntry } from './worldBook';
+import { createWorldBookLoreEntry, normalizeWorldBookEntry } from './worldBook';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -160,10 +160,7 @@ function createImportedBook(title: string, records: UnknownRecord[], metadata: U
     entries,
     scope: normalizeScope(metadata.scope ?? metadata.type, defaultScope),
     enabled,
-    coverImage: textValue(metadata.coverImage ?? metadata.cover ?? metadata.avatar),
-    coverPrompt: textValue(metadata.coverPrompt),
-    coverNegativePrompt: textValue(metadata.coverNegativePrompt),
-    coverProvider: normalizeCoverProvider(textValue(metadata.coverProvider))
+    coverImage: textValue(metadata.coverImage ?? metadata.cover ?? metadata.avatar)
   });
 }
 
@@ -213,10 +210,7 @@ function createPlainTextBook(text: string, title: string, defaultScope: WorldBoo
     entries: [plainTextEntry('全文', content)],
     scope: defaultScope,
     enabled: true,
-    coverImage: '',
-    coverPrompt: '',
-    coverNegativePrompt: '',
-    coverProvider: ''
+    coverImage: ''
   });
 }
 

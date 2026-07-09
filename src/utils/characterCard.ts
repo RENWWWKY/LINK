@@ -113,10 +113,7 @@ function mapWorldBooks(book: CharacterBookSource | null, characterName: string, 
     entries: loreEntries,
     scope: 'local' as const,
     enabled: true,
-    coverImage,
-    coverPrompt: '',
-    coverNegativePrompt: '',
-    coverProvider: ''
+    coverImage
   } satisfies WorldBookEntry];
 }
 

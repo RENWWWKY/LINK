@@ -28,7 +28,7 @@
               <section class="cover-editor">
                 <div class="editor-cover-frame">
                   <img v-if="!isBrokenCoverImage(draftCoverImage)" class="editor-cover" :src="draftCoverImage" alt="世界书封面预览" @error="markBrokenCoverImage(draftCoverImage)" />
-                  <span v-else class="editor-cover-fallback">{{ getCoverDescription() || '世界书封面预览' }}</span>
+                  <span v-else class="editor-cover-fallback">{{ coverFallbackText }}</span>
                 </div>
                 <div class="cover-tools">
                   <div class="cover-source-grid">
@@ -36,12 +36,11 @@
                       <span>本地封面</span>
                       <label class="cover-upload-button">
                         <input type="file" accept="image/*" @change="readCoverImage" />
-                        <Upload :size="18" stroke-width="2.3" />
                         <strong>上传本地封面</strong>
                       </label>
                     </div>
                     <label class="field">
-                      <span>封面导入 URL</span>
+                      <span>封面 URL</span>
                       <input v-model="draft.coverImage" placeholder="留空显示默认封面" />
                     </label>
                   </div>
@@ -51,18 +50,6 @@
                 </div>
               </section>
 
-              <label class="field">
-                <span>Description</span>
-                <textarea
-                  v-model="draft.coverPrompt"
-                  class="prompt-area"
-                  placeholder="描述这本世界书封面想呈现的画面、质感或氛围。"
-                />
-              </label>
-
-              <button class="generate-button cover-bottom-generate" type="button" :disabled="coverState === 'loading'" @click="generateCover">
-                {{ coverState === 'loading' ? '正在生成封面' : '调用生图接口生成封面' }}
-              </button>
             </section>
 
             <section v-else class="editor-pane entry-pane">
@@ -231,17 +218,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { BookOpen, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon, Image as ImageIcon, Plus, Upload } from 'lucide-vue-next';
+import { BookOpen, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon, Image as ImageIcon, Plus } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
-import { generateImageByProvider } from '@/services/ai';
 import { useAppStore } from '@/stores/appStore';
-import type { ImageProviderType, WorldBookEntry, WorldBookEntryActivation, WorldBookLoreEntry } from '@/types/domain';
+import type { WorldBookEntry, WorldBookEntryActivation, WorldBookLoreEntry } from '@/types/domain';
 import { createId } from '@/utils/id';
-import { getImagePromptPresetForProvider, getSelectedImageModelOption, isImageModelSelectionDisabled, normalizeAppSettings } from '@/utils/settings';
-import { compressInlineImageDataUrl, readImageFileFromInput } from '@/utils/imageFile';
-import { createWorldBookLoreEntry, getWorldBookContentSummary, normalizeWorldBookEntry, resolveWorldBookCover } from '@/utils/worldBook';
+import { readImageFileFromInput } from '@/utils/imageFile';
+import { createWorldBookLoreEntry, normalizeWorldBookEntry, resolveWorldBookCover } from '@/utils/worldBook';
 
-type CoverState = 'idle' | 'loading' | 'success' | 'error';
+type CoverState = 'idle' | 'success' | 'error';
 type EditorTab = 'cover' | 'entries';
 
 const route = useRoute();
@@ -272,8 +257,8 @@ const activationModes: Array<{ id: WorldBookEntryActivation; lamp: string; label
 const isEditingRoute = computed(() => route.name === 'world-book-edit');
 const pageTitle = computed(() => isEditingRoute.value ? 'Edit' : 'New');
 const routeBookId = computed(() => String(route.params.id ?? '').trim());
-const currentSettings = computed(() => normalizeAppSettings(store.settings));
 const draftCoverImage = computed(() => resolveWorldBookCover(draft));
+const coverFallbackText = computed(() => draft.title.trim() || '世界书封面预览');
 const draftEnabledEntryCount = computed(() => draft.entries.filter((entry) => entry.enabled).length);
 const activeEntry = computed(() => draft.entries[activeEntryIndex.value] ?? draft.entries[0] ?? null);
 const deleteBookTitle = computed(() => draft.title.trim() || '未命名世界书');
@@ -299,10 +284,7 @@ function createDraft(scope: WorldBookEntry['scope'] = 'local'): WorldBookEntry {
     entries: [createWorldBookLoreEntry({ title: '默认条目', activation: 'constant', order: 100 })],
     scope,
     enabled: true,
-    coverImage: '',
-    coverPrompt: '',
-    coverNegativePrompt: '',
-    coverProvider: ''
+    coverImage: ''
   });
 }
 
@@ -533,108 +515,11 @@ function removeLoreEntry(index: number) {
   draftError.value = '';
 }
 
-function getCoverDescription() {
-  const title = draft.title.trim() || 'private world book';
-  const contentHint = getWorldBookContentSummary(draft).slice(0, 90);
-  return draft.coverPrompt.trim() || [title, contentHint].filter(Boolean).join(', ');
-}
-
-function buildCoverPrompt(provider: ImageProviderType) {
-  const preset = getImagePromptPresetForProvider(currentSettings.value, provider);
-  return [preset.positivePrompt, getCoverDescription()].filter(Boolean).join(', ');
-}
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : '封面生成失败，请检查图片接口配置。';
-}
-
-async function compactCoverImage(imageUrl: string) {
-  if (!/^data:image\//i.test(imageUrl.trim())) return imageUrl;
-  try {
-    return await compressInlineImageDataUrl(imageUrl, { maxDimension: 800, quality: 0.62, minBytes: 160 * 1024 });
-  } catch {
-    return imageUrl;
-  }
-}
-
-function getCoverModelLabel(provider: ImageProviderType) {
-  const selected = getSelectedImageModelOption(currentSettings.value, 'worldBook');
-  return selected?.provider === provider ? selected.label : '';
-}
-
-function getCoverSizeLabel(provider: ImageProviderType) {
-  return provider === 'openai' ? '1024x1536' : '832x1216';
-}
-
-async function generateCover() {
-  if (coverState.value === 'loading') return;
-  const selectedModel = getSelectedImageModelOption(currentSettings.value, 'worldBook');
-  if (!selectedModel) {
-    coverState.value = 'error';
-    coverFeedback.value = isImageModelSelectionDisabled(currentSettings.value.imageModelOverrides.worldBook)
-      ? '世界书封面生图已关闭，请先在生图模型切换里改回可用模型。'
-      : '请先在生图模型切换里选择一个已配置的生图模型。';
-    return;
-  }
-
-  const provider = selectedModel.provider;
-  const positivePrompt = buildCoverPrompt(provider);
-  const promptPreset = getImagePromptPresetForProvider(currentSettings.value, provider);
-  let imageSettings = currentSettings.value;
-  const imageOverrides = {
-    positivePrompt,
-    negativePrompt: promptPreset.negativePrompt,
-    size: '1024x1536',
-    width: 832,
-    height: 1216,
-    model: selectedModel.model
-  };
-
-  if (provider === 'openai') {
-    const [vendorId, ...modelParts] = selectedModel.model.split('::');
-    imageSettings = {
-      ...currentSettings.value,
-      imageOpenAi: {
-        ...currentSettings.value.imageOpenAi,
-        activeVendorId: vendorId || currentSettings.value.imageOpenAi.activeVendorId
-      }
-    };
-    imageOverrides.model = modelParts.join('::') || currentSettings.value.imageModel;
-  }
-
-  coverState.value = 'loading';
-  coverFeedback.value = '';
-
-  try {
-    const result = await generateImageByProvider(provider, imageSettings, imageOverrides);
-    const imageUrl = await compactCoverImage(result.imageUrl);
-    clearBrokenCoverImage(imageUrl);
-    draft.coverImage = imageUrl;
-    draft.coverProvider = result.provider;
-    await store.addGeneratedImage({
-      provider: result.provider,
-      imageUrl,
-      title: `${draft.title.trim() || '世界书'}封面`,
-      prompt: positivePrompt,
-      negativePrompt: promptPreset.negativePrompt,
-      model: getCoverModelLabel(result.provider),
-      size: getCoverSizeLabel(result.provider),
-      source: 'world-book'
-    });
-    coverState.value = 'success';
-    coverFeedback.value = '封面已生成，并会自动固定到这本世界书。';
-  } catch (error) {
-    coverState.value = 'error';
-    coverFeedback.value = getErrorMessage(error);
-  }
-}
-
 async function readCoverImage(event: Event) {
   const image = await readImageFileFromInput(event);
   if (!image) return;
   clearBrokenCoverImage(image);
   draft.coverImage = image;
-  draft.coverProvider = '';
   coverState.value = 'success';
   coverFeedback.value = '本地封面已载入，并会自动保存到这本世界书。';
 }
@@ -648,7 +533,7 @@ function markBrokenCoverImage(imageUrl: string | undefined) {
   brokenCoverImages.value = [...brokenCoverImages.value, imageUrl];
   if (draft.coverImage.trim() === imageUrl) {
     coverState.value = 'error';
-    coverFeedback.value = '封面图片加载失败，已显示文字封面。请重新生成、上传本地封面，或更换可访问的图片地址。';
+    coverFeedback.value = '封面图片加载失败，已显示文字封面。请上传本地封面，或更换可访问的图片地址。';
   }
 }
 
@@ -799,7 +684,6 @@ watch(draft, scheduleAutoSave, { deep: true });
 
 .book-power-button,
 .book-delete-button,
-.generate-button,
 .add-entry-button,
 .entry-switch,
 .entry-delete-button,
@@ -966,25 +850,37 @@ watch(draft, scheduleAutoSave, { deep: true });
   gap: 14px;
 }
 
+.cover-pane {
+  align-content: start;
+}
+
 .cover-editor {
   display: grid;
-  grid-template-columns: minmax(112px, 36%) minmax(0, 1fr);
-  gap: 14px;
-  align-items: start;
-  padding: 12px;
+  grid-template-columns: 1fr;
+  justify-items: center;
+  gap: 13px;
+  padding: 14px;
   border: 1px solid rgba(17, 17, 17, 0.05);
-  border-radius: 24px;
-  background: rgba(247, 249, 248, 0.92);
+  border-radius: 26px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(247, 249, 248, 0.95));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
 }
 
 .editor-cover-frame {
   display: grid;
   place-items: center;
+  width: min(66vw, 250px);
+  max-width: 100%;
   aspect-ratio: 0.68;
   overflow: hidden;
-  border-radius: 16px 21px 21px 16px;
+  border-radius: 22px;
   background: linear-gradient(180deg, #f0f4f2, #e4ebe6);
-  box-shadow: inset 8px 0 12px rgba(72, 84, 77, 0.1), 0 16px 28px rgba(16, 24, 20, 0.1);
+  box-shadow: inset 8px 0 12px rgba(72, 84, 77, 0.08), 0 18px 30px rgba(16, 24, 20, 0.12);
+}
+
+.cover-tools {
+  width: 100%;
+  max-width: 420px;
 }
 
 .editor-cover-fallback {
@@ -1046,14 +942,12 @@ watch(draft, scheduleAutoSave, { deep: true });
   line-height: 1.7;
 }
 
-.field textarea.prompt-area {
-  min-height: 112px;
-}
-
 .cover-source-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
+  align-items: end;
+  width: 100%;
 }
 
 .cover-source-grid .field,
@@ -1063,17 +957,18 @@ watch(draft, scheduleAutoSave, { deep: true });
 
 .cover-source-grid .field span {
   overflow: hidden;
+  font-size: 11px;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 .cover-upload-button {
   position: relative;
-  grid-auto-flow: column;
   align-items: center;
   justify-content: center;
   min-height: 46px;
-  padding: 0 14px;
+  padding: 0 10px;
+  background: rgba(255, 255, 255, 0.98);
   color: var(--ink);
   cursor: pointer;
   overflow: hidden;
@@ -1096,27 +991,12 @@ watch(draft, scheduleAutoSave, { deep: true });
   min-width: 0;
   overflow: hidden;
   color: var(--ink);
-  font-size: 13px;
-  font-weight: 850;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.generate-button {
-  width: 100%;
-  min-height: 40px;
-  padding: 0 14px;
-  background: rgba(31, 38, 34, 0.1);
-  color: var(--ink);
-  box-shadow: inset 0 0 0 1px rgba(31, 38, 34, 0.04);
-}
-
-.generate-button:disabled {
-  opacity: 0.62;
-}
-
-.cover-bottom-generate {
-  min-height: 46px;
 }
 
 .cover-feedback {
@@ -1451,13 +1331,8 @@ watch(draft, scheduleAutoSave, { deep: true });
     border-radius: 20px;
   }
 
-  .cover-editor {
-    grid-template-columns: 1fr;
-  }
-
   .editor-cover-frame {
-    width: min(54vw, 190px);
-    justify-self: center;
+    width: min(64vw, 220px);
   }
 }
 

@@ -1,4 +1,4 @@
-import type { ImageProviderType, WorldBookEntry, WorldBookEntryActivation, WorldBookInsertionPosition, WorldBookLoreEntry, WorldBookScope } from '@/types/domain';
+import type { WorldBookEntry, WorldBookEntryActivation, WorldBookInsertionPosition, WorldBookLoreEntry, WorldBookScope } from '@/types/domain';
 import { createId } from './id';
 
 function encodeSvg(svg: string) {
@@ -154,10 +154,7 @@ export function normalizeWorldBookEntry(entry?: Partial<WorldBookEntry> | null):
     entries,
     scope: normalizeScope(entry?.scope),
     enabled: entry?.enabled ?? true,
-    coverImage: String(entry?.coverImage ?? '').trim(),
-    coverPrompt: String(entry?.coverPrompt ?? '').trim(),
-    coverNegativePrompt: String(entry?.coverNegativePrompt ?? '').trim(),
-    coverProvider: normalizeCoverProvider(entry?.coverProvider)
+    coverImage: String(entry?.coverImage ?? '').trim()
   };
 }
 
@@ -167,8 +164,4 @@ export function normalizeWorldBooks(entries: Array<Partial<WorldBookEntry> | nul
 
 export function resolveWorldBookCover(entry: WorldBookEntry) {
   return entry.coverImage.trim() || createDefaultWorldBookCover(entry.title, entry.scope);
-}
-
-export function normalizeCoverProvider(provider: string | null | undefined): ImageProviderType | '' {
-  return provider === 'openai' || provider === 'novelai' || provider === 'pollinations' ? provider : '';
 }
