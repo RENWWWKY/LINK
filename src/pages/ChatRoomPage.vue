@@ -22,36 +22,39 @@
 
     <main ref="messageListRef" class="message-list" :style="messageListStyle" @scroll="handleMessageListScroll">
       <div v-if="hasEarlierMessages" class="history-loader">上滑加载更早消息</div>
-      <MessageBubble
-        v-for="(message, index) in onlineMessages"
-        :key="message.id"
-        :message="message"
-        :character="character"
-        :user="conversationUser ?? undefined"
-        :appearance="chatSettings.appearance"
-        :hide-avatar="shouldHideAvatar(index)"
-        :profile-alert="hasUnreadMindState"
-        :can-regenerate-image="canRegenerateChatImage"
-        :regenerating-image="regeneratingChatImageMessageIds.includes(message.id)"
-        :selection-mode="selectionMode"
-        :selected="isMessageSelected(message)"
-        :can-quote="canQuoteMessage(message)"
-        @apply-image="applyChatImageCandidate"
-        @accept-music-listen-invite="acceptMusicListenInvite(message)"
-        @accept-offline-invitation="acceptOfflineInvitation(message)"
-        @accept-transfer="respondToTransfer(message.id, 'accepted')"
-        @busy-action="store.showConfigAlert"
-        @long-press="openMessageActions"
-        @open-card-detail="openCardDetail"
-        @open-profile="openCharacterProfile"
-        @open-user-profile="openUserProfile"
-        @quote-message="quoteMessage"
-        @regenerate-image="regenerateChatImage"
-        @reject-music-listen-invite="rejectMusicListenInvite(message)"
-        @reject-offline-invitation="rejectOfflineInvitation(message)"
-        @reject-transfer="respondToTransfer(message.id, 'rejected')"
-        @toggle-select="toggleMessageSelection(message)"
-      />
+      <template v-for="entry in onlineMessageEntries" :key="entry.message.id">
+        <div v-if="entry.timeLabel" class="message-time-divider">
+          <time>{{ entry.timeLabel }}</time>
+        </div>
+        <MessageBubble
+          :message="entry.message"
+          :character="character"
+          :user="conversationUser ?? undefined"
+          :appearance="chatSettings.appearance"
+          :hide-avatar="shouldHideAvatar(entry.messageIndex)"
+          :profile-alert="hasUnreadMindState"
+          :can-regenerate-image="canRegenerateChatImage"
+          :regenerating-image="regeneratingChatImageMessageIds.includes(entry.message.id)"
+          :selection-mode="selectionMode"
+          :selected="isMessageSelected(entry.message)"
+          :can-quote="canQuoteMessage(entry.message)"
+          @apply-image="applyChatImageCandidate"
+          @accept-music-listen-invite="acceptMusicListenInvite(entry.message)"
+          @accept-offline-invitation="acceptOfflineInvitation(entry.message)"
+          @accept-transfer="respondToTransfer(entry.message.id, 'accepted')"
+          @busy-action="store.showConfigAlert"
+          @long-press="openMessageActions"
+          @open-card-detail="openCardDetail"
+          @open-profile="openCharacterProfile"
+          @open-user-profile="openUserProfile"
+          @quote-message="quoteMessage"
+          @regenerate-image="regenerateChatImage"
+          @reject-music-listen-invite="rejectMusicListenInvite(entry.message)"
+          @reject-offline-invitation="rejectOfflineInvitation(entry.message)"
+          @reject-transfer="respondToTransfer(entry.message.id, 'rejected')"
+          @toggle-select="toggleMessageSelection(entry.message)"
+        />
+      </template>
       <div v-if="currentConversationReplying" class="typing-indicator">
         <span></span><span></span><span></span>
       </div>
@@ -556,6 +559,7 @@ import { useKeyboardScrollGuard } from '@/utils/keyboardScrollGuard';
 import { normalizeUserProfile, normalizeVisualProfile } from '@/utils/profile';
 import { getSelectedImageModelOption } from '@/utils/settings';
 import { RECOMMENDED_STICKER_LIMIT, recommendStickers } from '@/utils/stickerRecommendations';
+import { formatChatTimeDivider, shouldShowChatTimeDivider } from '@/utils/time';
 import { isVoomNarrationMessage, mergeVoomLikeMessages } from '@/utils/voomMessages';
 
 type BrowserSpeechRecognitionAlternative = {
@@ -604,6 +608,12 @@ type SpeechRecognitionWindow = Window & {
 
 type MessageComposerExpose = {
   focusInput: () => void;
+};
+
+type OnlineMessageEntry = {
+  message: ChatMessage;
+  messageIndex: number;
+  timeLabel: string;
 };
 
 const voiceTranscriptLimit = 500;
@@ -755,8 +765,16 @@ const allOnlineMessages = computed(() => {
   const displayMessages = messages.filter((message) => !isVoomNarrationMessage(message));
   return mergeVoomLikeMessages(displayMessages);
 });
-const onlineMessages = computed(() => allOnlineMessages.value.slice(Math.max(0, allOnlineMessages.value.length - visibleMessageLimit.value)));
+const visibleOnlineStartIndex = computed(() => Math.max(0, allOnlineMessages.value.length - visibleMessageLimit.value));
+const onlineMessages = computed(() => allOnlineMessages.value.slice(visibleOnlineStartIndex.value));
 const hasEarlierMessages = computed(() => visibleMessageLimit.value < allOnlineMessages.value.length);
+const onlineMessageEntries = computed<OnlineMessageEntry[]>(() => onlineMessages.value.map((message, messageIndex) => {
+  const previousMessage = allOnlineMessages.value[visibleOnlineStartIndex.value + messageIndex - 1];
+  const timeLabel = shouldShowChatTimeDivider(message.createdAt, previousMessage?.createdAt)
+    ? formatChatTimeDivider(message.createdAt)
+    : '';
+  return { message, messageIndex, timeLabel };
+}));
 
 function shouldHideAvatar(index: number) {
   if (!chatSettings.value.appearance.showOnlyFirstAvatarInReply) return false;
@@ -2103,6 +2121,27 @@ onBeforeUnmount(() => {
   color: #7b828a;
   font-size: 12px;
   line-height: 1.2;
+}
+
+.message-time-divider {
+  display: flex;
+  justify-content: center;
+  margin: 12px 0 8px;
+  pointer-events: none;
+}
+
+.message-time-divider time {
+  max-width: calc(100% - 32px);
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(245, 246, 248, 0.82);
+  color: #7b828a;
+  font-size: 11px;
+  font-weight: 680;
+  line-height: 1.2;
+  box-shadow: 0 1px 6px rgba(17, 20, 24, 0.06);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
 
 .hidden-file-input {
