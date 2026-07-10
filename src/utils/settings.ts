@@ -65,7 +65,7 @@ const defaultPollinationsPromptPresetId = 'pollinations_default';
 const minGlobalThemeScale = 0.85;
 const maxGlobalThemeScale = 1.2;
 
-export const ringtoneEventTypes: RingtoneEventType[] = ['voom', 'message', 'theater'];
+export const ringtoneEventTypes: RingtoneEventType[] = ['voom', 'message', 'theater', 'call'];
 export const defaultRingtoneFileName = '吉森信 - 前略 じーちゃん.mp3';
 
 function getPublicAssetUrl(fileName: string) {
@@ -175,7 +175,8 @@ export function createDefaultRingtoneSettings(): AppRingtoneSettings {
     global: {
       voom: createDefaultRingtoneAsset(),
       message: createDefaultRingtoneAsset(),
-      theater: createDefaultRingtoneAsset()
+      theater: createDefaultRingtoneAsset(),
+      call: createDefaultRingtoneAsset()
     },
     characters: {}
   };

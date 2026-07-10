@@ -136,6 +136,24 @@ export interface CharacterImageProfile {
   referenceImageEnabled: boolean;
   voomPortraitModeEnabled: boolean;
   seed: string;
+  photos: CharacterPhotoRecord[];
+  hiddenSourcePhotoKeys: string[];
+}
+
+export type CharacterPhotoSourceType = 'manual-url' | 'manual-local' | 'call-generated';
+
+export interface CharacterPhotoRecord {
+  id: string;
+  imageUrl: string;
+  source: CharacterPhotoSourceType;
+  title: string;
+  prompt?: string;
+  negativePrompt?: string;
+  provider?: ChatImageProviderType;
+  model?: string;
+  size?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface CharacterProfile {
@@ -255,9 +273,6 @@ export interface ConversationProactiveReplySettings {
 }
 
 export interface ConversationCallSettings {
-  ringtone?: RingtoneAsset;
-  backgroundImage: string;
-  backgroundImages: string[];
   ambientSound?: RingtoneAsset;
   ambientEnabled: boolean;
   ambientVolume: number;
@@ -1015,7 +1030,7 @@ export interface DoubaoTtsSettings {
   pureEnglishOpt: boolean;
 }
 
-export type RingtoneEventType = 'voom' | 'message' | 'theater';
+export type RingtoneEventType = 'voom' | 'message' | 'theater' | 'call';
 
 export type RingtoneSourceType = 'default' | 'imported';
 
@@ -1034,6 +1049,7 @@ export interface CharacterRingtoneSettings {
   voom?: RingtoneAsset;
   message?: RingtoneAsset;
   theater?: RingtoneAsset;
+  call?: RingtoneAsset;
 }
 
 export interface AppRingtoneSettings {

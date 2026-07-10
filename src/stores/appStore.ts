@@ -1987,16 +1987,17 @@ export const useAppStore = defineStore('app', () => {
     const actorName = actor === 'char' ? names.characterName : names.userName;
     const otherName = actor === 'char' ? names.userName : names.characterName;
     const callLabel = callModeLabel(normalizedCall.mode);
+    const inviteLabel = normalizedCall.mode === 'video' ? '视频呼叫' : '语音呼叫';
     const durationText = formatPromptDuration(normalizedCall.duration);
-    if (normalizedCall.status === 'rejected') return `${actorName}拒绝了${otherName}拨来的${callLabel}，通话时长${durationText}。`;
-    if (normalizedCall.status === 'cancelled') return `${actorName}取消了拨给${otherName}的${callLabel}，通话时长${durationText}。`;
+    if (normalizedCall.status === 'rejected') return `${actorName}拒绝了${otherName}拨来的${inviteLabel}。`;
+    if (normalizedCall.status === 'cancelled') return `${actorName}取消了拨给${otherName}的${inviteLabel}。`;
     return `${actorName}挂断了和${otherName}的${callLabel}，通话时长${durationText}。`;
   }
 
   async function appendCallEndPromptMessage(conversationId: string, call: ChatCallAttachment, actor: 'user' | 'char' = 'user') {
     const normalizedCall = normalizeCallAttachment(call);
     const createdAt = (normalizedCall.endedAt ?? Date.now()) + 1;
-    return appendConversationEvent(conversationId, callEndPromptContent(conversationId, normalizedCall, actor), { mode: 'online', createdAt, contextOnly: true });
+    return appendConversationEvent(conversationId, callEndPromptContent(conversationId, normalizedCall, actor), { mode: 'online', createdAt });
   }
 
   function callMessageSender(call: ChatCallAttachment): ChatMessage['sender'] {
@@ -2486,7 +2487,7 @@ export const useAppStore = defineStore('app', () => {
     await appendConversationEvent(
       conversationId,
       `${actorName}关闭了和${otherName}的一起听，已一起听${durationText}${trackName ? `，关闭时正在播放《${trackName}》` : ''}。`,
-      { mode: 'online', contextOnly: true }
+      { mode: 'online' }
     );
     musicPlayer.stopListenTogether(partner.characterId);
     return true;
@@ -3993,7 +3994,27 @@ export const useAppStore = defineStore('app', () => {
     };
   }
 
+  async function compactCharacterForBackup(character: CharacterProfile): Promise<CharacterProfile> {
+    const imageProfile = character.imageProfile;
+    if (!imageProfile?.photos.length) return character;
+    const photos = imageProfile.photos;
+    const nextPhotos = await Promise.all(photos.map(async (photo) => ({
+      ...photo,
+      imageUrl: await compactInlineDisplayImage(photo.imageUrl)
+    })));
+    return {
+      ...character,
+      imageProfile: {
+        ...imageProfile,
+        photos: nextPhotos
+      }
+    };
+  }
+
   async function compactSnapshotMediaForBackup(snapshot: AppSnapshot): Promise<AppSnapshot> {
+    const characters: CharacterProfile[] = [];
+    for (const character of snapshot.characters) characters.push(await compactCharacterForBackup(character));
+
     const messages: ChatMessage[] = [];
     for (const message of snapshot.messages) messages.push(await compactMessageForBackup(message));
 
@@ -4013,6 +4034,7 @@ export const useAppStore = defineStore('app', () => {
 
     return {
       ...snapshot,
+      characters,
       messages,
       voomPosts: voomPostsForBackup,
       generatedImages: generatedImagesForBackup,

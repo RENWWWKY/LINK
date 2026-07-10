@@ -294,7 +294,7 @@
 <script setup lang="ts">
 import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref, type PropType } from 'vue';
 import { useRouter } from 'vue-router';
-import { AlertCircle, BatteryCharging, BellRing, CheckCircle2, Clapperboard, Cloud, Download, LoaderCircle, MessageCircle, Music2, Power, RadioTower, RefreshCw, RotateCcw, ShieldCheck, Smartphone, Undo2, Upload, Volume2, VolumeX } from 'lucide-vue-next';
+import { AlertCircle, BatteryCharging, BellRing, CheckCircle2, Clapperboard, Cloud, Download, LoaderCircle, MessageCircle, Music2, Phone, Power, RadioTower, RefreshCw, RotateCcw, ShieldCheck, Smartphone, Undo2, Upload, Volume2, VolumeX } from 'lucide-vue-next';
 import { checkForAppUpdate, getAppUpdateStatus, installDownloadedAppUpdate, refreshAppUpdateStatus, subscribeAppUpdateStatus, type AppUpdateStatus } from '@/services/appUpdate';
 import { getKeepAliveStatus, requestKeepAliveNotificationPermission, startKeepAlive, stopKeepAlive, subscribeKeepAliveStatus, type KeepAliveRuntimeStatus } from '@/services/keepAlive';
 import { useAppStore } from '@/stores/appStore';
@@ -329,7 +329,8 @@ const mimeByExtension: Record<string, string> = {
 const eventMeta = {
   voom: { label: 'Voom 发布', shortLabel: 'Voom' },
   message: { label: '消息发送', shortLabel: 'Message' },
-  theater: { label: '小剧场生成', shortLabel: 'Theater' }
+  theater: { label: '小剧场生成', shortLabel: 'Theater' },
+  call: { label: '来电铃声', shortLabel: 'Call' }
 } satisfies Record<RingtoneEventType, { label: string; shortLabel: string }>;
 
 const tabs = [
@@ -347,7 +348,7 @@ const RingtoneCardIcon = defineComponent({
   },
   setup(props) {
     return () => h('span', { class: ['ringtone-mark', `ringtone-mark--${props.eventType}`] }, [
-      h(props.eventType === 'voom' ? RadioTower : props.eventType === 'theater' ? Clapperboard : MessageCircle, { size: 18, strokeWidth: 2.2 })
+      h(props.eventType === 'voom' ? RadioTower : props.eventType === 'theater' ? Clapperboard : props.eventType === 'call' ? Phone : MessageCircle, { size: 18, strokeWidth: 2.2 })
     ]);
   }
 });
@@ -506,7 +507,8 @@ function cloneRingtoneSettings(settings: AppRingtoneSettings): AppRingtoneSettin
     global: {
       voom: cloneAsset(settings.global.voom),
       message: cloneAsset(settings.global.message),
-      theater: cloneAsset(settings.global.theater)
+      theater: cloneAsset(settings.global.theater),
+      call: cloneAsset(settings.global.call)
     },
     characters: Object.fromEntries(Object.entries(settings.characters).map(([characterId, entry]) => [
       characterId,
@@ -514,7 +516,8 @@ function cloneRingtoneSettings(settings: AppRingtoneSettings): AppRingtoneSettin
         characterId: entry.characterId,
         ...(entry.voom ? { voom: cloneAsset(entry.voom) } : {}),
         ...(entry.message ? { message: cloneAsset(entry.message) } : {}),
-        ...(entry.theater ? { theater: cloneAsset(entry.theater) } : {})
+        ...(entry.theater ? { theater: cloneAsset(entry.theater) } : {}),
+        ...(entry.call ? { call: cloneAsset(entry.call) } : {})
       }
     ]))
   };
@@ -1690,6 +1693,12 @@ async function resetCharacter(characterId: string, eventType: RingtoneEventType)
   background:
     radial-gradient(circle at top right, rgba(255, 235, 188, 0.88), transparent 34%),
     linear-gradient(135deg, #fffdf7, #f4f0ff 56%, #eef8f1);
+}
+
+.ringtone-mark--call {
+  background:
+    radial-gradient(circle at top right, rgba(214, 244, 224, 0.92), transparent 34%),
+    linear-gradient(135deg, #f8fffb, #eef7f3 56%, #f3f2ff);
 }
 
 .ringtone-content.is-muted .ringtone-card,

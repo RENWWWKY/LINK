@@ -100,7 +100,8 @@
     <section v-if="activeCall && !callMinimized" class="call-screen" :class="[`call-screen--${activeCall.mode}`, `call-screen--${activeCall.status}`]" :style="callScreenStyle" aria-live="polite">
       <div class="call-visual-layer">
         <div class="call-topbar">
-          <span>{{ callModeLabel }}</span>
+          <button v-if="activeCall.mode === 'video'" class="call-mind-button" type="button" :aria-label="`查看${callPeerName}心声`" @click="openCharacterProfile">查看心声</button>
+          <span v-else>{{ callModeLabel }}</span>
           <span class="call-topbar-actions">
             <button v-if="activeCall.status !== 'ended'" type="button" aria-label="最小化通话" @click="minimizeActiveCall">
               <Minimize :size="18" />
@@ -112,13 +113,6 @@
         </div>
 
         <section v-if="activeCall.mode === 'video'" class="call-video-stage" :class="[callExpressionClass, { speaking: callCharacterSpeaking, active: activeCall.status === 'active' }]" :style="callVideoStageStyle" aria-label="角色视频画面">
-          <button class="call-video-character" type="button" :aria-label="`查看${callPeerName}主页`" @click="openCharacterProfile">
-            <span class="call-video-expression call-video-expression--left" aria-hidden="true"></span>
-            <img :src="character.avatar" :alt="callPeerName" />
-            <span class="call-video-expression call-video-expression--right" aria-hidden="true"></span>
-            <span class="call-video-halo" aria-hidden="true"></span>
-            <span class="call-video-mouth" aria-hidden="true"></span>
-          </button>
           <div class="call-video-copy">
             <h2>{{ callPeerName }}</h2>
             <p>{{ callPrimaryStatus }}</p>
@@ -685,11 +679,13 @@ import { useAppStore, type AppActiveCallState } from '@/stores/appStore';
 import { useMusicPlayerStore } from '@/stores/musicPlayerStore';
 import { generateImageByProvider } from '@/services/ai';
 import { synthesizeSpeech } from '@/services/tts';
-import type { AppSettings, CharacterProfile, ChatCallMode, ChatCallStatus, ChatImageAttachment, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatTransferStatus, ChatVoiceAttachment, ImageProviderType, Sticker, UserProfile } from '@/types/domain';
+import type { AppSettings, CharacterImageProfile, CharacterProfile, ChatCallMode, ChatCallStatus, ChatImageAttachment, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatTransferStatus, ChatVoiceAttachment, ImageProviderType, Sticker, UserProfile } from '@/types/domain';
 import { getCharacterAiName, getCharacterDisplayName } from '@/utils/character';
+import { collectCharacterPhotoImages, createCharacterPhotoRecord, normalizeCharacterPhotoRecords, normalizeHiddenSourcePhotoKeys } from '@/utils/characterPhotos';
 import { readChatImageFile } from '@/utils/imageFile';
 import { useKeyboardScrollGuard } from '@/utils/keyboardScrollGuard';
 import { getUserAiName, normalizeUserProfile, normalizeVisualProfile } from '@/utils/profile';
+import { normalizeRingtoneSettings } from '@/utils/settings';
 import { defaultImageNegativePrompt, getImagePromptPresetForProvider, getSelectedImageModelOption } from '@/utils/settings';
 import { RECOMMENDED_STICKER_LIMIT, recommendStickers } from '@/utils/stickerRecommendations';
 import { formatChatTimeDivider, shouldShowChatTimeDivider } from '@/utils/time';
@@ -778,54 +774,14 @@ type CallVoicePlayback = {
   audioUrls: Array<Promise<string>>;
 };
 
-type CallSceneId = 'room' | 'campus' | 'cafe' | 'studio' | 'clinic' | 'city';
-
-type CallSceneBackgroundConfig = {
-  label: string;
-  prompt: string;
-  fallbackKeywords: string;
-};
-
 type SelectedImageModelOption = NonNullable<ReturnType<typeof getSelectedImageModelOption>>;
 
 const voiceTranscriptLimit = 500;
 const composerDraftStoragePrefix = 'link.chat.composerDraft.';
 const defaultCallFloatPosition = { x: 16, y: 92 };
 const callBackgroundImageSize = { size: '832x1216', width: 832, height: 1216 };
-const publicCallBackgroundApiBase = 'https://loremflickr.com/1080/1920';
-const callBackgroundNegativePrompt = 'people, person, human, crowd, portrait, face, hands, full body, selfie, model, student, customer, waiter, patient, text, watermark, logo, user interface, phone frame, notification badge, blurry, distorted perspective';
-const callSceneBackgroundConfigs: Record<CallSceneId, CallSceneBackgroundConfig> = {
-  room: {
-    label: '温暖房间',
-    prompt: 'An empty cozy lived-in bedroom or apartment interior, warm ambient light, soft fabric textures, evening calm, intimate private call atmosphere.',
-    fallbackKeywords: 'bedroom,interior,empty'
-  },
-  campus: {
-    label: '校园教室',
-    prompt: 'An empty quiet university library corner or classroom interior, soft daylight, desks and windows, clean academic atmosphere, peaceful and youthful.',
-    fallbackKeywords: 'library,interior,empty'
-  },
-  cafe: {
-    label: '咖啡店',
-    prompt: 'An empty cozy cafe interior with coffee bar details, warm lights, wooden tables, gentle afternoon atmosphere, relaxed private conversation mood.',
-    fallbackKeywords: 'cafe,interior,empty'
-  },
-  studio: {
-    label: '工作室',
-    prompt: 'An empty creative studio interior, soft studio lights, instruments or art supplies in the background, expressive and polished atmosphere.',
-    fallbackKeywords: 'studio,interior,empty'
-  },
-  clinic: {
-    label: '诊疗空间',
-    prompt: 'An empty bright clean clinic room or hospital waiting corner, soft white and mint light, calm medical environment, gentle reassuring atmosphere.',
-    fallbackKeywords: 'hospital,interior,empty'
-  },
-  city: {
-    label: '城市夜景',
-    prompt: 'An empty vertical city night skyline or architecture background, soft neon reflections, distant windows and street lights, cinematic urban atmosphere.',
-    fallbackKeywords: 'cityscape,night,architecture'
-  }
-};
+const callBackgroundRotationIntervalMs = 20_000;
+const callBackgroundNegativePrompt = 'crowd, multiple people, extra person, duplicate face, bad anatomy, deformed hands, extra fingers, text, watermark, logo, user interface, phone frame, notification badge, blurry, distorted perspective';
 const composerDrafts = new Map<string, string>();
 
 function composerDraftKey(conversationId: string) {
@@ -984,7 +940,7 @@ const localCameraFacingMode = ref<CallCameraFacingMode>('user');
 const callVoiceActive = ref(false);
 const callMouthLevel = ref(0);
 const callGeneratedBackgroundUrl = ref('');
-const callPublicBackgroundUrl = ref('');
+const callRotatingBackgroundUrl = ref('');
 const callBackgroundRequestKey = ref('');
 const callBackgroundGenerating = ref(false);
 const callBackgroundRunId = ref(0);
@@ -994,6 +950,7 @@ let voiceChunks: Blob[] = [];
 let voiceRecognition: BrowserSpeechRecognition | null = null;
 let voiceTimer: number | undefined;
 let callTimer: number | undefined;
+let callBackgroundRotationTimer: number | undefined;
 let callAudio: HTMLAudioElement | null = null;
 let callRingtoneAudio: HTMLAudioElement | null = null;
 let callAmbientAudio: HTMLAudioElement | null = null;
@@ -1055,6 +1012,26 @@ const conversationUser = computed(() => {
   };
 });
 const chatSettings = computed(() => store.settingsForConversation(props.id));
+const characterImageProfile = computed<CharacterImageProfile>(() => ({
+  appearancePrompt: String(character.value?.imageProfile?.appearancePrompt ?? '').trim(),
+  facePrompt: String(character.value?.imageProfile?.facePrompt ?? '').trim(),
+  referenceImage: String(character.value?.imageProfile?.referenceImage ?? '').trim(),
+  referenceImageEnabled: character.value?.imageProfile?.referenceImageEnabled !== false,
+  voomPortraitModeEnabled: character.value?.imageProfile?.voomPortraitModeEnabled !== false,
+  seed: String(character.value?.imageProfile?.seed ?? '').trim(),
+  photos: normalizeCharacterPhotoRecords(character.value?.imageProfile?.photos),
+  hiddenSourcePhotoKeys: normalizeHiddenSourcePhotoKeys(character.value?.imageProfile?.hiddenSourcePhotoKeys)
+}));
+const characterPhotoPool = computed(() => {
+  const currentCharacter = character.value;
+  if (!currentCharacter) return [];
+  return collectCharacterPhotoImages({
+    character: currentCharacter,
+    conversations: store.conversations,
+    messages: store.messages,
+    voomPosts: store.voomPosts
+  });
+});
 const allOnlineMessages = computed(() => {
   const messages = store.messagesForConversation(props.id).filter((message) => message.mode === 'online');
   const displayMessages = messages.filter((message) => !message.contextOnly && !isVoomNarrationMessage(message) && !isCallSubtitleMessage(message));
@@ -1213,21 +1190,8 @@ function syncActiveCallMetadata() {
   });
 }
 
-const callSceneSourceText = computed(() => {
-  const currentCharacter = character.value;
-  const profile = currentCharacter?.profile;
-  return [
-    currentCharacter?.description,
-    currentCharacter?.signature,
-    currentCharacter?.subtitle,
-    profile?.location,
-    profile?.bio,
-    callMessageText(latestCharacterCallMessage.value ?? latestCallTranscriptMessage.value ?? ({ content: '' } as ChatMessage))
-  ].map((value) => String(value ?? '')).join(' ');
-});
-const callSceneId = computed<CallSceneId>(() => resolveCallSceneId(callSceneSourceText.value));
-const callVideoBackgroundUrl = computed(() => activeCall.value?.mode === 'video' ? callGeneratedBackgroundUrl.value || callPublicBackgroundUrl.value : '');
-const callScreenBackgroundUrl = computed(() => callVideoBackgroundUrl.value || chatSettings.value.call.backgroundImage || character.value?.avatar || '');
+const callPhotoBackgroundUrl = computed(() => activeCall.value ? callGeneratedBackgroundUrl.value || callRotatingBackgroundUrl.value : '');
+const callScreenBackgroundUrl = computed(() => callPhotoBackgroundUrl.value || character.value?.avatar || '');
 const callScreenStyle = computed(() => {
   const image = callScreenBackgroundUrl.value.trim();
   if (!image) return {};
@@ -1254,54 +1218,31 @@ const callCameraStatusLabel = computed(() => {
   return '头像';
 });
 
-function resolveCallSceneId(source: string): CallSceneId {
-  if (/学校|校园|大学|高中|教室|图书馆|实验室|社团|课程|作业/.test(source)) return 'campus';
-  if (/咖啡|奶茶|甜品|餐厅|料理|厨房|酒吧|便利店|面包/.test(source)) return 'cafe';
-  if (/舞台|音乐|录音|工作室|直播|乐队|唱歌|吉他|钢琴|画室|摄影/.test(source)) return 'studio';
-  if (/医院|诊所|病房|医生|护士|药房|值班/.test(source)) return 'clinic';
-  if (/城市|街|夜|地铁|车站|机场|酒店|旅行|出差|公司|办公室/.test(source)) return 'city';
-  return 'room';
-}
-
 function joinCallBackgroundPromptPieces(...pieces: Array<string | undefined>) {
   return pieces.map((piece) => String(piece ?? '').trim()).filter(Boolean).join('\n');
 }
 
-function hashCallBackgroundSeed(source: string) {
-  let hash = 0;
-  for (const symbol of source) {
-    hash = (hash * 31 + symbol.charCodeAt(0)) >>> 0;
-  }
-  return String(hash % 100000 || 1);
-}
-
-function buildPublicCallBackgroundUrl(sceneId: CallSceneId, requestKey: string) {
-  const keywords = callSceneBackgroundConfigs[sceneId].fallbackKeywords
-    .split(',')
-    .map((keyword) => encodeURIComponent(keyword.trim()))
-    .filter(Boolean)
-    .join(',');
-  const lock = hashCallBackgroundSeed(requestKey);
-  return `${publicCallBackgroundApiBase}/${keywords}/all?lock=${lock}`;
-}
-
-function buildCallBackgroundPrompt(sceneId: CallSceneId) {
-  const config = callSceneBackgroundConfigs[sceneId];
+function buildCallBackgroundPrompt() {
   const currentCharacter = character.value;
+  const imageProfile = characterImageProfile.value;
   const profile = currentCharacter?.profile;
   const characterContext = [
+    currentCharacter?.nickname,
     currentCharacter?.description,
     currentCharacter?.signature,
     currentCharacter?.subtitle,
     profile?.location,
-    profile?.bio
+    profile?.bio,
+    imageProfile.appearancePrompt,
+    imageProfile.facePrompt,
+    callMessageText(latestCharacterCallMessage.value ?? latestCallTranscriptMessage.value ?? ({ content: '' } as ChatMessage))
   ].map((value) => String(value ?? '').trim()).filter(Boolean).join('; ').slice(0, 600);
   return joinCallBackgroundPromptPieces(
-    'A vertical 9:16 full-screen background for a mobile video call page.',
-    'Empty environment only, unoccupied scene, no people, no human figures, no character portrait, no text, no watermark, no logo, no user interface, no phone frame.',
-    config.prompt,
-    characterContext ? `The atmosphere should fit this character context: ${characterContext}.` : '',
-    'Leave comfortable negative space near the center for a character avatar overlay and call controls, soft depth of field, immersive but not visually busy.'
+    'A vertical 9:16 full-screen character photo for a mobile call background.',
+    'One person only: the character appears as the main subject, full body or half body, looking natural in a call-like portrait.',
+    'The image should fill the whole phone screen, polished anime or cinematic portrait style, no text, no watermark, no user interface, no phone frame.',
+    characterContext ? `Character identity and appearance: ${characterContext}.` : '',
+    'Keep the face recognizable and consistent, leave gentle space near the top and bottom for call controls, immersive but not visually busy.'
   );
 }
 
@@ -1315,12 +1256,12 @@ function buildCallBackgroundNegativePrompt(settings: AppSettings, provider: Imag
   );
 }
 
-function buildCallBackgroundPositivePrompt(settings: AppSettings, provider: ImageProviderType, sceneId: CallSceneId) {
+function buildCallBackgroundPositivePrompt(settings: AppSettings, provider: ImageProviderType) {
   const promptPreset = getImagePromptPresetForProvider(settings, provider);
-  return joinCallBackgroundPromptPieces(promptPreset.positivePrompt, buildCallBackgroundPrompt(sceneId));
+  return joinCallBackgroundPromptPieces(promptPreset.positivePrompt, buildCallBackgroundPrompt());
 }
 
-async function generateCallBackgroundImage(settings: AppSettings, selectedModel: SelectedImageModelOption, sceneId: CallSceneId) {
+async function generateCallBackgroundImage(settings: AppSettings, selectedModel: SelectedImageModelOption) {
   const provider = selectedModel.provider;
   let imageSettings = settings;
   let model = selectedModel.model;
@@ -1335,54 +1276,123 @@ async function generateCallBackgroundImage(settings: AppSettings, selectedModel:
     };
     model = modelParts.join('::') || settings.imageModel;
   }
+  const imageProfile = characterImageProfile.value;
+  const positivePrompt = buildCallBackgroundPositivePrompt(settings, provider);
+  const negativePrompt = buildCallBackgroundNegativePrompt(settings, provider);
   const result = await generateImageByProvider(provider, imageSettings, {
-    positivePrompt: buildCallBackgroundPositivePrompt(settings, provider, sceneId),
-    negativePrompt: buildCallBackgroundNegativePrompt(settings, provider),
+    positivePrompt,
+    negativePrompt,
+    referenceImage: imageProfile.referenceImageEnabled ? imageProfile.referenceImage : '',
     size: callBackgroundImageSize.size,
     width: callBackgroundImageSize.width,
     height: callBackgroundImageSize.height,
     model,
-    seed: ''
+    seed: imageProfile.seed
   });
-  return result.imageUrl;
+  return { imageUrl: result.imageUrl, provider: result.provider, model, positivePrompt, negativePrompt };
 }
 
 function resetCallBackgroundImage() {
   callBackgroundRunId.value += 1;
   callGeneratedBackgroundUrl.value = '';
-  callPublicBackgroundUrl.value = '';
+  callRotatingBackgroundUrl.value = '';
   callBackgroundRequestKey.value = '';
   callBackgroundGenerating.value = false;
 }
 
+function stopCallBackgroundRotation() {
+  if (callBackgroundRotationTimer === undefined) return;
+  window.clearInterval(callBackgroundRotationTimer);
+  callBackgroundRotationTimer = undefined;
+}
+
+function pickCallRotatingBackground() {
+  const pool = characterPhotoPool.value;
+  if (!pool.length) {
+    callRotatingBackgroundUrl.value = '';
+    return;
+  }
+  if (pool.length === 1) {
+    callRotatingBackgroundUrl.value = pool[0] ?? '';
+    return;
+  }
+  const candidates = pool.filter((imageUrl) => imageUrl !== callRotatingBackgroundUrl.value);
+  const nextPool = candidates.length ? candidates : pool;
+  callRotatingBackgroundUrl.value = nextPool[Math.floor(Math.random() * nextPool.length)] ?? '';
+}
+
+function syncCallBackgroundRotation() {
+  const call = activeCall.value;
+  if (!call) {
+    stopCallBackgroundRotation();
+    callRotatingBackgroundUrl.value = '';
+    return;
+  }
+  if (!characterPhotoPool.value.length) {
+    stopCallBackgroundRotation();
+    callRotatingBackgroundUrl.value = '';
+    return;
+  }
+  if (!callRotatingBackgroundUrl.value || !characterPhotoPool.value.includes(callRotatingBackgroundUrl.value)) pickCallRotatingBackground();
+  if (callBackgroundRotationTimer !== undefined) return;
+  callBackgroundRotationTimer = window.setInterval(pickCallRotatingBackground, callBackgroundRotationIntervalMs);
+}
+
+async function saveGeneratedCallPhoto(result: { imageUrl: string; provider: ImageProviderType; model: string; positivePrompt: string; negativePrompt: string }) {
+  const currentCharacter = character.value;
+  if (!currentCharacter) return;
+  const existingPhotos = normalizeCharacterPhotoRecords(currentCharacter.imageProfile?.photos);
+  if (existingPhotos.some((photo) => photo.imageUrl.trim() === result.imageUrl.trim())) return;
+  await store.saveCharacter({
+    ...currentCharacter,
+    imageProfile: {
+      ...characterImageProfile.value,
+      photos: [
+        createCharacterPhotoRecord({
+          imageUrl: result.imageUrl,
+          source: 'call-generated',
+          title: '通话角色照片',
+          prompt: result.positivePrompt,
+          negativePrompt: result.negativePrompt,
+          provider: result.provider,
+          model: result.model,
+          size: callBackgroundImageSize.size
+        }),
+        ...existingPhotos
+      ]
+    }
+  });
+}
+
 async function ensureCallBackgroundImage() {
   const call = activeCall.value;
-  if (!call || call.mode !== 'video') {
+  if (!call) {
     resetCallBackgroundImage();
     return;
   }
-  const sceneId = callSceneId.value;
+  syncCallBackgroundRotation();
   const settings = store.settings;
   const selectedModel = settings && settings.imageGenerationEnabled !== false ? getSelectedImageModelOption(settings, 'callBackground') : null;
-  const requestKey = [props.id, character.value?.id ?? '', call.callId, sceneId, selectedModel?.key ?? 'public'].join(':');
-  if (callBackgroundRequestKey.value === requestKey && (callGeneratedBackgroundUrl.value || callPublicBackgroundUrl.value || callBackgroundGenerating.value)) return;
+  const imageProfile = characterImageProfile.value;
+  const requestKey = [props.id, character.value?.id ?? '', call.callId, selectedModel?.key ?? 'none', imageProfile.appearancePrompt, imageProfile.facePrompt, imageProfile.referenceImageEnabled ? imageProfile.referenceImage : '', imageProfile.seed].join(':');
+  if (callBackgroundRequestKey.value === requestKey && (callGeneratedBackgroundUrl.value || callBackgroundGenerating.value)) return;
 
   const runId = callBackgroundRunId.value + 1;
   callBackgroundRunId.value = runId;
   callBackgroundRequestKey.value = requestKey;
   callGeneratedBackgroundUrl.value = '';
-  callPublicBackgroundUrl.value = buildPublicCallBackgroundUrl(sceneId, requestKey);
   callBackgroundGenerating.value = false;
 
   if (!settings || !selectedModel) return;
 
   callBackgroundGenerating.value = true;
   try {
-    const imageUrl = await generateCallBackgroundImage(settings, selectedModel, sceneId);
+    const result = await generateCallBackgroundImage(settings, selectedModel);
     if (runId !== callBackgroundRunId.value || callBackgroundRequestKey.value !== requestKey) return;
-    callGeneratedBackgroundUrl.value = imageUrl;
+    callGeneratedBackgroundUrl.value = result.imageUrl;
+    await saveGeneratedCallPhoto(result);
   } catch (error) {
-    console.warn('Call background generation failed, using public image source fallback.', error);
+    console.warn('Call character photo generation failed, using photo pool fallback.', error);
   } finally {
     if (runId === callBackgroundRunId.value && callBackgroundRequestKey.value === requestKey) {
       callBackgroundGenerating.value = false;
@@ -1639,11 +1649,17 @@ watch([
 watch([
   () => activeCall.value?.callId,
   () => activeCall.value?.mode,
-  () => callSceneId.value,
   () => character.value?.id,
+  () => characterPhotoPool.value.join('|'),
+  () => characterImageProfile.value.appearancePrompt,
+  () => characterImageProfile.value.facePrompt,
+  () => characterImageProfile.value.referenceImageEnabled,
+  () => characterImageProfile.value.referenceImage,
+  () => characterImageProfile.value.seed,
   () => store.settings?.imageGenerationEnabled,
   () => getSelectedImageModelOption(store.settings, 'callBackground')?.key ?? ''
 ], () => {
+  syncCallBackgroundRotation();
   void ensureCallBackgroundImage();
 }, { flush: 'post', immediate: true });
 
@@ -1671,7 +1687,7 @@ watch(() => localCameraVideoRef.value, () => {
   bindLocalCameraStream();
 });
 
-watch(() => [activeCall.value?.status, activeCall.value?.callId, chatSettings.value.call.ringtone?.url] as const, () => {
+watch(() => [activeCall.value?.status, activeCall.value?.callId, character.value?.id, store.settings?.ringtoneSettings] as const, () => {
   syncCallRingtonePlayback();
 });
 
@@ -1965,7 +1981,13 @@ function playLoopingAudio(url: string, currentAudio: HTMLAudioElement | null, vo
 function syncCallRingtonePlayback() {
   const call = activeCall.value;
   const shouldPlay = Boolean(call && (call.status === 'incoming-ringing' || call.status === 'outgoing-ringing'));
-  const ringtoneUrl = chatSettings.value.call.ringtone?.url.trim() || '';
+  const ringtoneSettings = normalizeRingtoneSettings(store.settings?.ringtoneSettings);
+  if (!ringtoneSettings.enabled) {
+    stopCallRingtone();
+    return;
+  }
+  const characterId = character.value?.id ?? '';
+  const ringtoneUrl = (characterId ? ringtoneSettings.characters[characterId]?.call?.url : '')?.trim() || ringtoneSettings.global.call.url.trim();
   if (!shouldPlay || !ringtoneUrl) {
     stopCallRingtone();
     return;
@@ -2430,6 +2452,8 @@ async function scrollCallTranscriptToBottom() {
 
 function closeActiveCall() {
   clearCallTimer();
+  stopCallBackgroundRotation();
+  resetCallBackgroundImage();
   stopCallAudio();
   stopCallRingtone();
   stopCallAmbient();
@@ -3488,6 +3512,7 @@ onBeforeUnmount(() => {
     syncActiveCallMetadata();
   }
   clearCallTimer();
+  stopCallBackgroundRotation();
   stopCallAudio();
   stopCallRingtone();
   stopCallAmbient();
@@ -3642,6 +3667,19 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.14);
 }
 
+.call-topbar .call-mind-button {
+  display: inline-flex;
+  width: auto;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.86);
+  white-space: nowrap;
+}
+
 .call-profile {
   display: flex;
   flex: 1;
@@ -3736,186 +3774,6 @@ onBeforeUnmount(() => {
 .call-video-stage.active {
   margin-bottom: 18px;
   padding-top: 54px;
-}
-
-.call-video-character {
-  position: relative;
-  display: grid;
-  width: clamp(132px, 42vw, 176px);
-  aspect-ratio: 1;
-  place-items: center;
-  border: 0;
-  border-radius: 34%;
-  background: rgba(255, 255, 255, 0.08);
-  color: inherit;
-  padding: 0;
-  transform: none;
-}
-
-.call-video-expression {
-  position: absolute;
-  z-index: 4;
-  width: 26px;
-  height: 22px;
-  opacity: 0;
-  transform: translateY(4px) scale(0.94);
-  transition: opacity 0.22s ease, transform 0.22s ease;
-}
-
-.call-video-expression--left {
-  left: -4px;
-  top: 18%;
-}
-
-.call-video-expression--right {
-  right: -4px;
-  top: 24%;
-}
-
-.call-video-expression::before,
-.call-video-expression::after {
-  content: '';
-  position: absolute;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.82);
-}
-
-.call-video-stage.is-happy .call-video-expression--right,
-.call-video-stage.is-surprised .call-video-expression--right,
-.call-video-stage.is-shy .call-video-expression,
-.call-video-stage.is-soft .call-video-expression--left,
-.call-video-stage.is-thinking .call-video-expression--left {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-}
-
-.call-video-stage.is-happy .call-video-expression--right::before,
-.call-video-stage.is-happy .call-video-expression--right::after {
-  width: 6px;
-  height: 18px;
-  left: 10px;
-  top: 2px;
-  transform-origin: center;
-}
-
-.call-video-stage.is-happy .call-video-expression--right::before {
-  transform: rotate(35deg);
-}
-
-.call-video-stage.is-happy .call-video-expression--right::after {
-  transform: rotate(-35deg);
-}
-
-.call-video-stage.is-surprised .call-video-expression--right::before {
-  inset: 2px 8px 12px;
-}
-
-.call-video-stage.is-surprised .call-video-expression--right::after {
-  inset: 14px 10px 4px;
-}
-
-.call-video-stage.is-shy .call-video-expression::before,
-.call-video-stage.is-shy .call-video-expression::after {
-  width: 14px;
-  height: 4px;
-  top: 10px;
-  background: rgba(255, 170, 188, 0.82);
-  transform: rotate(-12deg);
-}
-
-.call-video-stage.is-shy .call-video-expression::after {
-  top: 16px;
-  transform: rotate(-12deg) translateX(4px);
-}
-
-.call-video-stage.is-soft .call-video-expression--left::before {
-  width: 18px;
-  height: 7px;
-  left: 4px;
-  top: 9px;
-  background: rgba(255, 255, 255, 0.62);
-}
-
-.call-video-stage.is-thinking .call-video-expression--left::before,
-.call-video-stage.is-thinking .call-video-expression--left::after {
-  width: 5px;
-  height: 5px;
-  background: rgba(255, 255, 255, 0.7);
-}
-
-.call-video-stage.is-thinking .call-video-expression--left::before {
-  left: 7px;
-  top: 12px;
-}
-
-.call-video-stage.is-thinking .call-video-expression--left::after {
-  left: 16px;
-  top: 6px;
-}
-
-.call-video-character img {
-  position: relative;
-  z-index: 2;
-  width: 78%;
-  height: 78%;
-  border: 2px solid rgba(255, 255, 255, 0.76);
-  border-radius: 32%;
-  object-fit: cover;
-  box-shadow: 0 24px 54px rgba(0, 0, 0, 0.34);
-  transition: transform 0.28s ease, filter 0.28s ease;
-}
-
-.call-video-halo {
-  position: absolute;
-  inset: 8%;
-  z-index: 1;
-  border-radius: 36%;
-  background: rgba(255, 255, 255, 0.12);
-  filter: blur(8px);
-}
-
-.call-video-mouth {
-  position: absolute;
-  z-index: 3;
-  bottom: 33%;
-  left: 50%;
-  width: 22px;
-  height: var(--call-mouth-height, 6px);
-  border-radius: 999px;
-  background: rgba(40, 20, 28, 0.56);
-  transform: translateX(-50%) scaleY(var(--call-mouth-scale, 0.55));
-  opacity: 0.55;
-}
-
-.call-video-stage.speaking .call-video-character img {
-  animation: call-video-speaking 1.08s ease-in-out infinite;
-}
-
-.call-video-stage.speaking .call-video-mouth {
-  opacity: 0.76;
-}
-
-.call-video-stage.is-happy .call-video-character img {
-  filter: brightness(1.08) saturate(1.12);
-}
-
-.call-video-stage.is-shy .call-video-character img {
-  filter: sepia(0.12) saturate(1.14) brightness(1.06);
-  transform: translateY(4px) rotate(-1deg);
-}
-
-.call-video-stage.is-surprised .call-video-character img {
-  transform: scale(1.045);
-}
-
-.call-video-stage.is-soft .call-video-character img {
-  filter: saturate(0.88) brightness(0.96);
-  transform: translateY(6px);
-}
-
-.call-video-stage.is-thinking .call-video-character img {
-  filter: contrast(0.96) saturate(0.96);
-  transform: translateX(-3px);
 }
 
 .call-video-copy {
@@ -4304,24 +4162,6 @@ onBeforeUnmount(() => {
   100% {
     opacity: 0;
     transform: scale(1.28);
-  }
-}
-
-@keyframes call-video-speaking {
-  0%, 100% {
-    transform: translateY(0) scale(1);
-  }
-  50% {
-    transform: translateY(-3px) scale(1.018);
-  }
-}
-
-@keyframes call-mouth-speaking {
-  0%, 100% {
-    transform: translateX(-50%) scaleY(0.45);
-  }
-  50% {
-    transform: translateX(-50%) scaleY(1.55);
   }
 }
 

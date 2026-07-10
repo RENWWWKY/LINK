@@ -1,4 +1,5 @@
 import type { CharacterImageProfile, CharacterInitialProfile, CharacterProfile, CharacterProfileHistoryEntry, CharacterProfileHistoryField, CharacterThemeStyleBindings, VisualProfile } from '@/types/domain';
+import { normalizeCharacterPhotoRecords, normalizeHiddenSourcePhotoKeys } from '@/utils/characterPhotos';
 import { normalizeVisualProfile, removeVisualProfileAvatar, toCharacterVisualProfile } from '@/utils/profile';
 import { normalizeChatModelOverrides } from '@/utils/settings';
 import { normalizeVoomFrequency } from '@/utils/voom';
@@ -83,15 +84,19 @@ function normalizeCharacterThemeStyleBindings(bindings: Partial<CharacterThemeSt
 }
 
 function normalizeCharacterImageProfile(profile: Partial<CharacterImageProfile> | null | undefined): CharacterImageProfile | undefined {
+  const photos = normalizeCharacterPhotoRecords(profile?.photos);
+  const hiddenSourcePhotoKeys = normalizeHiddenSourcePhotoKeys(profile?.hiddenSourcePhotoKeys);
   const normalized = {
     appearancePrompt: String(profile?.appearancePrompt ?? '').trim(),
     facePrompt: String(profile?.facePrompt ?? '').trim(),
     referenceImage: String(profile?.referenceImage ?? '').trim(),
     referenceImageEnabled: profile?.referenceImageEnabled !== false,
     voomPortraitModeEnabled: profile?.voomPortraitModeEnabled !== false,
-    seed: String(profile?.seed ?? '').trim()
+    seed: String(profile?.seed ?? '').trim(),
+    photos,
+    hiddenSourcePhotoKeys
   };
-  return normalized.appearancePrompt || normalized.facePrompt || normalized.referenceImage || normalized.seed || normalized.voomPortraitModeEnabled === false ? normalized : undefined;
+  return normalized.appearancePrompt || normalized.facePrompt || normalized.referenceImage || normalized.seed || normalized.voomPortraitModeEnabled === false || photos.length || hiddenSourcePhotoKeys.length ? normalized : undefined;
 }
 
 export function getCharacterInitialProfile(character: Pick<CharacterProfile, 'initialProfile' | 'nickname' | 'name'>): CharacterInitialProfile {

@@ -327,8 +327,6 @@ export const defaultConversationSettings: Omit<ConversationSettings, 'conversati
     hideVoomNarration: true
   },
   call: {
-    backgroundImage: '',
-    backgroundImages: [],
     ambientEnabled: false,
     ambientVolume: 0.16
   },
@@ -385,12 +383,6 @@ export function normalizeConversationSettings(settings: Partial<ConversationSett
   const grandSummaryVisibleTailFloors = normalizeNonNegativeInteger(memory.grandSummaryVisibleTailFloors, memoryDefaults.grandSummaryVisibleTailFloors);
   const rawGrandSummaryEvery = Math.round(Number(memory.grandSummaryEvery) || memoryDefaults.grandSummaryEvery);
   const grandSummaryEvery = rawGrandSummaryEvery === legacyChatMemoryDefaults.grandSummaryEvery ? memoryDefaults.grandSummaryEvery : rawGrandSummaryEvery;
-  const callBackgroundImage = String(call.backgroundImage ?? '').trim();
-  const callBackgroundImages = [
-    callBackgroundImage,
-    ...(Array.isArray(call.backgroundImages) ? call.backgroundImages : [])
-  ].map((image) => String(image ?? '').trim()).filter(Boolean);
-  const callRingtone = normalizeOptionalRingtoneAsset(call.ringtone);
   const callAmbientSound = normalizeOptionalRingtoneAsset(call.ambientSound);
   const ambientVolume = Math.min(0.6, Math.max(0.02, Number(call.ambientVolume) || defaultConversationSettings.call.ambientVolume));
 
@@ -436,9 +428,6 @@ export function normalizeConversationSettings(settings: Partial<ConversationSett
       hideVoomNarration: true
     },
     call: {
-      ...(callRingtone ? { ringtone: callRingtone } : {}),
-      backgroundImage: callBackgroundImage,
-      backgroundImages: [...new Set(callBackgroundImages)],
       ...(callAmbientSound ? { ambientSound: callAmbientSound } : {}),
       ambientEnabled: Boolean(call.ambientEnabled ?? defaultConversationSettings.call.ambientEnabled),
       ambientVolume

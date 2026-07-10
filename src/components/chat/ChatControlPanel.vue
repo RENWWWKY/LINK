@@ -671,6 +671,45 @@
             </label>
           </div>
         </section>
+        <section class="settings-block character-photo-block" aria-label="角色照片">
+          <header class="section-header record-header">
+            <div>
+              <span>Character photos</span>
+              <strong>角色照片</strong>
+            </div>
+            <em>{{ characterPhotoItems.length }} 张</em>
+          </header>
+          <section class="character-photo-import-panel">
+            <div class="character-photo-url-row">
+              <input v-model="characterPhotoUrlDraft" type="text" aria-label="角色照片 URL" placeholder="粘贴角色照片 URL" @keydown.enter.prevent="addCharacterPhotoFromUrl" />
+              <button class="character-photo-icon-button" type="button" aria-label="添加角色照片 URL" @click="addCharacterPhotoFromUrl">
+                <Plus :size="16" stroke-width="2.5" aria-hidden="true" />
+              </button>
+            </div>
+            <label class="character-photo-import-button">
+              <span>导入本地图片</span>
+              <input type="file" accept="image/*" multiple @change="readCharacterPhotoFiles" />
+            </label>
+          </section>
+          <section v-if="characterPhotoItems.length" class="character-photo-library" aria-label="角色照片列表">
+            <article v-for="photo in characterPhotoItems" :key="photo.key" class="character-photo-card">
+              <button class="character-photo-thumb" type="button" :style="{ backgroundImage: `url(${photo.imageUrl})` }" @click="downloadCharacterPhoto(photo)">
+                <span>{{ photo.sourceLabel }}</span>
+              </button>
+              <div class="character-photo-meta">
+                <strong>{{ photo.title }}</strong>
+                <span>{{ photo.sourceLabel }} · {{ formatTimelineTime(photo.createdAt) }}</span>
+              </div>
+              <div class="character-photo-actions">
+                <button type="button" @click="downloadCharacterPhoto(photo)">
+                  <span>下载</span>
+                </button>
+                <button type="button" @click="removeCharacterPhoto(photo)">删除</button>
+              </div>
+            </article>
+          </section>
+          <div v-else class="character-photo-empty">成功应用的 VOOM、聊天和通话生图会自动进入照片池。</div>
+        </section>
       </section>
 
       <section v-else class="panel-section other-panel">
@@ -697,51 +736,6 @@
               <strong>通话体验</strong>
             </div>
           </header>
-          <section class="call-simple-card">
-            <div class="call-simple-heading">
-              <strong>来电铃声</strong>
-              <span>{{ callRingtoneLabel }}</span>
-            </div>
-            <div class="call-button-row">
-              <label class="call-text-button">
-                <span>导入来电铃声</span>
-                <input type="file" :accept="callAudioAccept" @change="importCallRingtone" />
-              </label>
-              <button class="call-text-button call-clear-button" type="button" :disabled="!draft.call.ringtone" @click="resetCallRingtone">清除铃声</button>
-            </div>
-            <audio v-if="draft.call.ringtone" class="audio-preview call-audio-preview" controls preload="metadata" :src="draft.call.ringtone.url"></audio>
-          </section>
-          <section class="call-simple-card" aria-label="来电背景导入">
-            <div class="call-simple-heading">
-              <strong>来电背景</strong>
-              <span>作为语音和视频通话的整页背景显示。</span>
-            </div>
-            <div class="call-url-row">
-              <input v-model="callBackgroundUrlDraft" class="call-background-url-input" placeholder="https://..." @keydown.enter.prevent="addCallBackgroundFromUrl" />
-              <button class="call-text-button call-url-button" type="button" @click="addCallBackgroundFromUrl">添加背景</button>
-            </div>
-            <label class="call-text-button call-file-button">
-              <span>导入本地背景</span>
-              <input type="file" accept="image/*" multiple @change="readCallBackgroundFiles" />
-            </label>
-            <section class="background-library call-background-library" aria-label="来电背景列表">
-              <article
-                v-for="(image, index) in callBackgroundOptions"
-                :key="`${image}-${index}`"
-                class="background-thumb-card"
-                :class="{ active: draft.call.backgroundImage === image }"
-              >
-                <button class="background-thumb" type="button" :style="{ backgroundImage: `url(${image})` }" @click="applyCallBackgroundImage(image)">
-                  <span>{{ draft.call.backgroundImage === image ? '使用中' : `背景 ${index + 1}` }}</span>
-                </button>
-                <div class="background-thumb-actions">
-                  <button type="button" :disabled="draft.call.backgroundImage === image" @click="applyCallBackgroundImage(image)">应用</button>
-                  <button type="button" @click="removeCallBackgroundImage(image)">删除</button>
-                </div>
-              </article>
-              <div v-if="!callBackgroundOptions.length" class="empty-note compact-empty-note">暂无来电背景。</div>
-            </section>
-          </section>
           <section class="call-simple-card call-ambient-panel">
             <label class="switch-card wide call-ambient-switch">
               <input v-model="draft.call.ambientEnabled" type="checkbox" :disabled="!draft.call.ambientSound" @change="saveDraft" />
@@ -934,13 +928,15 @@
 </template>
 
 <script setup lang="ts">
-import { ChevronDown, Image as ImageIcon, Plus } from 'lucide-vue-next';
+import { ChevronDown, Plus } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import AppModal from '@/components/common/AppModal.vue';
 import AvatarCropperModal from '@/components/image/AvatarCropperModal.vue';
 import { callAudioAccept, createCallAudioAsset } from '@/services/callExperience';
 import { useAppStore } from '@/stores/appStore';
-import type { CharacterImageProfile, CharacterProfile, ChatAppearanceSettings, ConversationMemoryRecord, ConversationSettings, ThemeStylePreset, VoomImageMode } from '@/types/domain';
+import type { CharacterImageProfile, CharacterPhotoRecord, CharacterProfile, ChatAppearanceSettings, ConversationMemoryRecord, ConversationSettings, ThemeStylePreset, VoomImageMode } from '@/types/domain';
+import { collectCharacterPhotoItems, createCharacterPhotoRecord, normalizeCharacterPhotoRecords, normalizeHiddenSourcePhotoKeys, type CharacterPhotoItem } from '@/utils/characterPhotos';
+import { downloadImageUrl } from '@/utils/download';
 import { readImageFileFromInput } from '@/utils/imageFile';
 import { collectIncrementalGrandSummaries, estimateTokenCount, getConversationActiveMessages, getConversationFloorCount, getEffectiveHiddenFloorRanges, getGrandSummaryHiddenRange, isIncrementalGrandSummary, normalizeConversationSettings } from '@/utils/memory';
 import { parseMemorySummaryBlocks, type MemorySummaryBlock } from '@/utils/memorySummary';
@@ -1013,7 +1009,7 @@ const showUnmergePicker = ref(false);
 const showAvatarEditor = ref(false);
 const avatarEditorSource = ref('');
 const backgroundImageUrlDraft = ref('');
-const callBackgroundUrlDraft = ref('');
+const characterPhotoUrlDraft = ref('');
 const selectedMergeIds = ref<string[]>([]);
 const draft = reactive<ConversationSettings>(normalizeConversationSettings(null, props.conversationId, 'online'));
 const memoryNumberDraft = reactive<Record<MemoryNumberField, string>>({
@@ -1134,7 +1130,13 @@ const boundUserVisualProfile = computed(() => props.character.boundUserProfile);
 const userAvatarPreview = computed(() => boundUserVisualProfile.value?.avatar || boundUser.value?.avatar || defaultProfileAvatar);
 const userAvatarAlt = computed(() => boundUserVisualProfile.value?.nickname || boundUser.value?.nickname || boundUser.value?.name || '我');
 const backgroundImageOptions = computed(() => draft.appearance.backgroundImages);
-const callBackgroundOptions = computed(() => draft.call.backgroundImages);
+const characterConversations = computed(() => store.conversations.filter((conversation) => conversation.charId === props.character.id));
+const characterPhotoItems = computed(() => collectCharacterPhotoItems({
+  character: characterDraft,
+  conversations: characterConversations.value,
+  messages: store.messages,
+  voomPosts: store.voomPosts
+}));
 const localWorldBookSelectValue = '__local_world_book_summary__';
 const stickerGroupSelectValue = '__sticker_group_summary__';
 const localWorldBooks = computed(() => store.worldBooks.filter((book) => book.scope === 'local'));
@@ -1163,7 +1165,6 @@ const narrationBubblePreviewStyle = computed(() => ({
   background: draft.appearance.narrationBubbleColor,
   color: draft.appearance.narrationTextColor
 }));
-const callRingtoneLabel = computed(() => draft.call.ringtone?.name || '未设置专属来电铃声');
 const callAmbientLabel = computed(() => draft.call.ambientSound?.name || '未设置氛围音');
 const stickerGroupPickerRows = computed(() => store.sortedStickerGroups.map((group) => ({
   id: group.id,
@@ -1440,13 +1441,15 @@ function createCharacterImageProfileDraft(profile: Partial<CharacterImageProfile
     referenceImage: String(profile?.referenceImage ?? '').trim(),
     referenceImageEnabled: profile?.referenceImageEnabled !== false,
     voomPortraitModeEnabled: profile?.voomPortraitModeEnabled !== false,
-    seed: String(profile?.seed ?? '').trim()
+    seed: String(profile?.seed ?? '').trim(),
+    photos: normalizeCharacterPhotoRecords(profile?.photos),
+    hiddenSourcePhotoKeys: normalizeHiddenSourcePhotoKeys(profile?.hiddenSourcePhotoKeys)
   };
 }
 
 function normalizeCharacterImageProfileDraft(profile: CharacterImageProfile): CharacterImageProfile | undefined {
   const normalized = createCharacterImageProfileDraft(profile);
-  return normalized.appearancePrompt || normalized.facePrompt || normalized.referenceImage || normalized.seed || normalized.voomPortraitModeEnabled === false ? normalized : undefined;
+  return normalized.appearancePrompt || normalized.facePrompt || normalized.referenceImage || normalized.seed || normalized.voomPortraitModeEnabled === false || normalized.photos.length || normalized.hiddenSourcePhotoKeys.length ? normalized : undefined;
 }
 
 function createThemeStyleOptions(scope: ThemeStyleBindingScope, presets: ThemeStylePreset[]) {
@@ -2198,61 +2201,61 @@ function removeBackgroundImage(image: string) {
   syncBackgroundImages(nextImages, draft.appearance.backgroundImage === image ? nextImages[0] ?? '' : draft.appearance.backgroundImage);
 }
 
-function syncCallBackgroundImages(images: string[], activeImage = draft.call.backgroundImage) {
-  const normalizedImages = [...new Set(images.map((image) => image.trim()).filter(Boolean))];
-  draft.call.backgroundImages = normalizedImages;
-  draft.call.backgroundImage = normalizedImages.includes(activeImage) ? activeImage : normalizedImages[0] ?? '';
-  saveDraft();
+function saveCharacterPhotos(photos: CharacterPhotoRecord[]) {
+  characterDraft.imageProfile.photos = normalizeCharacterPhotoRecords(photos);
+  saveCharacterDraft();
 }
 
-function addCallBackgroundImages(images: string[]) {
-  const nextImages = [...draft.call.backgroundImages, ...images];
-  const activeImage = images[images.length - 1]?.trim() || draft.call.backgroundImage;
-  syncCallBackgroundImages(nextImages, activeImage);
+function addCharacterPhotos(photos: CharacterPhotoRecord[]) {
+  const existingUrls = new Set(characterDraft.imageProfile.photos.map((photo) => photo.imageUrl.trim()).filter(Boolean));
+  const nextPhotos = [...characterDraft.imageProfile.photos];
+  for (const photo of photos) {
+    const imageUrl = photo.imageUrl.trim();
+    if (!imageUrl || existingUrls.has(imageUrl)) continue;
+    existingUrls.add(imageUrl);
+    nextPhotos.unshift(photo);
+  }
+  saveCharacterPhotos(nextPhotos);
 }
 
-function addCallBackgroundFromUrl() {
-  const image = callBackgroundUrlDraft.value.trim();
-  if (!image) return;
-  addCallBackgroundImages([image]);
-  callBackgroundUrlDraft.value = '';
+function addCharacterPhotoFromUrl() {
+  const imageUrl = characterPhotoUrlDraft.value.trim();
+  if (!imageUrl) return;
+  addCharacterPhotos([createCharacterPhotoRecord({ imageUrl, source: 'manual-url', title: '角色照片' })]);
+  characterPhotoUrlDraft.value = '';
 }
 
-async function readCallBackgroundFiles(event: Event) {
+async function readCharacterPhotoFiles(event: Event) {
   const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files ?? []);
-  if (!files.length) return;
-  const images = (await Promise.all(files.map((file) => readFileAsDataUrl(file)))).filter(Boolean);
-  if (images.length) addCallBackgroundImages(images);
+  const files = Array.from(input.files ?? []).filter((file) => file.type.startsWith('image/'));
+  if (!files.length) {
+    input.value = '';
+    return;
+  }
+  const images = (await Promise.all(files.map(async (file) => ({ file, imageUrl: await readFileAsDataUrl(file) })))).filter((entry) => entry.imageUrl);
+  addCharacterPhotos(images.map(({ file, imageUrl }) => createCharacterPhotoRecord({
+    imageUrl,
+    source: 'manual-local',
+    title: file.name || '本地角色照片'
+  })));
   input.value = '';
 }
 
-function applyCallBackgroundImage(image: string) {
-  if (!image.trim()) return;
-  syncCallBackgroundImages(draft.call.backgroundImages, image.trim());
-}
-
-function removeCallBackgroundImage(image: string) {
-  const nextImages = draft.call.backgroundImages.filter((item) => item !== image);
-  syncCallBackgroundImages(nextImages, draft.call.backgroundImage === image ? nextImages[0] ?? '' : draft.call.backgroundImage);
-}
-
-async function importCallRingtone(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = '';
-  if (!file) return;
+async function downloadCharacterPhoto(photo: CharacterPhotoItem) {
   try {
-    draft.call.ringtone = await createCallAudioAsset(file, '来电铃声');
-    saveDraft();
+    await downloadImageUrl(photo.imageUrl, `${characterDraftNickname.value}-${photo.sourceLabel}-${photo.createdAt || Date.now()}`);
   } catch (error) {
-    store.showConfigAlert(error instanceof Error ? error.message : '铃声读取失败。', '无法导入铃声');
+    store.showConfigAlert(error instanceof Error ? error.message : '图片下载失败。', '无法下载');
   }
 }
 
-function resetCallRingtone() {
-  draft.call.ringtone = undefined;
-  saveDraft();
+function removeCharacterPhoto(photo: CharacterPhotoItem) {
+  if (photo.photoId) {
+    saveCharacterPhotos(characterDraft.imageProfile.photos.filter((entry) => entry.id !== photo.photoId));
+    return;
+  }
+  characterDraft.imageProfile.hiddenSourcePhotoKeys = normalizeHiddenSourcePhotoKeys([...characterDraft.imageProfile.hiddenSourcePhotoKeys, photo.key]);
+  saveCharacterDraft();
 }
 
 async function importCallAmbientSound(event: Event) {
@@ -2379,6 +2382,188 @@ function applyEditedAvatar(value: string) {
 .image-reference-upload {
   min-height: 42px;
   padding: 10px 12px;
+}
+
+.character-photo-block {
+  display: grid;
+  gap: 12px;
+}
+
+.character-photo-import-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.character-photo-url-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+  align-items: center;
+}
+
+.character-photo-url-row input {
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  color: #171717;
+  font-size: 12px;
+  font-weight: 780;
+  box-shadow: inset 0 0 0 1px rgba(42, 75, 60, 0.08);
+}
+
+.character-photo-icon-button,
+.character-photo-import-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 42px;
+  border: 0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  color: #171717;
+  font-size: 12px;
+  font-weight: 900;
+  box-shadow: 0 8px 18px rgba(30, 55, 45, 0.04), inset 0 0 0 1px rgba(42, 75, 60, 0.08);
+  cursor: pointer;
+}
+
+.character-photo-import-button {
+  gap: 6px;
+}
+
+.character-photo-import-button input[type='file'] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.character-photo-empty {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.62);
+  color: #7a8380;
+  font-size: 11px;
+  font-weight: 780;
+  line-height: 1.45;
+}
+
+.character-photo-library {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.character-photo-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: inset 0 0 0 1px rgba(42, 75, 60, 0.07);
+}
+
+.character-photo-thumb {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border: 0;
+  border-radius: 12px;
+  background-color: #eef3ef;
+  background-position: center;
+  background-size: cover;
+  cursor: pointer;
+}
+
+.character-photo-thumb::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 54%, rgba(0, 0, 0, 0.48));
+}
+
+.character-photo-thumb span {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  z-index: 1;
+  max-width: calc(100% - 14px);
+  overflow: hidden;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #1f6b3a;
+  font-size: 10px;
+  font-weight: 950;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.character-photo-meta {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.character-photo-meta strong,
+.character-photo-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.character-photo-meta strong {
+  color: #171717;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.character-photo-meta span {
+  color: #7a8380;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.character-photo-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.character-photo-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(238, 248, 241, 0.94);
+  color: #1f6b3a;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.1;
+  cursor: pointer;
+}
+
+.character-photo-actions button:last-child {
+  background: rgba(255, 238, 241, 0.96);
+  color: #d73850;
 }
 
 .local-theme-style-grid {
@@ -5948,26 +6133,10 @@ function applyEditedAvatar(value: string) {
   min-height: 36px;
 }
 
-.call-background-library {
-  display: grid;
-  gap: 10px;
-  margin-top: 0;
-}
-
-.call-background-library .background-thumb-card {
-  background: #f7faf8;
-}
-
-.call-background-library .background-thumb-actions {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.call-background-library .compact-empty-note {
-  min-height: 48px;
-  padding: 12px;
-  place-items: center start;
-  text-align: left;
-  font-weight: 700;
+@media (max-width: 360px) {
+  .character-photo-library {
+    grid-template-columns: 1fr;
+  }
 }
 
 .call-ambient-panel {

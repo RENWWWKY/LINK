@@ -146,7 +146,11 @@ function sanitizeCharacterForBackup(character: CharacterProfile): CharacterProfi
     imageProfile: character.imageProfile
       ? {
           ...character.imageProfile,
-          referenceImage: stripLargeInlineAsset(character.imageProfile.referenceImage)
+          referenceImage: stripLargeInlineAsset(character.imageProfile.referenceImage),
+          photos: character.imageProfile.photos.map((photo) => ({
+            ...photo,
+            imageUrl: stripLargeInlineAsset(photo.imageUrl)
+          }))
         }
       : character.imageProfile
   };
