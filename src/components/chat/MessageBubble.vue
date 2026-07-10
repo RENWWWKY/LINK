@@ -1,5 +1,5 @@
 <template>
-  <article :data-message-id="message.id" :class="['message-row', message.sender, { selecting: selectionMode, selected, 'hide-avatar': hideAvatar, 'profile-alert': showProfileAlert }]">
+  <article :data-message-id="message.id" :class="['message-row', messageVisualSender, { selecting: selectionMode, selected, 'hide-avatar': hideAvatar, 'profile-alert': showProfileAlert }]">
     <button v-if="selectionMode" class="selection-dot" type="button" :aria-pressed="selected" @click.stop="emit('toggle-select')">
       <span></span>
     </button>
@@ -26,8 +26,29 @@
         @pointerup="handlePointerUp"
         @selectstart.prevent.stop="suppressNativeSelection"
       >
-        <div class="bubble" :class="{ narration: message.displayStyle === 'narration', sticker: message.sticker, image: message.image, voice: message.voice, location: message.location, transfer: message.transfer, musicListenInvite: message.musicListenInvite, theaterLink: message.theaterLink, offlineInvitation: message.offlineInvitation }" :style="bubbleStyle">
-          <template v-if="message.sticker">
+        <div class="bubble" :class="{ narration: message.displayStyle === 'narration', sticker: message.sticker, image: message.image, voice: message.voice, location: message.location, transfer: message.transfer, musicListenInvite: message.musicListenInvite, theaterLink: message.theaterLink, offlineInvitation: message.offlineInvitation, call: message.call }" :style="bubbleStyle">
+          <template v-if="message.call">
+            <section class="call-message-card" :class="[`call-message-card--${message.call.status}`, `call-message-card--${message.call.mode}`, `call-message-card--${message.call.direction}`]" aria-label="通话消息">
+              <div class="call-message-head">
+                <span class="call-message-media" aria-hidden="true">
+                  <img :src="callCardAvatar" :alt="callCardKicker" draggable="false" />
+                </span>
+                <span class="call-message-identity">
+                  <small>{{ callCardKicker }}</small>
+                  <strong>{{ callCardTitle }}</strong>
+                </span>
+              </div>
+              <div class="call-message-meta">
+                <em>{{ callCardModePill }}</em>
+                <span>{{ callCardDetail }}</span>
+              </div>
+              <div v-if="canRespondCallCard" class="call-message-actions" @pointerdown.stop @pointerup.stop>
+                <button class="call-message-action call-message-action--reject" type="button" @click.stop="emit('reject-call')">拒绝</button>
+                <button class="call-message-action call-message-action--accept" type="button" @click.stop="emit('accept-call')">接听</button>
+              </div>
+            </section>
+          </template>
+          <template v-else-if="message.sticker">
             <img class="sticker-image" :src="getStickerDisplayImageUrl(message.sticker)" :alt="message.sticker.description" draggable="false" />
           </template>
           <template v-else-if="message.image">
@@ -282,6 +303,8 @@ const emit = defineEmits<{
   'reject-transfer': [];
   'accept-music-listen-invite': [];
   'reject-music-listen-invite': [];
+  'accept-call': [];
+  'reject-call': [];
 }>();
 
 const store = useAppStore();
@@ -409,10 +432,14 @@ const userAvatar = computed(() => {
   const currentUser = props.user ?? store.user;
   return currentUser?.avatar || defaultProfileAvatar;
 });
-const showAvatarButton = computed(() => props.message.sender === 'char' || (props.message.sender === 'user' && props.appearance.showUserAvatar));
-const avatarSource = computed(() => (props.message.sender === 'user' ? userAvatar.value : props.character.avatar));
-const avatarAlt = computed(() => (props.message.sender === 'user' ? userDisplayName.value : characterDisplayName.value));
-const showProfileAlert = computed(() => props.profileAlert && props.message.sender === 'char');
+const messageVisualSender = computed<ChatMessage['sender']>(() => {
+  if (!props.message.call) return props.message.sender;
+  return props.message.call.direction === 'incoming' ? 'char' : 'user';
+});
+const showAvatarButton = computed(() => messageVisualSender.value === 'char' || (messageVisualSender.value === 'user' && props.appearance.showUserAvatar));
+const avatarSource = computed(() => (messageVisualSender.value === 'user' ? userAvatar.value : props.character.avatar));
+const avatarAlt = computed(() => (messageVisualSender.value === 'user' ? userDisplayName.value : characterDisplayName.value));
+const showProfileAlert = computed(() => props.profileAlert && messageVisualSender.value === 'char');
 const quoteText = computed(() => props.message.quote?.sticker
   ? props.message.quote.sticker.description
   : props.message.quote?.image
@@ -427,12 +454,14 @@ const quoteText = computed(() => props.message.quote?.sticker
               ? `一起听 ${props.message.quote.musicListenInvite.track?.name || props.message.quote.musicListenInvite.status}`
               : props.message.quote?.theaterLink
             ? props.message.quote.theaterLink.title
+            : props.message.quote?.call
+              ? `${props.message.quote.call.mode === 'video' ? '视频通话' : '语音通话'} ${props.message.quote.call.status}`
   : props.message.quote?.content ?? '');
 const quoteThumbnail = computed(() => props.message.quote?.sticker?.imageUrl ?? props.message.quote?.image?.url ?? '');
 const quoteAuthorLabel = computed(() => (props.message.quote?.authorName ? `${props.message.quote.authorName}：` : ''));
 
 const bubbleStyle = computed(() => {
-  if (props.message.sticker || props.message.image || props.message.location || props.message.transfer || props.message.musicListenInvite || props.message.theaterLink || props.message.offlineInvitation) return {};
+  if (props.message.sticker || props.message.image || props.message.location || props.message.transfer || props.message.musicListenInvite || props.message.theaterLink || props.message.offlineInvitation || props.message.call) return {};
   if (props.message.displayStyle === 'narration') {
     return {
       background: props.appearance.narrationBubbleColor,
@@ -566,6 +595,39 @@ const offlineInvitationDetail = computed(() => ({
   accepted: '新的故事篇章会在线下页面继续生成。',
   rejected: '继续在线上聊天。'
 }[props.message.offlineInvitation?.status ?? 'pending']));
+const callModeText = computed(() => props.message.call?.mode === 'video' ? '视频通话' : '语音通话');
+const callStatusText = computed(() => ({
+  ringing: '呼叫中',
+  accepted: '已接听',
+  rejected: '已拒绝',
+  missed: '未接听',
+  busy: '忙线',
+  cancelled: '已取消',
+  ended: '已结束',
+  failed: '呼叫失败'
+}[props.message.call?.status ?? 'ringing']));
+const callDurationText = computed(() => {
+  const duration = Math.max(0, Math.round(Number(props.message.call?.duration) || 0));
+  if (!duration) return '';
+  const minutes = Math.floor(duration / 60);
+  const seconds = duration % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+});
+const callCardKicker = computed(() => props.message.call?.direction === 'incoming' ? characterDisplayName.value : userDisplayName.value);
+const callCardAvatar = computed(() => props.message.call?.direction === 'incoming' ? props.character.avatar : userAvatar.value);
+const callCardTitle = computed(() => callModeText.value);
+const callCardModePill = computed(() => props.message.call?.mode === 'video' ? 'Video' : 'Voice');
+const callCardDetail = computed(() => {
+  const call = props.message.call;
+  if (!call) return '';
+  const duration = callDurationText.value;
+  if (call.status === 'ringing') return call.direction === 'incoming' ? '对方正在等待你接听' : '等待对方接听';
+  if (call.status === 'ended') return duration ? `通话时长 ${duration}` : '通话已结束';
+  if (call.status === 'cancelled') return '呼叫已取消';
+  if (call.status === 'accepted') return '正在通话';
+  return callStatusText.value;
+});
+const canRespondCallCard = computed(() => props.message.call?.direction === 'incoming' && props.message.call.status === 'ringing');
 const voiceDuration = computed(() => {
   const duration = props.message.voice?.duration ?? 0;
   if (Number.isFinite(duration) && duration > 0) return Math.max(1, Math.round(duration));
@@ -590,7 +652,7 @@ const voicePlaybackLabel = computed(() => {
 
 const isSystemNarration = computed(() => props.message.sender === 'system' && props.message.displayStyle === 'narration');
 const showMessageTime = computed(() => props.appearance.showMessageTime && !isSystemNarration.value && !props.message.voomEventType && !props.message.voomPostId);
-const showReadState = computed(() => props.appearance.showReadStatus && props.message.sender !== 'system' && !props.message.voomEventType && !props.message.voomPostId);
+const showReadState = computed(() => props.appearance.showReadStatus && messageVisualSender.value !== 'system' && !props.message.voomEventType && !props.message.voomPostId);
 const showMessageMeta = computed(() => showMessageTime.value || showReadState.value);
 
 const statusLabel = computed(() => ({
@@ -756,7 +818,7 @@ function suppressClickAfterSwipe(event: MouseEvent) {
 function handleAvatarClick() {
   if (props.hideAvatar) return;
   if (props.selectionMode) emit('toggle-select');
-  else if (props.message.sender === 'user') emit('open-user-profile');
+  else if (messageVisualSender.value === 'user') emit('open-user-profile');
   else emit('open-profile');
 }
 
@@ -1259,6 +1321,17 @@ onBeforeUnmount(() => {
   box-shadow: 0 8px 20px rgba(17, 20, 24, 0.06);
 }
 
+.bubble.call {
+  width: min(176px, 52vw);
+  min-width: min(154px, 46vw);
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  box-shadow: none;
+}
+
 .message-row.user .bubble.location,
 .message-row.char .bubble.location,
 .message-row.user .bubble.transfer,
@@ -1284,6 +1357,145 @@ onBeforeUnmount(() => {
 .message-row.user .bubble.theaterLink,
 .message-row.char .bubble.theaterLink {
   background: #ffffff;
+}
+
+.call-message-card {
+  --call-accent: #ff8fb0;
+  --call-accent-soft: #fff3f6;
+  --call-accent-ink: #b85072;
+  position: relative;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 8px;
+  border-radius: inherit;
+  border: 1px solid rgba(226, 228, 232, 0.92);
+  background: #ffffff;
+  color: #191a1f;
+  box-shadow: 0 8px 18px rgba(20, 23, 30, 0.07);
+}
+
+.call-message-card--video {
+  --call-accent: #8ea2ff;
+  --call-accent-soft: #f3f5ff;
+  --call-accent-ink: #596aca;
+}
+
+.call-message-head {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.call-message-media {
+  position: relative;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #f4f5f7;
+  box-shadow: inset 0 0 0 1px rgba(222, 225, 230, 0.84);
+}
+
+.call-message-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.call-message-identity {
+  display: grid;
+  align-content: center;
+  gap: 1px;
+  min-width: 0;
+}
+
+.call-message-identity small {
+  min-width: 0;
+  overflow: hidden;
+  color: #8b8f98;
+  font-size: 8px;
+  font-weight: 760;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-message-identity strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #1d1f25;
+  font-size: 11px;
+  font-weight: 860;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-message-meta {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 6px 7px;
+  border-radius: 10px;
+  background: #f8f9fb;
+}
+
+.call-message-meta em {
+  color: var(--call-accent-ink);
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 820;
+  line-height: 1.2;
+}
+
+.call-message-meta span {
+  min-width: 0;
+  overflow: hidden;
+  color: #676c75;
+  font-size: 9px;
+  font-weight: 620;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-message-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.call-message-action {
+  display: grid;
+  min-width: 0;
+  min-height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 820;
+  line-height: 1;
+}
+
+.call-message-action--reject {
+  background: #f1f2f4;
+  color: #666b74;
+  box-shadow: none;
+}
+
+.call-message-action--accept {
+  background: #1d1f25;
+  color: #ffffff;
+  box-shadow: 0 8px 16px rgba(20, 23, 30, 0.14);
 }
 
 .listen-invite-card {

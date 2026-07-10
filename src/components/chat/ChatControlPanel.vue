@@ -690,6 +690,81 @@
             </div>
           </label>
         </section>
+        <section class="settings-block call-settings-block">
+          <header class="section-header">
+            <div>
+              <span>Calls</span>
+              <strong>通话体验</strong>
+            </div>
+          </header>
+          <section class="call-simple-card">
+            <div class="call-simple-heading">
+              <strong>来电铃声</strong>
+              <span>{{ callRingtoneLabel }}</span>
+            </div>
+            <div class="call-button-row">
+              <label class="call-text-button">
+                <span>导入来电铃声</span>
+                <input type="file" :accept="callAudioAccept" @change="importCallRingtone" />
+              </label>
+              <button class="call-text-button call-clear-button" type="button" :disabled="!draft.call.ringtone" @click="resetCallRingtone">清除铃声</button>
+            </div>
+            <audio v-if="draft.call.ringtone" class="audio-preview call-audio-preview" controls preload="metadata" :src="draft.call.ringtone.url"></audio>
+          </section>
+          <section class="call-simple-card" aria-label="来电背景导入">
+            <div class="call-simple-heading">
+              <strong>来电背景</strong>
+              <span>作为语音和视频通话的整页背景显示。</span>
+            </div>
+            <div class="call-url-row">
+              <input v-model="callBackgroundUrlDraft" class="call-background-url-input" placeholder="https://..." @keydown.enter.prevent="addCallBackgroundFromUrl" />
+              <button class="call-text-button call-url-button" type="button" @click="addCallBackgroundFromUrl">添加背景</button>
+            </div>
+            <label class="call-text-button call-file-button">
+              <span>导入本地背景</span>
+              <input type="file" accept="image/*" multiple @change="readCallBackgroundFiles" />
+            </label>
+            <section class="background-library call-background-library" aria-label="来电背景列表">
+              <article
+                v-for="(image, index) in callBackgroundOptions"
+                :key="`${image}-${index}`"
+                class="background-thumb-card"
+                :class="{ active: draft.call.backgroundImage === image }"
+              >
+                <button class="background-thumb" type="button" :style="{ backgroundImage: `url(${image})` }" @click="applyCallBackgroundImage(image)">
+                  <span>{{ draft.call.backgroundImage === image ? '使用中' : `背景 ${index + 1}` }}</span>
+                </button>
+                <div class="background-thumb-actions">
+                  <button type="button" :disabled="draft.call.backgroundImage === image" @click="applyCallBackgroundImage(image)">应用</button>
+                  <button type="button" @click="removeCallBackgroundImage(image)">删除</button>
+                </div>
+              </article>
+              <div v-if="!callBackgroundOptions.length" class="empty-note compact-empty-note">暂无来电背景。</div>
+            </section>
+          </section>
+          <section class="call-simple-card call-ambient-panel">
+            <label class="switch-card wide call-ambient-switch">
+              <input v-model="draft.call.ambientEnabled" type="checkbox" :disabled="!draft.call.ambientSound" @change="saveDraft" />
+              <span class="switch-track"></span>
+              <div>
+                <strong>通话氛围音</strong>
+                <span>{{ callAmbientLabel }}</span>
+              </div>
+            </label>
+            <div class="call-button-row">
+              <label class="call-text-button">
+                <span>导入氛围音</span>
+                <input type="file" :accept="callAudioAccept" @change="importCallAmbientSound" />
+              </label>
+              <button class="call-text-button call-clear-button" type="button" :disabled="!draft.call.ambientSound" @click="resetCallAmbientSound">清除氛围音</button>
+            </div>
+            <label class="field compact-field call-volume-field">
+              <span>氛围音音量</span>
+              <input v-model.number="draft.call.ambientVolume" min="0.02" max="0.6" step="0.02" type="range" @change="saveDraft" />
+            </label>
+            <audio v-if="draft.call.ambientSound" class="audio-preview call-audio-preview" controls preload="metadata" :src="draft.call.ambientSound.url"></audio>
+          </section>
+        </section>
         <section class="settings-block">
           <header class="section-header">
             <div>
@@ -859,10 +934,11 @@
 </template>
 
 <script setup lang="ts">
-import { ChevronDown, Plus } from 'lucide-vue-next';
+import { ChevronDown, Image as ImageIcon, Plus } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import AppModal from '@/components/common/AppModal.vue';
 import AvatarCropperModal from '@/components/image/AvatarCropperModal.vue';
+import { callAudioAccept, createCallAudioAsset } from '@/services/callExperience';
 import { useAppStore } from '@/stores/appStore';
 import type { CharacterImageProfile, CharacterProfile, ChatAppearanceSettings, ConversationMemoryRecord, ConversationSettings, ThemeStylePreset, VoomImageMode } from '@/types/domain';
 import { readImageFileFromInput } from '@/utils/imageFile';
@@ -937,6 +1013,7 @@ const showUnmergePicker = ref(false);
 const showAvatarEditor = ref(false);
 const avatarEditorSource = ref('');
 const backgroundImageUrlDraft = ref('');
+const callBackgroundUrlDraft = ref('');
 const selectedMergeIds = ref<string[]>([]);
 const draft = reactive<ConversationSettings>(normalizeConversationSettings(null, props.conversationId, 'online'));
 const memoryNumberDraft = reactive<Record<MemoryNumberField, string>>({
@@ -1057,6 +1134,7 @@ const boundUserVisualProfile = computed(() => props.character.boundUserProfile);
 const userAvatarPreview = computed(() => boundUserVisualProfile.value?.avatar || boundUser.value?.avatar || defaultProfileAvatar);
 const userAvatarAlt = computed(() => boundUserVisualProfile.value?.nickname || boundUser.value?.nickname || boundUser.value?.name || '我');
 const backgroundImageOptions = computed(() => draft.appearance.backgroundImages);
+const callBackgroundOptions = computed(() => draft.call.backgroundImages);
 const localWorldBookSelectValue = '__local_world_book_summary__';
 const stickerGroupSelectValue = '__sticker_group_summary__';
 const localWorldBooks = computed(() => store.worldBooks.filter((book) => book.scope === 'local'));
@@ -1085,6 +1163,8 @@ const narrationBubblePreviewStyle = computed(() => ({
   background: draft.appearance.narrationBubbleColor,
   color: draft.appearance.narrationTextColor
 }));
+const callRingtoneLabel = computed(() => draft.call.ringtone?.name || '未设置专属来电铃声');
+const callAmbientLabel = computed(() => draft.call.ambientSound?.name || '未设置氛围音');
 const stickerGroupPickerRows = computed(() => store.sortedStickerGroups.map((group) => ({
   id: group.id,
   name: group.name
@@ -2116,6 +2196,83 @@ function applyBackgroundImage(image: string) {
 function removeBackgroundImage(image: string) {
   const nextImages = draft.appearance.backgroundImages.filter((item) => item !== image);
   syncBackgroundImages(nextImages, draft.appearance.backgroundImage === image ? nextImages[0] ?? '' : draft.appearance.backgroundImage);
+}
+
+function syncCallBackgroundImages(images: string[], activeImage = draft.call.backgroundImage) {
+  const normalizedImages = [...new Set(images.map((image) => image.trim()).filter(Boolean))];
+  draft.call.backgroundImages = normalizedImages;
+  draft.call.backgroundImage = normalizedImages.includes(activeImage) ? activeImage : normalizedImages[0] ?? '';
+  saveDraft();
+}
+
+function addCallBackgroundImages(images: string[]) {
+  const nextImages = [...draft.call.backgroundImages, ...images];
+  const activeImage = images[images.length - 1]?.trim() || draft.call.backgroundImage;
+  syncCallBackgroundImages(nextImages, activeImage);
+}
+
+function addCallBackgroundFromUrl() {
+  const image = callBackgroundUrlDraft.value.trim();
+  if (!image) return;
+  addCallBackgroundImages([image]);
+  callBackgroundUrlDraft.value = '';
+}
+
+async function readCallBackgroundFiles(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files ?? []);
+  if (!files.length) return;
+  const images = (await Promise.all(files.map((file) => readFileAsDataUrl(file)))).filter(Boolean);
+  if (images.length) addCallBackgroundImages(images);
+  input.value = '';
+}
+
+function applyCallBackgroundImage(image: string) {
+  if (!image.trim()) return;
+  syncCallBackgroundImages(draft.call.backgroundImages, image.trim());
+}
+
+function removeCallBackgroundImage(image: string) {
+  const nextImages = draft.call.backgroundImages.filter((item) => item !== image);
+  syncCallBackgroundImages(nextImages, draft.call.backgroundImage === image ? nextImages[0] ?? '' : draft.call.backgroundImage);
+}
+
+async function importCallRingtone(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  try {
+    draft.call.ringtone = await createCallAudioAsset(file, '来电铃声');
+    saveDraft();
+  } catch (error) {
+    store.showConfigAlert(error instanceof Error ? error.message : '铃声读取失败。', '无法导入铃声');
+  }
+}
+
+function resetCallRingtone() {
+  draft.call.ringtone = undefined;
+  saveDraft();
+}
+
+async function importCallAmbientSound(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  try {
+    draft.call.ambientSound = await createCallAudioAsset(file, '通话氛围音');
+    draft.call.ambientEnabled = true;
+    saveDraft();
+  } catch (error) {
+    store.showConfigAlert(error instanceof Error ? error.message : '氛围音读取失败。', '无法导入氛围音');
+  }
+}
+
+function resetCallAmbientSound() {
+  draft.call.ambientSound = undefined;
+  draft.call.ambientEnabled = false;
+  saveDraft();
 }
 
 async function readAvatarFile(event: Event) {
@@ -5656,5 +5813,194 @@ function applyEditedAvatar(value: string) {
 
 .add-page-select-field:focus-within select {
   box-shadow: inset 0 0 0 1px rgba(6, 199, 85, 0.35), 0 0 0 3px rgba(6, 199, 85, 0.1);
+}
+
+.call-settings-block {
+  gap: 10px;
+}
+
+.call-simple-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(250, 252, 250, 0.96);
+  box-shadow: inset 0 0 0 1px rgba(42, 75, 60, 0.06), 0 8px 18px rgba(30, 55, 45, 0.035);
+}
+
+.call-simple-heading {
+  display: grid;
+  gap: 4px;
+}
+
+.call-simple-heading strong {
+  color: #171717;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.call-simple-heading span {
+  color: #747b80;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.call-button-row,
+.call-url-row {
+  display: grid;
+  gap: 8px;
+}
+
+.call-button-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.call-url-row {
+  grid-template-columns: minmax(0, 1fr) minmax(86px, auto);
+}
+
+.call-text-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 12px;
+  background: #edf8f1;
+  color: #1f6b3a;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+  box-shadow: inset 0 0 0 1px rgba(6, 199, 85, 0.08);
+  cursor: pointer;
+}
+
+.control-panel .manual-summary-button,
+.control-panel .summary-submit,
+.control-panel .setting-action-button,
+.control-panel .secondary-action,
+.control-panel .danger-action,
+.control-panel .background-thumb-actions button,
+.control-panel .call-text-button {
+  border: 1px solid rgba(42, 75, 60, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.88);
+  color: #171717;
+  box-shadow: 0 8px 18px rgba(30, 55, 45, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.control-panel .manual-summary-button:disabled,
+.control-panel .summary-submit:disabled,
+.control-panel .setting-action-button:disabled,
+.control-panel .secondary-action:disabled,
+.control-panel .danger-action:disabled,
+.control-panel .background-thumb-actions button:disabled,
+.control-panel .call-text-button:disabled {
+  background: rgba(248, 249, 248, 0.78);
+  color: #a0aaa5;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  cursor: default;
+}
+
+.call-text-button input[type='file'] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.call-text-button:disabled,
+.call-text-button[aria-disabled='true'] {
+  background: rgba(239, 242, 240, 0.86);
+  color: #a0aaa5;
+  box-shadow: none;
+  cursor: default;
+}
+
+.call-background-url-input {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: #f6f8f7;
+  color: #171717;
+  font-size: 13px;
+  box-shadow: inset 0 0 0 1px rgba(42, 75, 60, 0.08);
+}
+
+.call-file-button {
+  width: 100%;
+}
+
+.call-audio-preview {
+  width: 100%;
+  min-height: 36px;
+}
+
+.call-background-library {
+  display: grid;
+  gap: 10px;
+  margin-top: 0;
+}
+
+.call-background-library .background-thumb-card {
+  background: #f7faf8;
+}
+
+.call-background-library .background-thumb-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.call-background-library .compact-empty-note {
+  min-height: 48px;
+  padding: 12px;
+  place-items: center start;
+  text-align: left;
+  font-weight: 700;
+}
+
+.call-ambient-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.call-ambient-switch {
+  margin: 0;
+}
+
+.call-volume-field input[type='range'] {
+  width: 100%;
+  accent-color: #06c755;
+}
+
+@media (max-width: 420px) {
+  .call-simple-card {
+    padding: 13px;
+  }
+
+  .call-button-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .call-url-row {
+    grid-template-columns: minmax(0, 1fr) 86px;
+  }
+
+  .call-text-button {
+    min-height: 42px;
+    padding-inline: 10px;
+    font-size: 12px;
+  }
 }
 </style>

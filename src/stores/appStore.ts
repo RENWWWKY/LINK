@@ -2,7 +2,7 @@ import { computed, ref, toRaw, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { deleteEntity, loadSnapshot, putEntity, replaceSnapshot, scheduleStartupStorageMaintenance } from '@/data/db';
 import { defaultSettings } from '@/data/seed';
-import type { AppSettings, AppSnapshot, CharacterProfile, CharacterProfileHistoryEntry, CharacterProfileHistoryField, ChatImageAttachment, ChatImageCandidate, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatMode, ChatModelOverrides, ChatModelScope, ChatMusicListenInviteAttachment, ChatMusicListenInviteStatus, ChatOfflineInvitationAttachment, ChatOfflineInvitationStatus, ChatSmallTheaterLinkAttachment, ChatTransferAttachment, ChatTransferStatus, ChatVoiceAttachment, Conversation, ConversationMemoryAtom, ConversationMemoryRecord, ConversationSettings, FavoriteMessageKind, FavoriteMessageRecord, GenerateReplyInput, GeneratedImageRecord, ImageModuleId, MusicCommentThread, MusicListeningContext, MusicTrack, ProfileHomepageRecord, ProfileTheme, SmallTheater, SmallTheaterTopic, Sticker, StickerGroup, UserProfile, VisualProfile, VoomComment, VoomFrequency, VoomImageCandidate, VoomPost, VoomPostVisibility, WorldBookEntry } from '@/types/domain';
+import type { AppSettings, AppSnapshot, CharacterProfile, CharacterProfileHistoryEntry, CharacterProfileHistoryField, ChatCallAttachment, ChatCallMode, ChatCallStatus, ChatImageAttachment, ChatImageCandidate, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatMode, ChatModelOverrides, ChatModelScope, ChatMusicListenInviteAttachment, ChatMusicListenInviteStatus, ChatOfflineInvitationAttachment, ChatOfflineInvitationStatus, ChatSmallTheaterLinkAttachment, ChatTransferAttachment, ChatTransferStatus, ChatVoiceAttachment, Conversation, ConversationMemoryAtom, ConversationMemoryRecord, ConversationSettings, FavoriteMessageKind, FavoriteMessageRecord, GenerateReplyInput, GeneratedImageRecord, ImageModuleId, MusicCommentThread, MusicListeningContext, MusicTrack, ProfileHomepageRecord, ProfileTheme, SmallTheater, SmallTheaterTopic, Sticker, StickerGroup, UserProfile, VisualProfile, VoomComment, VoomFrequency, VoomImageCandidate, VoomPost, VoomPostVisibility, WorldBookEntry } from '@/types/domain';
 import { createAccountId, createId } from '@/utils/id';
 import { getCharacterAiName, getCharacterInitialProfile, getCharacterVoomAuthorName, getCharacterVoomDisplayName, normalizeCharacterMindStateLines, normalizeCharacterProfile } from '@/utils/character';
 import { getUserAiName, getUserDisplayName, getUserVoomAuthorName, normalizeUserProfile, normalizeVisualProfile } from '@/utils/profile';
@@ -14,7 +14,7 @@ import { getSmallTheaterVisibleText } from '@/utils/smallTheaterHtml';
 import { RECENT_STICKER_GROUP_NAME, cacheStickerImageUrl, createStickerFromDraft, createStickerGroup, getStickerDisplayImageUrl, isLegacyGanadiSticker, isLegacyGanadiStickerGroup, isRecentStickerGroupId, normalizeSticker, normalizeStickerGroup, shouldLocalizeStickerImageUrl, sortRecentStickers, type StickerImportDraft } from '@/utils/stickers';
 import { ageMemoryKind, collectIncrementalGrandSummaries, createMemoryRecord, estimateTokenCount, filterHighestMemoryLayers, getConversationActiveMessages, getConversationFloorCount, getGrandSummaryHiddenRange, getHiddenMessageIds, getMemoryContext, getMemoryMergeDepth, getMessageFloorMap, getMessagesInFloorRange, getNextSummaryRange, getNextSummaryStartFloor, getVisibleMessages, isIncrementalGrandSummary, normalizeConversationSettings, normalizeMemoryRecordEntries, renderCharacterMemoryPrompt, shouldCompressMemory } from '@/utils/memory';
 import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
-import { estimateRoleplayReplyInputTokens, fetchVendorModels, generateConversationSummary, generateImageByProvider, generateRoleplayReply, generateSmallTheater, generateUserVoomComments, generateVoomCommentReplies, generateVoomPost, hasTextGenerationConfig, shouldAutoGenerateMoment, type ConversationSummaryIdentityRule, type RoleplayReplyResult, type RoleplayReplySegment } from '@/services/ai';
+import { estimateRoleplayReplyInputTokens, fetchVendorModels, generateConversationSummary, generateImageByProvider, generateRoleplayReply, generateSmallTheater, generateUserVoomComments, generateVoomCommentReplies, generateVoomPost, hasTextGenerationConfig, shouldAutoGenerateMoment, type ConversationSummaryIdentityRule, type RoleplayCallResponse, type RoleplayReplyResult, type RoleplayReplySegment } from '@/services/ai';
 import { fetchMusicCoverUrl, mergeMusicTrack, refreshPlayableMusicTrack, searchMusicTracks } from '@/services/music';
 import { useMusicPlayerStore } from '@/stores/musicPlayerStore';
 import { GitHubBackupError, downloadGitHubBackup, downloadGitHubBackupVersion, ensureGitHubBackupRepository, formatGitHubBackupError, listGitHubBackupHistory, uploadGitHubBackup } from '@/services/githubBackup';
@@ -50,6 +50,46 @@ interface BuildRoleplayReplyInputOptions {
   replyInstruction?: string;
   excludeSourceMessageIds?: string[];
   timeAwarenessNow?: number;
+}
+
+interface RoleplayCallSessionOptions {
+  callId: string;
+  mode: ChatCallMode;
+  forceVoice?: boolean;
+}
+
+export type AppActiveCallStatus = 'outgoing-ringing' | 'incoming-ringing' | 'active' | 'ended';
+
+export interface AppActiveCallState {
+  conversationId: string;
+  callId: string;
+  eventMessageId: string;
+  mode: ChatCallMode;
+  direction: 'incoming' | 'outgoing';
+  status: AppActiveCallStatus;
+  startedAt: number;
+  connectedAt?: number;
+  endedAt?: number;
+  muted: boolean;
+  cameraEnabled: boolean;
+  speakerEnabled: boolean;
+  minimized: boolean;
+  floatPosition: { x: number; y: number };
+  peerName: string;
+  avatar: string;
+  subtitle: string;
+  updatedAt: number;
+}
+
+interface RequestRoleplayReplyOptions {
+  generateMoment?: boolean;
+  proactive?: boolean;
+  replyInstruction?: string;
+  replyVariantGroupId?: string;
+  replyVariantIndex?: number;
+  excludeSourceMessageIds?: string[];
+  callSession?: RoleplayCallSessionOptions;
+  callResponseTargetMessageId?: string;
 }
 
 interface IncrementalGrandSummaryOptions {
@@ -301,6 +341,7 @@ export const useAppStore = defineStore('app', () => {
   const conversations = ref<Conversation[]>([]);
   const activeConversationId = ref<string | null>(null);
   const messages = ref<ChatMessage[]>([]);
+  const activeCall = ref<AppActiveCallState | null>(null);
   const voomPosts = ref<VoomPost[]>([]);
   const profileThemes = ref<ProfileTheme[]>([]);
   const profileHomepages = ref<ProfileHomepageRecord[]>([]);
@@ -884,6 +925,29 @@ export const useAppStore = defineStore('app', () => {
 
   function conversationById(id: string) {
     return conversationsById.value.get(id);
+  }
+
+  function setActiveCall(nextCall: Omit<AppActiveCallState, 'updatedAt'>) {
+    activeCall.value = {
+      ...nextCall,
+      floatPosition: { ...nextCall.floatPosition },
+      updatedAt: Date.now()
+    };
+  }
+
+  function patchActiveCall(conversationId: string, patch: Partial<Omit<AppActiveCallState, 'conversationId' | 'updatedAt'>>) {
+    if (!activeCall.value || activeCall.value.conversationId !== conversationId) return;
+    activeCall.value = {
+      ...activeCall.value,
+      ...patch,
+      floatPosition: patch.floatPosition ? { ...patch.floatPosition } : activeCall.value.floatPosition,
+      updatedAt: Date.now()
+    };
+  }
+
+  function clearActiveCall(conversationId?: string) {
+    if (conversationId && activeCall.value?.conversationId !== conversationId) return;
+    activeCall.value = null;
   }
 
   function setActiveConversation(conversationId: string | null) {
@@ -1821,6 +1885,88 @@ export const useAppStore = defineStore('app', () => {
     return Math.max(1, Math.ceil(content.trim().length / 4));
   }
 
+  function callModeLabel(mode: ChatCallMode) {
+    return mode === 'video' ? '视频通话' : '语音通话';
+  }
+
+  function callStatusLabel(status: ChatCallStatus) {
+    return {
+      ringing: '呼叫中',
+      accepted: '已接听',
+      rejected: '已拒绝',
+      missed: '未接听',
+      busy: '忙线',
+      cancelled: '已取消',
+      ended: '已结束',
+      failed: '呼叫失败'
+    }[status];
+  }
+
+  function formatCallDuration(seconds: number | undefined) {
+    const duration = Math.max(0, Math.floor(Number(seconds) || 0));
+    if (!duration) return '';
+    const minutes = Math.floor(duration / 60);
+    const restSeconds = duration % 60;
+    return `${minutes}:${String(restSeconds).padStart(2, '0')}`;
+  }
+
+  function normalizeCallAttachment(call: ChatCallAttachment): ChatCallAttachment {
+    const now = Date.now();
+    const status: ChatCallStatus = ['ringing', 'accepted', 'rejected', 'missed', 'busy', 'cancelled', 'ended', 'failed'].includes(call.status)
+      ? call.status
+      : 'ringing';
+    const startedAt = Number.isFinite(call.startedAt) && call.startedAt > 0 ? call.startedAt : now;
+    const rawConnectedAt = Number(call.connectedAt);
+    const rawEndedAt = Number(call.endedAt);
+    const rawDuration = Number(call.duration);
+    const connectedAt = Number.isFinite(rawConnectedAt) && rawConnectedAt > 0 ? rawConnectedAt : undefined;
+    const endedAt = Number.isFinite(rawEndedAt) && rawEndedAt > 0 ? rawEndedAt : undefined;
+    const duration = Number.isFinite(rawDuration) && rawDuration > 0
+      ? Math.max(1, Math.round(rawDuration))
+      : connectedAt && endedAt && endedAt > connectedAt
+        ? Math.max(1, Math.round((endedAt - connectedAt) / 1000))
+        : undefined;
+    return {
+      callId: call.callId.trim() || createId('call'),
+      mode: call.mode === 'video' ? 'video' : 'voice',
+      direction: call.direction === 'incoming' ? 'incoming' : 'outgoing',
+      status,
+      startedAt,
+      connectedAt,
+      endedAt,
+      duration
+    };
+  }
+
+  function formatCallContent(call: ChatCallAttachment) {
+    const normalizedCall = normalizeCallAttachment(call);
+    const directionText = normalizedCall.direction === 'incoming' ? '对方发起' : '你发起';
+    const durationText = formatCallDuration(normalizedCall.duration);
+    return `[${callModeLabel(normalizedCall.mode)}] ${directionText} · ${callStatusLabel(normalizedCall.status)}${durationText ? ` · ${durationText}` : ''}`;
+  }
+
+  function callMessageSender(call: ChatCallAttachment): ChatMessage['sender'] {
+    return call.direction === 'incoming' ? 'char' : 'user';
+  }
+
+  function callStatusFromResponse(status: RoleplayCallResponse['status']): ChatCallStatus {
+    if (status === 'accepted') return 'accepted';
+    if (status === 'busy') return 'busy';
+    if (status === 'missed') return 'missed';
+    return 'rejected';
+  }
+
+  function findPendingOutgoingCallMessage(conversationId: string, preferredMessageId?: string) {
+    const isPendingOutgoingCall = (message: ChatMessage) => message.conversationId === conversationId
+      && message.call?.direction === 'outgoing'
+      && message.call.status === 'ringing';
+    const preferredMessage = preferredMessageId
+      ? messages.value.find((message) => message.id === preferredMessageId && isPendingOutgoingCall(message))
+      : null;
+    if (preferredMessage) return preferredMessage;
+    return [...messages.value].reverse().find(isPendingOutgoingCall) ?? null;
+  }
+
   function estimateJsonBytes(value: unknown) {
     try {
       return new Blob([JSON.stringify(value)]).size;
@@ -2359,9 +2505,72 @@ export const useAppStore = defineStore('app', () => {
     return message;
   }
 
+  async function appendCallEventMessage(conversationId: string, call: ChatCallAttachment) {
+    const conversation = conversationById(conversationId);
+    if (!conversation) return null;
+    const normalizedCall = normalizeCallAttachment(call);
+    const message: ChatMessage = {
+      id: createId('msg'),
+      conversationId,
+      sender: callMessageSender(normalizedCall),
+      mode: 'online',
+      content: formatCallContent(normalizedCall),
+      call: normalizedCall,
+      callId: normalizedCall.callId,
+      callMode: normalizedCall.mode,
+      createdAt: normalizedCall.startedAt,
+      status: 'sent'
+    };
+    messages.value.push(message);
+    await putEntity('messages', message);
+    const nextConversation = { ...conversation, updatedAt: message.createdAt, activeMode: 'online' as const };
+    const index = conversations.value.findIndex((item) => item.id === conversationId);
+    if (index >= 0) conversations.value[index] = nextConversation;
+    await putEntity('conversations', nextConversation);
+    return message;
+  }
+
+  async function updateCallEventMessage(messageId: string, patch: Partial<Omit<ChatCallAttachment, 'callId' | 'mode' | 'direction' | 'startedAt'>>) {
+    const messageIndex = messages.value.findIndex((message) => message.id === messageId);
+    if (messageIndex < 0) return null;
+    const existingMessage = messages.value[messageIndex];
+    if (!existingMessage.call) return null;
+    const nextCall = normalizeCallAttachment({
+      ...existingMessage.call,
+      ...patch
+    });
+    const nextMessage: ChatMessage = {
+      ...existingMessage,
+      sender: callMessageSender(nextCall),
+      content: formatCallContent(nextCall),
+      call: nextCall,
+      callId: nextCall.callId,
+      callMode: nextCall.mode,
+      editedAt: Date.now()
+    };
+    messages.value[messageIndex] = nextMessage;
+    await putEntity('messages', nextMessage);
+    await touchConversationAfterMessageChange(nextMessage.conversationId, nextMessage.editedAt);
+    return nextMessage;
+  }
+
   function expandMessageIds(messageIds: string | string[]) {
     const ids = Array.isArray(messageIds) ? messageIds : [messageIds];
     return [...new Set(ids.flatMap((id) => String(id).split('__')).map((id) => id.trim()).filter(Boolean))];
+  }
+
+  function expandMessageIdsForDeletion(messageIds: string | string[]) {
+    const ids = expandMessageIds(messageIds);
+    const idSet = new Set(ids);
+    const callKeys = new Set(messages.value
+      .filter((message) => idSet.has(message.id) && message.call?.callId)
+      .map((message) => `${message.conversationId}:${message.call?.callId}`));
+
+    if (!callKeys.size) return ids;
+    for (const message of messages.value) {
+      if (message.callId && callKeys.has(`${message.conversationId}:${message.callId}`)) idSet.add(message.id);
+    }
+    return [...idSet];
   }
 
   function isRoleplayNarrationMessage(message: ChatMessage) {
@@ -2386,7 +2595,8 @@ export const useAppStore = defineStore('app', () => {
       transfer: quote.transfer ? { ...quote.transfer } : undefined,
       musicListenInvite: quote.musicListenInvite ? { ...quote.musicListenInvite } : undefined,
       theaterLink: quote.theaterLink ? { ...quote.theaterLink } : undefined,
-      offlineInvitation: quote.offlineInvitation ? { ...quote.offlineInvitation } : undefined
+      offlineInvitation: quote.offlineInvitation ? { ...quote.offlineInvitation } : undefined,
+      call: quote.call ? { ...quote.call } : undefined
     };
   }
 
@@ -2399,6 +2609,7 @@ export const useAppStore = defineStore('app', () => {
     if (message.musicListenInvite) return formatMusicListenInviteContent(message.musicListenInvite).trim();
     if (message.theaterLink) return formatSmallTheaterLinkContent(message.theaterLink).trim();
     if (message.offlineInvitation) return formatOfflineInvitationContent(message.offlineInvitation).trim();
+    if (message.call) return formatCallContent(message.call).trim();
     return message.content.trim();
   }
 
@@ -2411,6 +2622,7 @@ export const useAppStore = defineStore('app', () => {
     if (message.musicListenInvite) return 'musicListenInvite';
     if (message.theaterLink) return 'theaterLink';
     if (message.offlineInvitation) return 'offlineInvitation';
+    if (message.call) return 'call';
     if (message.displayStyle === 'narration') return 'narration';
     return 'text';
   }
@@ -2418,7 +2630,7 @@ export const useAppStore = defineStore('app', () => {
   function canFavoriteMessage(message: ChatMessage) {
     if (message.voice) return true;
     if (message.image) return Boolean(message.image.url);
-    if (message.sticker || message.location || message.transfer || message.musicListenInvite || message.theaterLink || message.offlineInvitation) return false;
+    if (message.sticker || message.location || message.transfer || message.musicListenInvite || message.theaterLink || message.offlineInvitation || message.call) return false;
     return Boolean(message.content.trim() || message.displayStyle === 'narration');
   }
 
@@ -2481,7 +2693,8 @@ export const useAppStore = defineStore('app', () => {
       transfer: message.transfer ? { ...message.transfer } : undefined,
       musicListenInvite: message.musicListenInvite ? { ...message.musicListenInvite } : undefined,
       theaterLink: message.theaterLink ? { ...message.theaterLink } : undefined,
-      offlineInvitation: message.offlineInvitation ? { ...message.offlineInvitation } : undefined
+      offlineInvitation: message.offlineInvitation ? { ...message.offlineInvitation } : undefined,
+      call: message.call ? { ...message.call } : undefined
     };
   }
 
@@ -2556,7 +2769,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   async function deleteMessages(messageIds: string | string[]) {
-    const ids = expandMessageIds(messageIds);
+    const ids = expandMessageIdsForDeletion(messageIds);
     if (!ids.length) return 0;
     const idSet = new Set(ids);
     const messagesToRemove = messages.value.filter((message) => idSet.has(message.id));
@@ -4120,6 +4333,75 @@ export const useAppStore = defineStore('app', () => {
     return userMessage;
   }
 
+  async function appendUserCallMessage(conversationId: string, content: string, callId: string, callMode: ChatCallMode) {
+    const trimmedContent = content.trim();
+    const conversation = conversationById(conversationId);
+    if (!trimmedContent || !conversation || !callId.trim()) return;
+
+    const userMessage: ChatMessage = {
+      id: createId('msg'),
+      conversationId,
+      sender: 'user',
+      mode: 'online',
+      content: trimmedContent,
+      callId: callId.trim(),
+      callMode,
+      createdAt: Date.now(),
+      status: 'sent'
+    };
+    messages.value.push(userMessage);
+    await putEntity('messages', userMessage);
+    const nextConversation = { ...conversation, updatedAt: userMessage.createdAt, unreadCount: 0, activeMode: 'online' as const };
+    const conversationIndex = conversations.value.findIndex((item) => item.id === conversationId);
+    if (conversationIndex >= 0) conversations.value[conversationIndex] = nextConversation;
+    await putEntity('conversations', nextConversation);
+    void maybeAutoSummarizeConversation(conversationId);
+    return userMessage;
+  }
+
+  async function appendUserCallImageMessage(conversationId: string, image: ChatImageAttachment, callId: string, callMode: ChatCallMode) {
+    const description = image.description.trim() || '视频通话画面';
+    const normalizedCallId = callId.trim();
+    const conversation = conversationById(conversationId);
+    if (!description || !conversation || !normalizedCallId) return;
+
+    const userMessage: ChatMessage = {
+      id: createId('msg'),
+      conversationId,
+      sender: 'user',
+      mode: 'online',
+      content: `[视频通话画面] ${description}`,
+      image: {
+        ...image,
+        description,
+        aiHint: image.aiHint?.trim() || undefined
+      },
+      callId: normalizedCallId,
+      callMode,
+      contextOnly: true,
+      createdAt: Date.now(),
+      status: 'sent'
+    };
+    messages.value.push(userMessage);
+    await putEntity('messages', userMessage);
+
+    const staleContextMessages = messages.value
+      .filter((message) => message.conversationId === conversationId && message.callId === normalizedCallId && message.contextOnly && message.image)
+      .sort((left, right) => left.createdAt - right.createdAt)
+      .slice(0, -3);
+    if (staleContextMessages.length) {
+      const staleIds = new Set(staleContextMessages.map((message) => message.id));
+      messages.value = messages.value.filter((message) => !staleIds.has(message.id));
+      await Promise.all(staleContextMessages.map((message) => deleteEntity('messages', message.id)));
+    }
+
+    const nextConversation = { ...conversation, updatedAt: userMessage.createdAt, unreadCount: 0, activeMode: 'online' as const };
+    const conversationIndex = conversations.value.findIndex((item) => item.id === conversationId);
+    if (conversationIndex >= 0) conversations.value[conversationIndex] = nextConversation;
+    await putEntity('conversations', nextConversation);
+    return userMessage;
+  }
+
   async function appendStickerMessage(conversationId: string, sticker: Sticker, quote?: ChatMessageQuote | null) {
     const conversation = conversationById(conversationId);
     if (!conversation) return;
@@ -5434,7 +5716,7 @@ export const useAppStore = defineStore('app', () => {
     }));
   }
 
-  async function requestRoleplayReply(conversationId: string, options?: { generateMoment?: boolean; proactive?: boolean; replyInstruction?: string; replyVariantGroupId?: string; replyVariantIndex?: number; excludeSourceMessageIds?: string[] }) {
+  async function requestRoleplayReply(conversationId: string, options?: RequestRoleplayReplyOptions) {
     const conversation = conversationById(conversationId);
     if (!conversation || isConversationReplying(conversationId)) return;
     const character = characterById(conversation.charId);
@@ -5475,6 +5757,13 @@ export const useAppStore = defineStore('app', () => {
           replyVariantState: 'active' as const
         }
         : {};
+      const callFields = options?.callSession
+        ? {
+          callId: options.callSession.callId,
+          callMode: options.callSession.mode
+        }
+        : {};
+      const forceCallVoice = Boolean(options?.callSession?.forceVoice);
       const replyTexts = Array.isArray(parsedReply.replies) ? parsedReply.replies : [parsedReply.reply];
       const replyTranslations = Array.isArray(parsedReply.replyTranslations) ? parsedReply.replyTranslations : [];
       const replyMessages = replyTexts
@@ -5594,13 +5883,18 @@ export const useAppStore = defineStore('app', () => {
       const offlineInvitation = conversation.activeMode === 'online' && chatSettings.offlineInvitationEnabled
         ? normalizeOfflineInvitationAttachment(parsedReply.messageActions?.offlineInvitation?.prompt ?? '')
         : null;
+      const callInvite = conversation.activeMode === 'online' ? parsedReply.messageActions?.callInvite ?? null : null;
+      const callResponse = conversation.activeMode === 'online' ? parsedReply.messageActions?.callResponse ?? null : null;
+      const callResponseTargetMessage = callResponse
+        ? findPendingOutgoingCallMessage(conversationId, options?.callResponseTargetMessageId)
+        : null;
       const quoteByReplyIndex = new Map<number, ChatMessageQuote>();
       for (const quoteAction of parsedReply.messageActions?.quotes ?? []) {
         const targetMessage = messages.value.find((message) => message.id === quoteAction.messageId && message.conversationId === conversationId && message.sender === 'user');
         const quote = targetMessage ? createMessageQuoteSnapshot(targetMessage) : null;
         if (quote) quoteByReplyIndex.set(Math.max(0, Math.floor(quoteAction.replyIndex)), quote);
       }
-      if (!effectiveReplyMessages.length && !replyStickers.length && !replyImages.length && !narrationMessages.length && !hasOrderedSticker && !hasOrderedNarration && !hasOrderedImage && !hasOrderedVoice && !hasOrderedLocation && !hasOrderedTransfer && !hasOrderedMusicAction && !validRecallMessageIds.length && !validTransferDecisions.length && !validMusicListenInviteDecisions.length && !canSendMusicListenInvite && !(parsedReply.messageActions?.musicActions ?? []).length && !offlineInvitation) {
+      if (!effectiveReplyMessages.length && !replyStickers.length && !replyImages.length && !narrationMessages.length && !hasOrderedSticker && !hasOrderedNarration && !hasOrderedImage && !hasOrderedVoice && !hasOrderedLocation && !hasOrderedTransfer && !hasOrderedMusicAction && !validRecallMessageIds.length && !validTransferDecisions.length && !validMusicListenInviteDecisions.length && !canSendMusicListenInvite && !(parsedReply.messageActions?.musicActions ?? []).length && !offlineInvitation && !callInvite && !callResponseTargetMessage) {
         showConfigAlert('AI 返回内容中没有可显示的聊天文本，请重试或检查模型输出格式。', '回复异常');
         return;
       }
@@ -5635,6 +5929,15 @@ export const useAppStore = defineStore('app', () => {
       for (const decision of validMusicListenInviteDecisions) {
         await updateMusicListenInviteStatus(decision.messageId, decision.status, 'char');
       }
+      if (callResponse && callResponseTargetMessage) {
+        const status = callStatusFromResponse(callResponse.status);
+        const respondedAt = Date.now();
+        await updateCallEventMessage(callResponseTargetMessage.id, {
+          status,
+          connectedAt: status === 'accepted' ? respondedAt : undefined,
+          endedAt: status === 'accepted' ? undefined : respondedAt
+        });
+      }
       const musicActionNotices = await applyCharacterMusicActions(conversationId, parsedReply.messageActions?.musicActions ?? []);
       const createdAt = Date.now();
       const charNarrationMessages = narrationMessages.map((content, index) => ({
@@ -5647,6 +5950,7 @@ export const useAppStore = defineStore('app', () => {
         displayStyle: 'narration' as const,
         replyBatchId,
         ...replyVariantFields,
+        ...callFields,
         status: 'sent' as const
       } satisfies ChatMessage));
       const charMessagesAfterNarration: ChatMessage[] = [];
@@ -5667,6 +5971,7 @@ export const useAppStore = defineStore('app', () => {
         },
         replyBatchId,
         ...replyVariantFields,
+        ...callFields,
         createdAt: createdAt + charMessageOffset++,
         status: 'sent' as const
       } satisfies ChatMessage));
@@ -5688,17 +5993,19 @@ export const useAppStore = defineStore('app', () => {
           image,
           replyBatchId,
           ...replyVariantFields,
+          ...callFields,
           createdAt: createdAt + charMessageOffset++,
           status: 'sent' as const
         } satisfies ChatMessage;
       };
-      const createVoiceMessage = (content: string, duration?: number, translation?: string) => ({
+      const createVoiceMessage = (content: string, duration?: number, translation?: string, quote?: ChatMessageQuote) => ({
         id: createId('msg'),
         conversationId,
         sender: 'char' as const,
         mode: conversation.activeMode,
         content: `[语音] ${content}`,
         translation: translation || undefined,
+        quote,
         voice: {
           source: 'text' as const,
           transcript: content,
@@ -5706,9 +6013,27 @@ export const useAppStore = defineStore('app', () => {
         },
         replyBatchId,
         ...replyVariantFields,
+        ...callFields,
         createdAt: createdAt + charMessageOffset++,
         status: 'sent' as const
       } satisfies ChatMessage);
+      const createTextReplyMessage = (content: string, translation?: string, quote?: ChatMessageQuote) => {
+        if (forceCallVoice) return createVoiceMessage(content, undefined, translation, quote);
+        return {
+          id: createId('msg'),
+          conversationId,
+          sender: 'char' as const,
+          mode: conversation.activeMode,
+          content,
+          translation: translation || undefined,
+          quote,
+          replyBatchId,
+          ...replyVariantFields,
+          ...callFields,
+          createdAt: createdAt + charMessageOffset++,
+          status: 'sent' as const
+        } satisfies ChatMessage;
+      };
       const createLocationMessage = (location: ChatLocationAttachment) => ({
         id: createId('msg'),
         conversationId,
@@ -5718,6 +6043,7 @@ export const useAppStore = defineStore('app', () => {
         location,
         replyBatchId,
         ...replyVariantFields,
+        ...callFields,
         createdAt: createdAt + charMessageOffset++,
         status: 'sent' as const
       } satisfies ChatMessage);
@@ -5733,6 +6059,7 @@ export const useAppStore = defineStore('app', () => {
           transfer: normalizedTransfer,
           replyBatchId,
           ...replyVariantFields,
+          ...callFields,
           createdAt: createdAt + charMessageOffset++,
           status: 'sent' as const
         } satisfies ChatMessage;
@@ -5748,6 +6075,7 @@ export const useAppStore = defineStore('app', () => {
         displayStyle: 'narration' as const,
         replyBatchId,
         ...replyVariantFields,
+        ...callFields,
         status: 'sent' as const
       } satisfies ChatMessage);
       const takeMusicActionNotice = (preferredIndex?: number) => {
@@ -5794,23 +6122,12 @@ export const useAppStore = defineStore('app', () => {
                 displayStyle: 'narration' as const,
                 replyBatchId,
                 ...replyVariantFields,
+                ...callFields,
                 status: 'sent' as const
               } satisfies ChatMessage);
               break;
             case 'reply':
-              orderedCharMessages.push({
-                id: createId('msg'),
-                conversationId,
-                sender: 'char' as const,
-                mode: conversation.activeMode,
-                content: segment.content,
-                translation: segment.translation || undefined,
-                quote: quoteByReplyIndex.get(orderedReplyIndex),
-                replyBatchId,
-                ...replyVariantFields,
-                createdAt: createdAt + charMessageOffset++,
-                status: 'sent' as const
-              } satisfies ChatMessage);
+              orderedCharMessages.push(createTextReplyMessage(segment.content, segment.translation, quoteByReplyIndex.get(orderedReplyIndex)));
               orderedReplyIndex += 1;
               break;
             case 'sticker':
@@ -5841,19 +6158,7 @@ export const useAppStore = defineStore('app', () => {
       } else if (replyMessages.length) {
         replyMessages.forEach((reply, index) => {
           appendPlacedStickers(index, 'before');
-          charMessagesAfterNarration.push({
-            id: createId('msg'),
-            conversationId,
-            sender: 'char' as const,
-            mode: conversation.activeMode,
-            content: reply.content,
-            translation: reply.translation || undefined,
-            quote: quoteByReplyIndex.get(index),
-            replyBatchId,
-            ...replyVariantFields,
-            createdAt: createdAt + charMessageOffset++,
-            status: 'sent' as const
-          } satisfies ChatMessage);
+          charMessagesAfterNarration.push(createTextReplyMessage(reply.content, reply.translation, quoteByReplyIndex.get(index)));
           appendPlacedStickers(index, 'after');
         });
       } else {
@@ -5890,6 +6195,27 @@ export const useAppStore = defineStore('app', () => {
           replyBatchId,
           ...replyVariantFields,
           createdAt: createdAt + charMessageOffset++,
+          status: 'sent' as const
+        } satisfies ChatMessage);
+      }
+      if (callInvite) {
+        const call = normalizeCallAttachment({
+          callId: createId('call'),
+          mode: callInvite.mode,
+          direction: 'incoming',
+          status: 'ringing',
+          startedAt: createdAt + charMessageOffset++
+        });
+        charMessages.push({
+          id: createId('msg'),
+          conversationId,
+          sender: callMessageSender(call),
+          mode: 'online' as const,
+          content: formatCallContent(call),
+          call,
+          callId: call.callId,
+          callMode: call.mode,
+          createdAt: call.startedAt,
           status: 'sent' as const
         } satisfies ChatMessage);
       }
@@ -5932,6 +6258,7 @@ export const useAppStore = defineStore('app', () => {
           console.error(error);
         });
       }
+      return charMessages;
     } catch (error) {
       if (options?.proactive) {
         console.error(error);
@@ -7709,6 +8036,7 @@ export const useAppStore = defineStore('app', () => {
     charactersForActiveUser,
     charactersForFriendsDisplay,
     conversations,
+    activeCall,
     conversationsForActiveUser,
     conversationsForFriendsDisplay,
     sortedConversations,
@@ -7740,6 +8068,9 @@ export const useAppStore = defineStore('app', () => {
     userById,
     characterById,
     conversationById,
+    setActiveCall,
+    patchActiveCall,
+    clearActiveCall,
     setActiveConversation,
     messagesForConversation,
     profileThemesForCharacter,
@@ -7815,7 +8146,11 @@ export const useAppStore = defineStore('app', () => {
     updateConversationMode,
     markConversationRead,
     appendConversationEvent,
+    appendCallEventMessage,
+    updateCallEventMessage,
     appendUserMessage,
+    appendUserCallMessage,
+    appendUserCallImageMessage,
     appendStickerMessage,
     appendUserImageMessage,
     appendUserVoiceMessage,

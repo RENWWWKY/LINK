@@ -1,4 +1,4 @@
-import type { ChatMemorySettings, ChatMessage, ChatMode, ConversationMemoryEntry, ConversationMemoryEntryStatus, ConversationMemoryEntryType, ConversationMemoryRecord, ConversationMemoryTimeBasis, ConversationOfflineSettings, ConversationSettings, OfflineInterruptionMode, OfflineParagraphMode, OfflinePerspective, OfflinePromptPreset, OfflineRetellMode, OfflineTonePreset, VoomImageMode } from '@/types/domain';
+import type { ChatMemorySettings, ChatMessage, ChatMode, ConversationMemoryEntry, ConversationMemoryEntryStatus, ConversationMemoryEntryType, ConversationMemoryRecord, ConversationMemoryTimeBasis, ConversationOfflineSettings, ConversationSettings, OfflineInterruptionMode, OfflineParagraphMode, OfflinePerspective, OfflinePromptPreset, OfflineRetellMode, OfflineTonePreset, RingtoneAsset, VoomImageMode } from '@/types/domain';
 import { createId } from './id';
 import { normalizeChatModelOverrides } from './settings';
 import { defaultTimeAwarenessSettings, normalizeTimeAwarenessSettings } from './timeAwareness';
@@ -200,6 +200,20 @@ function normalizeStringOption<T extends string>(value: unknown, allowed: readon
   return allowed.includes(normalizedValue) ? normalizedValue : fallback;
 }
 
+function normalizeOptionalRingtoneAsset(asset: Partial<RingtoneAsset> | null | undefined): RingtoneAsset | undefined {
+  const url = String(asset?.url ?? '').trim();
+  if (!url) return undefined;
+  return {
+    id: String(asset?.id ?? '').trim() || createId('call-audio'),
+    name: String(asset?.name ?? '').trim() || '通话音频',
+    url,
+    mimeType: String(asset?.mimeType ?? '').trim() || 'audio/mpeg',
+    size: Math.max(0, Math.round(Number(asset?.size ?? 0) || 0)),
+    source: asset?.source === 'default' ? 'default' : 'imported',
+    updatedAt: Math.max(0, Number(asset?.updatedAt ?? 0) || 0)
+  };
+}
+
 function normalizePromptPreset(preset: Partial<OfflinePromptPreset> | null | undefined, fallback: OfflinePromptPreset, index: number): OfflinePromptPreset {
   const id = String(preset?.id ?? '').trim() || `${fallback.id}_${index}`;
   const name = String(preset?.name ?? '').trim() || fallback.name;
@@ -312,6 +326,12 @@ export const defaultConversationSettings: Omit<ConversationSettings, 'conversati
     showOnlyFirstAvatarInReply: true,
     hideVoomNarration: true
   },
+  call: {
+    backgroundImage: '',
+    backgroundImages: [],
+    ambientEnabled: false,
+    ambientVolume: 0.16
+  },
   narrationModeEnabled: true,
   autoGenerateVoom: true,
   voomFrequency: 'medium',
@@ -337,6 +357,7 @@ export function normalizeConversationSettings(settings: Partial<ConversationSett
   const memoryDefaults = defaultChatMemorySettings;
   const memory = settings?.memory ?? memoryDefaults;
   const appearance = settings?.appearance ?? defaultConversationSettings.appearance;
+  const call = settings?.call ?? defaultConversationSettings.call;
   const modelOverrides = normalizeChatModelOverrides(settings?.modelOverrides ?? defaultConversationSettings.modelOverrides);
   const isLegacySettings = Boolean(settings && !Object.prototype.hasOwnProperty.call(settings, 'stickerSuggestionsEnabled'));
   const summaryModel = String(modelOverrides.summary ?? memory.summaryModel ?? '').trim();
@@ -364,6 +385,14 @@ export function normalizeConversationSettings(settings: Partial<ConversationSett
   const grandSummaryVisibleTailFloors = normalizeNonNegativeInteger(memory.grandSummaryVisibleTailFloors, memoryDefaults.grandSummaryVisibleTailFloors);
   const rawGrandSummaryEvery = Math.round(Number(memory.grandSummaryEvery) || memoryDefaults.grandSummaryEvery);
   const grandSummaryEvery = rawGrandSummaryEvery === legacyChatMemoryDefaults.grandSummaryEvery ? memoryDefaults.grandSummaryEvery : rawGrandSummaryEvery;
+  const callBackgroundImage = String(call.backgroundImage ?? '').trim();
+  const callBackgroundImages = [
+    callBackgroundImage,
+    ...(Array.isArray(call.backgroundImages) ? call.backgroundImages : [])
+  ].map((image) => String(image ?? '').trim()).filter(Boolean);
+  const callRingtone = normalizeOptionalRingtoneAsset(call.ringtone);
+  const callAmbientSound = normalizeOptionalRingtoneAsset(call.ambientSound);
+  const ambientVolume = Math.min(0.6, Math.max(0.02, Number(call.ambientVolume) || defaultConversationSettings.call.ambientVolume));
 
   return {
     conversationId,
@@ -405,6 +434,14 @@ export function normalizeConversationSettings(settings: Partial<ConversationSett
       showUserAvatar: appearance.showUserAvatar ?? defaultConversationSettings.appearance.showUserAvatar,
       showOnlyFirstAvatarInReply: appearance.showOnlyFirstAvatarInReply ?? defaultConversationSettings.appearance.showOnlyFirstAvatarInReply,
       hideVoomNarration: true
+    },
+    call: {
+      ...(callRingtone ? { ringtone: callRingtone } : {}),
+      backgroundImage: callBackgroundImage,
+      backgroundImages: [...new Set(callBackgroundImages)],
+      ...(callAmbientSound ? { ambientSound: callAmbientSound } : {}),
+      ambientEnabled: Boolean(call.ambientEnabled ?? defaultConversationSettings.call.ambientEnabled),
+      ambientVolume
     },
     narrationModeEnabled: isLegacySettings ? defaultConversationSettings.narrationModeEnabled : settings?.narrationModeEnabled ?? defaultConversationSettings.narrationModeEnabled,
     autoGenerateVoom: settings?.autoGenerateVoom ?? defaultConversationSettings.autoGenerateVoom,

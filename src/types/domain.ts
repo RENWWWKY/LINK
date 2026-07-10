@@ -254,6 +254,15 @@ export interface ConversationProactiveReplySettings {
   lastTriggeredAt: number;
 }
 
+export interface ConversationCallSettings {
+  ringtone?: RingtoneAsset;
+  backgroundImage: string;
+  backgroundImages: string[];
+  ambientSound?: RingtoneAsset;
+  ambientEnabled: boolean;
+  ambientVolume: number;
+}
+
 export type OfflineParagraphMode = 'long' | 'short' | 'mixed';
 export type OfflinePerspective = 'omniscient-third' | 'character-third' | 'character-second' | 'user-first' | 'user-second';
 export type OfflineInterruptionMode = 'advance' | 'strict';
@@ -290,6 +299,7 @@ export interface ConversationSettings {
   memory: ChatMemorySettings;
   modelOverrides: ChatModelOverrides;
   appearance: ChatAppearanceSettings;
+  call: ConversationCallSettings;
   narrationModeEnabled: boolean;
   autoGenerateVoom: boolean;
   voomFrequency: VoomFrequency;
@@ -530,6 +540,23 @@ export interface ChatOfflineInvitationAttachment {
   startedAt?: number;
 }
 
+export type ChatCallMode = 'voice' | 'video';
+
+export type ChatCallDirection = 'incoming' | 'outgoing';
+
+export type ChatCallStatus = 'ringing' | 'accepted' | 'rejected' | 'missed' | 'busy' | 'cancelled' | 'ended' | 'failed';
+
+export interface ChatCallAttachment {
+  callId: string;
+  mode: ChatCallMode;
+  direction: ChatCallDirection;
+  status: ChatCallStatus;
+  startedAt: number;
+  connectedAt?: number;
+  endedAt?: number;
+  duration?: number;
+}
+
 export interface ChatMessageQuote {
   messageId: string;
   sender: 'user' | 'char' | 'system';
@@ -543,6 +570,7 @@ export interface ChatMessageQuote {
   musicListenInvite?: ChatMusicListenInviteAttachment;
   theaterLink?: ChatSmallTheaterLinkAttachment;
   offlineInvitation?: ChatOfflineInvitationAttachment;
+  call?: ChatCallAttachment;
 }
 
 export interface ChatMessage {
@@ -565,6 +593,10 @@ export interface ChatMessage {
   musicListenInvite?: ChatMusicListenInviteAttachment;
   theaterLink?: ChatSmallTheaterLinkAttachment;
   offlineInvitation?: ChatOfflineInvitationAttachment;
+  call?: ChatCallAttachment;
+  callId?: string;
+  callMode?: ChatCallMode;
+  contextOnly?: boolean;
   quote?: ChatMessageQuote;
   replyBatchId?: string;
   replyVariantGroupId?: string;
@@ -575,7 +607,7 @@ export interface ChatMessage {
   editedAt?: number;
 }
 
-export type FavoriteMessageKind = 'text' | 'image' | 'sticker' | 'voice' | 'location' | 'transfer' | 'musicListenInvite' | 'theaterLink' | 'offlineInvitation' | 'narration';
+export type FavoriteMessageKind = 'text' | 'image' | 'sticker' | 'voice' | 'location' | 'transfer' | 'musicListenInvite' | 'theaterLink' | 'offlineInvitation' | 'call' | 'narration';
 
 export interface FavoriteMessageRecord {
   id: string;

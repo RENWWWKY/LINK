@@ -40,6 +40,7 @@
           :can-quote="canQuoteMessage(entry.message)"
           @apply-image="applyChatImageCandidate"
           @accept-music-listen-invite="acceptMusicListenInvite(entry.message)"
+          @accept-call="acceptCallMessage(entry.message)"
           @accept-offline-invitation="acceptOfflineInvitation(entry.message)"
           @accept-transfer="respondToTransfer(entry.message.id, 'accepted')"
           @busy-action="store.showConfigAlert"
@@ -50,6 +51,7 @@
           @quote-message="quoteMessage"
           @regenerate-image="regenerateChatImage"
           @reject-music-listen-invite="rejectMusicListenInvite(entry.message)"
+          @reject-call="rejectCallMessage(entry.message)"
           @reject-offline-invitation="rejectOfflineInvitation(entry.message)"
           @reject-transfer="respondToTransfer(entry.message.id, 'rejected')"
           @toggle-select="toggleMessageSelection(entry.message)"
@@ -94,6 +96,124 @@
       @send="sendBubble"
       @send-sticker="sendStickerSuggestion"
     />
+
+    <section v-if="activeCall && !callMinimized" class="call-screen" :class="[`call-screen--${activeCall.mode}`, `call-screen--${activeCall.status}`]" :style="callScreenStyle" aria-live="polite">
+      <div class="call-visual-layer">
+        <div class="call-topbar">
+          <span>{{ callModeLabel }}</span>
+          <span class="call-topbar-actions">
+            <button v-if="activeCall.status !== 'ended'" type="button" aria-label="最小化通话" @click="minimizeActiveCall">
+              <Minimize :size="18" />
+            </button>
+            <button v-if="activeCall.status === 'ended'" type="button" aria-label="关闭通话" @click="closeEndedCall">
+              <X :size="18" />
+            </button>
+          </span>
+        </div>
+
+        <section v-if="activeCall.mode === 'video'" class="call-video-stage" :class="[callExpressionClass, { speaking: callCharacterSpeaking, active: activeCall.status === 'active' }]" aria-label="角色视频画面">
+          <button class="call-video-character" type="button" :aria-label="`查看${callPeerName}主页`" @click="openCharacterProfile">
+            <img :src="character.avatar" :alt="callPeerName" />
+            <span class="call-video-halo" aria-hidden="true"></span>
+            <span class="call-video-mouth" aria-hidden="true"></span>
+          </button>
+          <div class="call-video-copy">
+            <h2>{{ callPeerName }}</h2>
+            <p>{{ callPrimaryStatus }}</p>
+            <span>{{ activeCallDurationLabel }}</span>
+          </div>
+        </section>
+
+        <section v-else class="call-profile" :class="{ active: activeCall.status === 'active' }">
+          <button class="call-avatar-wrap" type="button" :aria-label="`查看${callPeerName}主页`" @click="openCharacterProfile">
+            <img :src="character.avatar" :alt="callPeerName" />
+            <span class="call-ring" aria-hidden="true"></span>
+          </button>
+          <h2>{{ callPeerName }}</h2>
+          <p>{{ callPrimaryStatus }}</p>
+          <span>{{ activeCallDurationLabel }}</span>
+        </section>
+
+        <section v-if="activeCall.mode === 'video'" class="call-self-preview" :class="{ off: !activeCall.cameraEnabled }" aria-label="我的视频">
+          <video v-if="activeCall.cameraEnabled && localCameraActive" ref="localCameraVideoRef" autoplay muted playsinline></video>
+          <img v-else-if="conversationUser?.avatar" :src="conversationUser.avatar" alt="" />
+          <VideoOff v-else :size="18" />
+          <span>{{ callCameraStatusLabel }}</span>
+        </section>
+
+        <section v-if="callTranscriptMessages.length || callReplyWaiting" ref="callSubtitleListRef" class="call-subtitles" aria-label="通话字幕">
+          <article v-for="message in callTranscriptMessages" :key="message.id" :class="['call-subtitle', message.sender]">
+            <span>{{ callMessageText(message) }}</span>
+          </article>
+          <article v-if="callReplyWaiting" class="call-subtitle char call-subtitle-waiting" aria-label="正在等待角色回复">
+            <span class="call-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          </article>
+        </section>
+
+        <form v-if="activeCall.status === 'active'" class="call-input" :class="{ active: showCallInputActions }" @submit.prevent="sendCallInput">
+          <input v-model="callInputDraft" :disabled="callInputDisabled" maxlength="500" :placeholder="callInputPlaceholder" @blur="handleCallInputBlur" @focus="handleCallInputFocus" />
+          <template v-if="showCallInputActions">
+            <button class="call-input-send" type="submit" :disabled="callInputDisabled || !callInputDraft.trim()" aria-label="发送通话消息" @pointerdown.prevent="keepCallInputActions">发送</button>
+            <button class="call-input-reply" type="button" :disabled="callReplyButtonDisabled" @click="submitCallReply" @pointerdown.prevent="keepCallInputActions">回复</button>
+          </template>
+        </form>
+
+        <nav class="call-controls" aria-label="通话控制">
+          <template v-if="activeCall.status === 'incoming-ringing'">
+            <button class="call-control-button call-control-danger" type="button" aria-label="拒绝通话" @click="rejectIncomingCall">
+              <PhoneOff :size="22" />
+              <span>拒绝</span>
+            </button>
+            <button class="call-control-button call-control-accept" type="button" aria-label="接听通话" @click="acceptIncomingCall">
+              <Phone :size="22" />
+              <span>接听</span>
+            </button>
+          </template>
+          <template v-else>
+            <button class="call-control-button" type="button" :aria-pressed="activeCall.muted" aria-label="静音" @click="toggleCallMute">
+              <MicOff v-if="activeCall.muted" :size="20" />
+              <Mic v-else :size="20" />
+            </button>
+            <button v-if="activeCall.mode === 'video'" class="call-control-button" type="button" :aria-pressed="activeCall.cameraEnabled" aria-label="摄像头" @click="toggleCallCamera">
+              <Video v-if="activeCall.cameraEnabled" :size="20" />
+              <VideoOff v-else :size="20" />
+            </button>
+            <button class="call-control-button" type="button" :aria-pressed="activeCall.speakerEnabled" aria-label="扬声器" @click="toggleCallSpeaker">
+              <Volume2 v-if="activeCall.speakerEnabled" :size="20" />
+              <VolumeX v-else :size="20" />
+            </button>
+            <button class="call-control-button call-control-danger" type="button" aria-label="挂断" @click="handleCallHangup">
+              <PhoneOff :size="22" />
+            </button>
+          </template>
+        </nav>
+      </div>
+    </section>
+
+    <section
+      v-if="activeCall && callMinimized"
+      class="call-floating-window"
+      :class="[`call-floating-window--${activeCall.mode}`, `call-floating-window--${activeCall.status}`]"
+      :style="callFloatingStyle"
+      aria-label="通话悬浮窗"
+      role="button"
+      tabindex="0"
+      @click="restoreCallFromFloat"
+      @keydown.enter.prevent="restoreCallFromFloat"
+      @keydown.space.prevent="restoreCallFromFloat"
+      @pointercancel="endCallFloatDrag"
+      @pointerdown="startCallFloatDrag"
+      @pointermove="moveCallFloat"
+      @pointerup="endCallFloatDrag"
+    >
+      <span class="call-floating-icon" aria-hidden="true">
+        <img :src="character.avatar" :alt="callPeerName" draggable="false" />
+      </span>
+      <span class="call-floating-copy">
+        <strong>{{ callPeerName }}</strong>
+        <small>{{ callFloatingSubtitle }}</small>
+      </span>
+    </section>
 
     <input ref="localImageInputRef" class="hidden-file-input" type="file" accept="image/*" @change="sendLocalImageFromInput" />
 
@@ -205,6 +325,12 @@
         </button>
         <button type="button" :disabled="chatActionLocked" @click="openMusicListenInvitePanel">
           <span>邀请一起听</span>
+        </button>
+        <button type="button" :disabled="chatActionLocked" @click="startOutgoingCall('voice')">
+          <span>语音通话</span>
+        </button>
+        <button type="button" :disabled="chatActionLocked" @click="startOutgoingCall('video')">
+          <span>视频通话</span>
         </button>
         <button type="button" @click="openModelSwitch">
           <span>模型切换</span>
@@ -541,7 +667,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { X } from 'lucide-vue-next';
+import { Mic, MicOff, Minimize, Phone, PhoneOff, Video, VideoOff, Volume2, VolumeX, X } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
 import ChatHeader from '@/components/chat/ChatHeader.vue';
 import ChatModelSwitchPanel from '@/components/chat/ChatModelSwitchPanel.vue';
@@ -550,9 +676,9 @@ import MessageBubble from '@/components/chat/MessageBubble.vue';
 import MessageComposer from '@/components/chat/MessageComposer.vue';
 import UserProfileSheet from '@/components/chat/UserProfileSheet.vue';
 import StickerLibraryModal from '@/components/stickers/StickerLibraryModal.vue';
-import { useAppStore } from '@/stores/appStore';
+import { useAppStore, type AppActiveCallState } from '@/stores/appStore';
 import { useMusicPlayerStore } from '@/stores/musicPlayerStore';
-import type { CharacterProfile, ChatImageAttachment, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatTransferStatus, ChatVoiceAttachment, Sticker, UserProfile } from '@/types/domain';
+import type { CharacterProfile, ChatCallMode, ChatCallStatus, ChatImageAttachment, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatTransferStatus, ChatVoiceAttachment, Sticker, UserProfile } from '@/types/domain';
 import { getCharacterDisplayName } from '@/utils/character';
 import { readChatImageFile } from '@/utils/imageFile';
 import { useKeyboardScrollGuard } from '@/utils/keyboardScrollGuard';
@@ -561,6 +687,7 @@ import { getSelectedImageModelOption } from '@/utils/settings';
 import { RECOMMENDED_STICKER_LIMIT, recommendStickers } from '@/utils/stickerRecommendations';
 import { formatChatTimeDivider, shouldShowChatTimeDivider } from '@/utils/time';
 import { isVoomNarrationMessage, mergeVoomLikeMessages } from '@/utils/voomMessages';
+import { createId } from '@/utils/id';
 
 type BrowserSpeechRecognitionAlternative = {
   transcript: string;
@@ -616,8 +743,26 @@ type OnlineMessageEntry = {
   timeLabel: string;
 };
 
+type ActiveCallState = Omit<AppActiveCallState, 'conversationId' | 'peerName' | 'avatar' | 'subtitle' | 'minimized' | 'floatPosition' | 'updatedAt'>;
+
+type QueuedCallReply = {
+  callId: string;
+  mode: ChatCallMode;
+  instruction: string;
+};
+
+type CallFloatDragState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  originX: number;
+  originY: number;
+  moved: boolean;
+};
+
 const voiceTranscriptLimit = 500;
 const composerDraftStoragePrefix = 'link.chat.composerDraft.';
+const defaultCallFloatPosition = { x: 16, y: 92 };
 const composerDrafts = new Map<string, string>();
 
 function composerDraftKey(conversationId: string) {
@@ -677,6 +822,8 @@ const regeneratingVoiceMessageIds = ref<string[]>([]);
 const messageListRef = ref<HTMLElement | null>(null);
 const composerRef = ref<MessageComposerExpose | null>(null);
 const localImageInputRef = ref<HTMLInputElement | null>(null);
+const callSubtitleListRef = ref<HTMLElement | null>(null);
+const localCameraVideoRef = ref<HTMLVideoElement | null>(null);
 const activeMessage = ref<ChatMessage | null>(null);
 const selectionMode = ref(false);
 const selectedMessageIds = ref<string[]>([]);
@@ -715,11 +862,78 @@ const recordingStartedAt = ref(0);
 const recordingElapsed = ref(0);
 const recognizingVoice = ref(false);
 const voiceRecognitionNotice = ref('');
+const activeCall = computed<ActiveCallState | null>({
+  get() {
+    const call = store.activeCall;
+    if (!call || call.conversationId !== props.id) return null;
+    return {
+      callId: call.callId,
+      eventMessageId: call.eventMessageId,
+      mode: call.mode,
+      direction: call.direction,
+      status: call.status,
+      startedAt: call.startedAt,
+      connectedAt: call.connectedAt,
+      endedAt: call.endedAt,
+      muted: call.muted,
+      cameraEnabled: call.cameraEnabled,
+      speakerEnabled: call.speakerEnabled
+    };
+  },
+  set(call) {
+    if (!call) {
+      store.clearActiveCall(props.id);
+      return;
+    }
+    store.setActiveCall({
+      ...call,
+      conversationId: props.id,
+      minimized: callMinimized.value,
+      floatPosition: callFloatPosition.value,
+      peerName: callPeerName.value,
+      avatar: character.value?.avatar || '',
+      subtitle: callFloatingSubtitle.value || callStatusText.value || '',
+    });
+  }
+});
+const callMinimized = computed({
+  get: () => store.activeCall?.conversationId === props.id ? store.activeCall.minimized : false,
+  set: (minimized: boolean) => store.patchActiveCall(props.id, { minimized })
+});
+const callInputDraft = ref('');
+const callInputFocused = ref(false);
+const callElapsed = ref(0);
+const callStatusText = ref('');
+const callBusy = ref(false);
+const callReplyTextPending = ref(false);
+const callReplyPendingCallId = ref('');
+const callReplyPendingCharCount = ref(0);
+const callFloatPosition = computed({
+  get: () => store.activeCall?.conversationId === props.id ? store.activeCall.floatPosition : defaultCallFloatPosition,
+  set: (position: { x: number; y: number }) => store.patchActiveCall(props.id, { floatPosition: position })
+});
+const callSpeechListening = ref(false);
+const callSpeechNotice = ref('');
+const callSpeechInterimText = ref('');
+const localCameraActive = ref(false);
+const localCameraError = ref('');
 let voiceRecorder: MediaRecorder | null = null;
 let voiceStream: MediaStream | null = null;
 let voiceChunks: Blob[] = [];
 let voiceRecognition: BrowserSpeechRecognition | null = null;
 let voiceTimer: number | undefined;
+let callTimer: number | undefined;
+let callAudio: HTMLAudioElement | null = null;
+let callRingtoneAudio: HTMLAudioElement | null = null;
+let callAmbientAudio: HTMLAudioElement | null = null;
+let localCameraStream: MediaStream | null = null;
+let callRecognition: BrowserSpeechRecognition | null = null;
+let callPlaybackRunId = 0;
+let callFloatDrag: CallFloatDragState | null = null;
+let suppressCallFloatClick = false;
+let callInputBlurTimer: number | undefined;
+let callSpeechFlushTimer: number | undefined;
+const callReplyQueue = ref<QueuedCallReply[]>([]);
 let proactiveReplyTimer: number | undefined;
 let bottomRestoreQueued = false;
 let bottomRestoreTimeouts: number[] = [];
@@ -728,6 +942,9 @@ let voiceRecognitionStartText = '';
 let voiceRecognitionFinalText = '';
 let voiceRecognitionStopping = false;
 let voiceRecognitionRunId = 0;
+let callSpeechFinalText = '';
+let callRecognitionStopping = false;
+let callRecognitionRunId = 0;
 
 const initialMessageLimit = 60;
 const messageLoadStep = 30;
@@ -762,7 +979,7 @@ const conversationUser = computed(() => {
 const chatSettings = computed(() => store.settingsForConversation(props.id));
 const allOnlineMessages = computed(() => {
   const messages = store.messagesForConversation(props.id).filter((message) => message.mode === 'online');
-  const displayMessages = messages.filter((message) => !isVoomNarrationMessage(message));
+  const displayMessages = messages.filter((message) => !isVoomNarrationMessage(message) && !(message.callId && !message.call));
   return mergeVoomLikeMessages(displayMessages);
 });
 const visibleOnlineStartIndex = computed(() => Math.max(0, allOnlineMessages.value.length - visibleMessageLimit.value));
@@ -780,7 +997,14 @@ function shouldHideAvatar(index: number) {
   if (!chatSettings.value.appearance.showOnlyFirstAvatarInReply) return false;
   const message = onlineMessages.value[index];
   const previousMessage = onlineMessages.value[index - 1];
-  return Boolean(message && previousMessage && message.sender !== 'system' && message.sender === previousMessage.sender);
+  const sender = message ? getMessageVisualSender(message) : 'system';
+  const previousSender = previousMessage ? getMessageVisualSender(previousMessage) : 'system';
+  return Boolean(message && previousMessage && sender !== 'system' && sender === previousSender);
+}
+
+function getMessageVisualSender(message: ChatMessage): ChatMessage['sender'] {
+  if (!message.call) return message.sender;
+  return message.call.direction === 'incoming' ? 'char' : 'user';
 }
 
 const chatSurfaceStyle = computed(() => ({
@@ -800,7 +1024,7 @@ const activeMessageIsSynthetic = computed(() => Boolean(activeMessage.value?.id.
 const activeMessageTransferIsReceipt = computed(() => Boolean(activeMessage.value?.transfer?.responseToMessageId));
 const canRecallActiveMessage = computed(() => Boolean(activeMessage.value && activeMessage.value.sender === 'user' && !activeMessageIsSynthetic.value));
 const canQuoteActiveMessage = computed(() => Boolean(activeMessage.value && canQuoteMessage(activeMessage.value)));
-const canEditActiveMessage = computed(() => Boolean(activeMessage.value && !activeMessageIsSynthetic.value && !activeMessageTransferIsReceipt.value && !activeMessage.value.musicListenInvite && !activeMessage.value.theaterLink));
+const canEditActiveMessage = computed(() => Boolean(activeMessage.value && !activeMessageIsSynthetic.value && !activeMessageTransferIsReceipt.value && !activeMessage.value.musicListenInvite && !activeMessage.value.theaterLink && !activeMessage.value.call));
 const canFavoriteActiveMessage = computed(() => Boolean(activeMessage.value && !activeMessageIsSynthetic.value && store.canFavoriteMessage(activeMessage.value)));
 const isActiveMessageFavorited = computed(() => Boolean(activeMessage.value && store.isMessageFavorited(activeMessage.value.id)));
 const favoriteActionLabel = computed(() => {
@@ -845,6 +1069,90 @@ const activeListenTrackLabel = computed(() => {
   return `${track.name}-${track.artists.join('/') || '未知歌手'}`;
 });
 const chatActionLocked = computed(() => currentConversationReplying.value);
+const pendingIncomingCallMessage = computed(() => [...store.messagesForConversation(props.id)]
+  .reverse()
+  .find((message) => message.call?.direction === 'incoming' && message.call.status === 'ringing') ?? null);
+const callTranscriptMessages = computed(() => {
+  const callId = activeCall.value?.callId;
+  if (!callId) return [];
+  return store.messagesForConversation(props.id)
+    .filter((message) => message.callId === callId && !message.call && !message.contextOnly && (message.sender === 'user' || message.sender === 'char'));
+});
+const latestCallTranscriptMessage = computed(() => callTranscriptMessages.value.at(-1) ?? null);
+const latestCharacterCallMessage = computed(() => [...callTranscriptMessages.value].reverse().find((message) => message.sender === 'char') ?? null);
+const callPeerName = computed(() => characterDisplayName.value);
+const callModeLabel = computed(() => activeCall.value?.mode === 'video' ? '视频通话' : '语音通话');
+const callPrimaryStatus = computed(() => {
+  const call = activeCall.value;
+  if (!call) return '';
+  if (call.status === 'incoming-ringing') return `${callPeerName.value} 来电`;
+  if (call.status === 'outgoing-ringing') return `正在呼叫 ${callPeerName.value}`;
+  if (call.status === 'ended') return callStatusText.value || '通话已结束';
+  return callStatusText.value || `${callModeLabel.value}中`;
+});
+const activeCallDurationLabel = computed(() => {
+  const call = activeCall.value;
+  if (!call) return '';
+  if (call.status !== 'active' && call.status !== 'ended') return callModeLabel.value;
+  const seconds = call.status === 'ended' && call.connectedAt && call.endedAt
+    ? Math.max(0, Math.round((call.endedAt - call.connectedAt) / 1000))
+    : callElapsed.value;
+  const minutes = Math.floor(seconds / 60);
+  const restSeconds = seconds % 60;
+  return `${minutes}:${String(restSeconds).padStart(2, '0')}`;
+});
+const callInputDisabled = computed(() => !activeCall.value || activeCall.value.status !== 'active');
+const callInputPlaceholder = computed(() => {
+  if (callSpeechListening.value && callSpeechInterimText.value) return callSpeechInterimText.value;
+  if (callSpeechListening.value) return '正在听你说话';
+  if (callSpeechNotice.value) return callSpeechNotice.value;
+  return '说点什么';
+});
+const callReplyWaiting = computed(() => Boolean(activeCall.value?.status === 'active' && (callReplyTextPending.value || callReplyQueue.value.length)));
+const callReplyButtonDisabled = computed(() => callInputDisabled.value || callBusy.value || callReplyTextPending.value || currentConversationReplying.value || callReplyQueue.value.length > 0);
+const showCallInputActions = computed(() => callInputFocused.value);
+const callFloatingStyle = computed(() => ({
+  transform: `translate3d(${callFloatPosition.value.x}px, ${callFloatPosition.value.y}px, 0)`
+}));
+const callFloatingSubtitle = computed(() => {
+  const latestMessage = latestCallTranscriptMessage.value;
+  if (latestMessage) return callMessageText(latestMessage);
+  return activeCallDurationLabel.value || callPrimaryStatus.value;
+});
+
+function syncActiveCallMetadata() {
+  if (!activeCall.value) return;
+  store.patchActiveCall(props.id, {
+    peerName: callPeerName.value,
+    avatar: character.value?.avatar || '',
+    subtitle: callFloatingSubtitle.value,
+    minimized: callMinimized.value,
+    floatPosition: callFloatPosition.value
+  });
+}
+
+const callScreenStyle = computed(() => {
+  const image = chatSettings.value.call.backgroundImage || character.value?.avatar || '';
+  return image
+    ? { backgroundImage: `linear-gradient(180deg, rgba(0, 0, 0, 0.44), rgba(0, 0, 0, 0.28) 42%, rgba(0, 0, 0, 0.58)), url(${image})` }
+    : {};
+});
+const callCharacterSpeaking = computed(() => Boolean(activeCall.value?.status === 'active' && callStatusText.value.includes('正在说话')));
+const callExpressionClass = computed(() => {
+  const text = callMessageText(latestCharacterCallMessage.value ?? latestCallTranscriptMessage.value ?? ({ content: '' } as ChatMessage));
+  if (/惊|诶|啊|真的吗|不会吧|怎么会/.test(text)) return 'is-surprised';
+  if (/害羞|脸红|不好意思|想你|喜欢|抱/.test(text)) return 'is-shy';
+  if (/难过|抱歉|对不起|累|痛|哭|低落/.test(text)) return 'is-soft';
+  if (/哈哈|开心|太好了|笑|高兴|喜欢/.test(text)) return 'is-happy';
+  if (/嗯|想想|等等|也许|可能|为什么/.test(text)) return 'is-thinking';
+  return 'is-neutral';
+});
+const callCameraStatusLabel = computed(() => {
+  if (activeCall.value?.mode !== 'video') return '';
+  if (localCameraError.value) return localCameraError.value;
+  if (activeCall.value.cameraEnabled && localCameraActive.value) return 'Camera';
+  return 'Avatar';
+});
 const stickerRecommendationBase = computed(() => {
   if (!chatSettings.value.stickerSuggestionsEnabled) return [];
   return recommendStickers({
@@ -1012,9 +1320,24 @@ function handleMessageListScroll() {
   void loadEarlierMessages();
 }
 
+function resumeActiveCallFromStore() {
+  const call = activeCall.value;
+  if (!call) return;
+  if (!callStatusText.value) {
+    if (call.status === 'active') callStatusText.value = `${call.mode === 'video' ? '视频通话' : '语音通话'}中`;
+    else if (call.status === 'outgoing-ringing') callStatusText.value = '正在等待接听';
+  }
+  if (call.status === 'active' && call.connectedAt) startCallTimer(call.connectedAt);
+  syncCallRingtonePlayback();
+  syncCallAmbientPlayback();
+  if (call.status === 'active' && !call.muted) startCallTranscription();
+  syncActiveCallMetadata();
+}
+
 onMounted(async () => {
   await store.hydrate();
   await syncConversationState(props.id);
+  resumeActiveCallFromStore();
   resetMessageWindow();
   const focusId = focusedMessageId();
   if (focusId) {
@@ -1055,6 +1378,28 @@ watch(() => [allOnlineMessages.value.length, currentConversationReplying.value],
   flush: 'post'
 });
 
+watch(currentConversationReplying, (replying) => {
+  if (!replying) void drainCallReplyQueue();
+});
+
+watch(() => callTranscriptMessages.value.length, () => {
+  if (activeCall.value) void scrollCallTranscriptToBottom();
+  if (!callReplyTextPending.value || !callReplyPendingCallId.value || activeCall.value?.callId !== callReplyPendingCallId.value) return;
+  const charMessageCount = callTranscriptMessages.value.filter((message) => message.sender === 'char').length;
+  if (charMessageCount > callReplyPendingCharCount.value) clearCallReplyTextPending();
+}, { flush: 'post' });
+
+watch([
+  () => activeCall.value?.callId,
+  () => activeCall.value?.status,
+  () => callMinimized.value,
+  () => callFloatPosition.value.x,
+  () => callFloatPosition.value.y,
+  () => callFloatingSubtitle.value,
+  () => callPeerName.value,
+  () => character.value?.avatar
+], syncActiveCallMetadata, { flush: 'post' });
+
 watch(() => composerStickerSuggestions.value.length, () => {
   if (composerFocused.value || isMessageListNearBottom()) queueMessagesToBottomAfterLayout();
 });
@@ -1068,6 +1413,23 @@ watch(showStickers, (open) => {
 
 watch(showVoicePanel, (open) => {
   if (!open) resetVoicePanel();
+});
+
+watch(pendingIncomingCallMessage, (message) => {
+  if (!message || activeCall.value) return;
+  openIncomingCall(message);
+}, { flush: 'post', immediate: true });
+
+watch(() => localCameraVideoRef.value, () => {
+  bindLocalCameraStream();
+});
+
+watch(() => [activeCall.value?.status, activeCall.value?.callId, chatSettings.value.call.ringtone?.url] as const, () => {
+  syncCallRingtonePlayback();
+});
+
+watch(() => [activeCall.value?.status, activeCall.value?.callId, chatSettings.value.call.ambientSound?.url, chatSettings.value.call.ambientEnabled, chatSettings.value.call.ambientVolume] as const, () => {
+  syncCallAmbientPlayback();
 });
 
 async function sendBubble(content: string) {
@@ -1295,6 +1657,697 @@ async function sendNarrationMessage() {
   narrationDraft.value = '';
   showNarrationPanel.value = false;
   await scrollMessagesToBottom();
+}
+
+function clearCallTimer() {
+  if (callTimer === undefined) return;
+  window.clearInterval(callTimer);
+  callTimer = undefined;
+}
+
+function startCallTimer(connectedAt = Date.now()) {
+  clearCallTimer();
+  callElapsed.value = Math.max(0, Math.floor((Date.now() - connectedAt) / 1000));
+  callTimer = window.setInterval(() => {
+    callElapsed.value = Math.max(0, Math.floor((Date.now() - connectedAt) / 1000));
+  }, 1000);
+}
+
+function stopCallAudio() {
+  callPlaybackRunId += 1;
+  if (!callAudio) return;
+  callAudio.pause();
+  callAudio.src = '';
+  callAudio = null;
+}
+
+function stopLoopingAudio(audio: HTMLAudioElement | null) {
+  if (!audio) return;
+  audio.pause();
+  audio.src = '';
+}
+
+function stopCallRingtone() {
+  stopLoopingAudio(callRingtoneAudio);
+  callRingtoneAudio = null;
+}
+
+function stopCallAmbient() {
+  stopLoopingAudio(callAmbientAudio);
+  callAmbientAudio = null;
+}
+
+function playLoopingAudio(url: string, currentAudio: HTMLAudioElement | null, volume: number) {
+  if (!url) return null;
+  const audio = currentAudio ?? new Audio();
+  audio.loop = true;
+  audio.preload = 'auto';
+  audio.setAttribute('playsinline', 'true');
+  audio.volume = Math.min(1, Math.max(0, volume));
+  audio.muted = false;
+  if (audio.getAttribute('src') !== url) {
+    audio.src = url;
+    audio.load();
+  }
+  void audio.play().catch(() => undefined);
+  return audio;
+}
+
+function syncCallRingtonePlayback() {
+  const call = activeCall.value;
+  const shouldPlay = Boolean(call && (call.status === 'incoming-ringing' || call.status === 'outgoing-ringing'));
+  const ringtoneUrl = chatSettings.value.call.ringtone?.url.trim() || '';
+  if (!shouldPlay || !ringtoneUrl) {
+    stopCallRingtone();
+    return;
+  }
+  callRingtoneAudio = playLoopingAudio(ringtoneUrl, callRingtoneAudio, 0.9);
+}
+
+function setCallAmbientDucked(ducked: boolean) {
+  if (!callAmbientAudio) return;
+  const baseVolume = chatSettings.value.call.ambientVolume;
+  callAmbientAudio.volume = Math.min(0.6, Math.max(0.02, baseVolume)) * (ducked ? 0.35 : 1);
+}
+
+function syncCallAmbientPlayback() {
+  const call = activeCall.value;
+  const callSettings = chatSettings.value.call;
+  const shouldPlay = Boolean(call?.status === 'active' && callSettings.ambientEnabled && callSettings.ambientSound?.url);
+  if (!shouldPlay || !callSettings.ambientSound?.url) {
+    stopCallAmbient();
+    return;
+  }
+  callAmbientAudio = playLoopingAudio(callSettings.ambientSound.url, callAmbientAudio, callSettings.ambientVolume);
+}
+
+function bindLocalCameraStream() {
+  const video = localCameraVideoRef.value;
+  if (!video || !localCameraStream) return;
+  if (video.srcObject !== localCameraStream) video.srcObject = localCameraStream;
+  void video.play().catch(() => undefined);
+}
+
+async function startLocalCamera() {
+  if (localCameraStream) {
+    bindLocalCameraStream();
+    localCameraActive.value = true;
+    localCameraError.value = '';
+    return true;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    localCameraError.value = '摄像头不可用';
+    return false;
+  }
+  try {
+    localCameraError.value = '';
+    localCameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+    localCameraActive.value = true;
+    bindLocalCameraStream();
+    return true;
+  } catch (error) {
+    localCameraActive.value = false;
+    localCameraError.value = error instanceof Error && error.name === 'NotAllowedError' ? '未授权摄像头' : '摄像头开启失败';
+    return false;
+  }
+}
+
+function stopLocalCamera() {
+  localCameraStream?.getTracks().forEach((track) => track.stop());
+  localCameraStream = null;
+  localCameraActive.value = false;
+  const video = localCameraVideoRef.value;
+  if (video) video.srcObject = null;
+}
+
+function captureLocalCameraFrame() {
+  const video = localCameraVideoRef.value;
+  if (!video || !localCameraStream || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return null;
+  const maxDimension = 640;
+  const scale = Math.min(1, maxDimension / Math.max(video.videoWidth, video.videoHeight));
+  const width = Math.max(1, Math.round(video.videoWidth * scale));
+  const height = Math.max(1, Math.round(video.videoHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  context.drawImage(video, 0, 0, width, height);
+  return {
+    dataUrl: canvas.toDataURL('image/jpeg', 0.72),
+    width,
+    height
+  };
+}
+
+async function appendCallCameraFrameContext(call: ActiveCallState, cue: string) {
+  if (call.mode !== 'video' || !call.cameraEnabled || !localCameraActive.value) return;
+  const frame = captureLocalCameraFrame();
+  if (!frame) return;
+  await store.appendUserCallImageMessage(props.id, {
+    kind: 'photo',
+    description: '视频通话实时画面',
+    aiHint: cue,
+    url: frame.dataUrl,
+    mimeType: 'image/jpeg',
+    width: frame.width,
+    height: frame.height
+  }, call.callId, call.mode);
+}
+
+function clearCallSpeechFlushTimer() {
+  if (callSpeechFlushTimer === undefined) return;
+  window.clearTimeout(callSpeechFlushTimer);
+  callSpeechFlushTimer = undefined;
+}
+
+function stopCallTranscription(abort = false) {
+  if (abort) callRecognitionRunId += 1;
+  callRecognitionStopping = true;
+  callSpeechListening.value = false;
+  callSpeechInterimText.value = '';
+  const recognition = callRecognition;
+  callRecognition = null;
+  if (!recognition) return;
+  try {
+    if (abort) recognition.abort();
+    else recognition.stop();
+  } catch {}
+}
+
+function scheduleCallSpeechFlush() {
+  clearCallSpeechFlushTimer();
+  callSpeechFlushTimer = window.setTimeout(() => {
+    callSpeechFlushTimer = undefined;
+    void flushCallSpeechFinalText();
+  }, 850);
+}
+
+async function flushCallSpeechFinalText() {
+  const call = activeCall.value;
+  const content = callSpeechFinalText.trim();
+  callSpeechFinalText = '';
+  callSpeechInterimText.value = '';
+  if (!call || call.status !== 'active' || call.muted || !content) return;
+  if (!callInputFocused.value) callInputDraft.value = '';
+  await store.appendUserCallMessage(props.id, content, call.callId, call.mode);
+  await scrollCallTranscriptToBottom();
+  const scene = call.mode === 'video' ? '视频通话' : '语音通话';
+  void requestCallReply(`当前正在${scene}中，用户刚刚直接说：“${content}”。请像真实通话一样用适合朗读的短句回应；可以连续发送多个短句，每个短句会显示成字幕并播放 TTS。不要替用户补充未说出口的动作、位置或心理。`);
+}
+
+function startCallTranscription() {
+  stopCallTranscription(true);
+  callRecognitionRunId += 1;
+  const runId = callRecognitionRunId;
+  callRecognitionStopping = false;
+  callSpeechNotice.value = '';
+  callSpeechFinalText = '';
+
+  const SpeechRecognition = getVoiceRecognitionConstructor();
+  if (!SpeechRecognition) {
+    callSpeechNotice.value = '语音转文字不可用';
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = getVoiceRecognitionLanguage();
+  recognition.maxAlternatives = 1;
+  recognition.onresult = (event) => {
+    if (runId !== callRecognitionRunId) return;
+    let interimText = '';
+    for (let resultIndex = event.resultIndex; resultIndex < event.results.length; resultIndex += 1) {
+      const result = event.results[resultIndex];
+      const transcript = result?.[0]?.transcript.trim() ?? '';
+      if (!transcript) continue;
+      if (result?.isFinal) {
+        callSpeechFinalText = joinVoiceRecognitionParts([callSpeechFinalText, transcript]);
+        scheduleCallSpeechFlush();
+      } else {
+        interimText = joinVoiceRecognitionParts([interimText, transcript]);
+      }
+    }
+    callSpeechInterimText.value = interimText;
+    if (interimText && !callInputFocused.value) callInputDraft.value = interimText.slice(0, voiceTranscriptLimit);
+  };
+  recognition.onerror = (event) => {
+    if (runId !== callRecognitionRunId || callRecognitionStopping) return;
+    callSpeechNotice.value = getVoiceRecognitionErrorText(event.error);
+    if (isFatalVoiceRecognitionError(event.error)) callRecognitionStopping = true;
+  };
+  recognition.onend = () => {
+    if (runId !== callRecognitionRunId) return;
+    callSpeechListening.value = false;
+    const call = activeCall.value;
+    if (!callRecognitionStopping && call?.status === 'active' && !call.muted && callRecognition === recognition) {
+      window.setTimeout(() => {
+        if (runId !== callRecognitionRunId || callRecognitionStopping || activeCall.value?.status !== 'active' || activeCall.value.muted || callRecognition !== recognition) return;
+        try {
+          recognition.start();
+          callSpeechListening.value = true;
+          callSpeechNotice.value = '';
+        } catch {
+          callSpeechNotice.value = '语音转文字暂停';
+        }
+      }, 180);
+      return;
+    }
+    if (callRecognition === recognition) callRecognition = null;
+  };
+  callRecognition = recognition;
+
+  try {
+    recognition.start();
+    callSpeechListening.value = true;
+  } catch {
+    callRecognition = null;
+    callSpeechNotice.value = '语音转文字启动失败';
+  }
+}
+
+function clearCallInputBlurTimer() {
+  if (callInputBlurTimer === undefined) return;
+  window.clearTimeout(callInputBlurTimer);
+  callInputBlurTimer = undefined;
+}
+
+function keepCallInputActions() {
+  clearCallInputBlurTimer();
+  callInputFocused.value = true;
+}
+
+function handleCallInputFocus() {
+  clearCallInputBlurTimer();
+  callInputFocused.value = true;
+}
+
+function handleCallInputBlur() {
+  clearCallInputBlurTimer();
+  callInputBlurTimer = window.setTimeout(() => {
+    callInputFocused.value = false;
+    callInputBlurTimer = undefined;
+  }, 120);
+}
+
+function playCallAudioUrl(audioUrl: string, runId: number) {
+  return new Promise<void>((resolve) => {
+    if (runId !== callPlaybackRunId) return resolve();
+    const audio = new Audio(audioUrl);
+    callAudio = audio;
+    audio.muted = !activeCall.value?.speakerEnabled;
+    audio.onended = () => resolve();
+    audio.onerror = () => resolve();
+    void audio.play().then(() => undefined, () => resolve());
+  });
+}
+
+async function playCallVoiceMessages(newMessages: ChatMessage[]) {
+  const voiceMessages = newMessages.filter((message) => message.sender === 'char' && message.voice?.transcript.trim());
+  if (!voiceMessages.length) return;
+  const runId = ++callPlaybackRunId;
+  for (const message of voiceMessages) {
+    if (!activeCall.value || activeCall.value.status !== 'active' || runId !== callPlaybackRunId) break;
+    try {
+      callStatusText.value = '正在生成语音';
+      const audioUrl = await store.generateMessageVoiceAudio(message.id);
+      callStatusText.value = `${callPeerName.value} 正在说话`;
+      setCallAmbientDucked(true);
+      await playCallAudioUrl(audioUrl, runId);
+    } catch {
+      callStatusText.value = '语音暂不可用';
+    } finally {
+      setCallAmbientDucked(false);
+    }
+  }
+  if (activeCall.value?.status === 'active' && runId === callPlaybackRunId) callStatusText.value = `${callModeLabel.value}中`;
+}
+
+function callMessageText(message: ChatMessage) {
+  return message.voice?.transcript || message.content;
+}
+
+async function scrollCallTranscriptToBottom() {
+  await nextTick();
+  const transcriptList = callSubtitleListRef.value;
+  if (!transcriptList) return;
+  transcriptList.scrollTop = transcriptList.scrollHeight;
+}
+
+function closeActiveCall() {
+  clearCallTimer();
+  stopCallAudio();
+  stopCallRingtone();
+  stopCallAmbient();
+  stopLocalCamera();
+  stopCallTranscription(true);
+  clearCallSpeechFlushTimer();
+  clearCallInputBlurTimer();
+  callReplyQueue.value = [];
+  clearCallReplyTextPending();
+  activeCall.value = null;
+  callMinimized.value = false;
+  callInputDraft.value = '';
+  callInputFocused.value = false;
+  callStatusText.value = '';
+  callElapsed.value = 0;
+  callBusy.value = false;
+  callSpeechNotice.value = '';
+  callSpeechFinalText = '';
+  callSpeechInterimText.value = '';
+  localCameraError.value = '';
+}
+
+function closeEndedCall() {
+  if (activeCall.value?.status !== 'ended') return;
+  closeActiveCall();
+}
+
+function clampCallFloatPosition(x: number, y: number) {
+  if (typeof window === 'undefined') return { x, y };
+  const padding = 8;
+  const floatWidth = 166;
+  const floatHeight = 64;
+  return {
+    x: Math.min(Math.max(padding, x), Math.max(padding, window.innerWidth - floatWidth - padding)),
+    y: Math.min(Math.max(padding + 36, y), Math.max(padding + 36, window.innerHeight - floatHeight - padding))
+  };
+}
+
+function minimizeActiveCall() {
+  if (!activeCall.value) return;
+  callFloatPosition.value = clampCallFloatPosition(callFloatPosition.value.x, callFloatPosition.value.y);
+  callMinimized.value = true;
+}
+
+function restoreCallFromFloat() {
+  if (suppressCallFloatClick) {
+    suppressCallFloatClick = false;
+    return;
+  }
+  callMinimized.value = false;
+  void scrollCallTranscriptToBottom();
+}
+
+function startCallFloatDrag(event: PointerEvent) {
+  if (event.button !== 0) return;
+  const target = event.currentTarget as HTMLElement | null;
+  target?.setPointerCapture?.(event.pointerId);
+  callFloatDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    originX: callFloatPosition.value.x,
+    originY: callFloatPosition.value.y,
+    moved: false
+  };
+}
+
+function moveCallFloat(event: PointerEvent) {
+  const drag = callFloatDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  const deltaX = event.clientX - drag.startX;
+  const deltaY = event.clientY - drag.startY;
+  if (Math.abs(deltaX) + Math.abs(deltaY) > 4) drag.moved = true;
+  callFloatPosition.value = clampCallFloatPosition(drag.originX + deltaX, drag.originY + deltaY);
+}
+
+function endCallFloatDrag(event: PointerEvent) {
+  const drag = callFloatDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  const target = event.currentTarget as HTMLElement | null;
+  target?.releasePointerCapture?.(event.pointerId);
+  suppressCallFloatClick = drag.moved;
+  callFloatDrag = null;
+  if (suppressCallFloatClick) window.setTimeout(() => {
+    suppressCallFloatClick = false;
+  }, 0);
+}
+
+async function requestCallReply(replyInstruction: string, options: { captureCamera?: boolean } = {}) {
+  const call = activeCall.value;
+  if (!call || call.status !== 'active') return;
+  if (options.captureCamera !== false) await appendCallCameraFrameContext(call, replyInstruction);
+  callStatusText.value = `正在等待 ${callPeerName.value} 回复`;
+  callReplyQueue.value.push({
+    callId: call.callId,
+    mode: call.mode,
+    instruction: replyInstruction
+  });
+  void drainCallReplyQueue();
+}
+
+function clearCallReplyTextPending() {
+  callReplyTextPending.value = false;
+  callReplyPendingCallId.value = '';
+  callReplyPendingCharCount.value = 0;
+}
+
+async function drainCallReplyQueue() {
+  if (callBusy.value || currentConversationReplying.value) return;
+  const queuedReply = callReplyQueue.value[0];
+  if (!queuedReply) return;
+  const call = activeCall.value;
+  if (!call || call.status !== 'active') {
+    callReplyQueue.value = [];
+    return;
+  }
+  if (call.callId !== queuedReply.callId) {
+    callReplyQueue.value.shift();
+    void drainCallReplyQueue();
+    return;
+  }
+  callBusy.value = true;
+  callReplyPendingCallId.value = queuedReply.callId;
+  callReplyPendingCharCount.value = store.messagesForConversation(props.id)
+    .filter((message) => message.callId === queuedReply.callId && !message.call && message.sender === 'char')
+    .length;
+  callReplyTextPending.value = true;
+  callReplyQueue.value.shift();
+  const existingMessageIds = new Set(store.messagesForConversation(props.id).map((message) => message.id));
+  try {
+    callStatusText.value = `${callPeerName.value} 正在回复`;
+    const generatedMessages = await store.requestRoleplayReply(props.id, {
+      replyInstruction: queuedReply.instruction,
+      callSession: {
+        callId: queuedReply.callId,
+        mode: queuedReply.mode,
+        forceVoice: true
+      }
+    });
+    clearCallReplyTextPending();
+    const newMessages = (Array.isArray(generatedMessages) ? generatedMessages : store.messagesForConversation(props.id).filter((message) => !existingMessageIds.has(message.id)))
+      .filter((message) => message.callId === queuedReply.callId && message.sender === 'char');
+    await scrollCallTranscriptToBottom();
+    await playCallVoiceMessages(newMessages);
+  } finally {
+    clearCallReplyTextPending();
+    callBusy.value = false;
+    if (callReplyQueue.value.length) void drainCallReplyQueue();
+  }
+}
+
+async function startCallOpeningReply(direction: 'incoming' | 'outgoing') {
+  const call = activeCall.value;
+  if (!call || call.status !== 'active') return;
+  const scene = call.mode === 'video' ? '视频通话' : '语音通话';
+  const instruction = direction === 'incoming'
+    ? `用户刚刚接听了你主动拨来的${scene}。当前正在通话中，请先用适合朗读的短句自然开口，可以连续发送 1-3 个短句；这些句子会作为通话字幕并播放 TTS。`
+    : `你刚刚接听了用户拨来的${scene}。当前正在通话中，请先用适合朗读的短句自然开口，可以连续发送 1-3 个短句；这些句子会作为通话字幕并播放 TTS。`;
+  await requestCallReply(instruction, { captureCamera: false });
+}
+
+async function connectActiveCall(direction: 'incoming' | 'outgoing', options: { requestOpeningReply?: boolean } = {}) {
+  const call = activeCall.value;
+  if (!call) return;
+  const eventMessage = store.messages.find((message) => message.id === call.eventMessageId);
+  const connectedAt = eventMessage?.call?.connectedAt ?? Date.now();
+  if (eventMessage?.call?.status !== 'accepted') await store.updateCallEventMessage(call.eventMessageId, { status: 'accepted', connectedAt });
+  activeCall.value = {
+    ...call,
+    status: 'active',
+    connectedAt
+  };
+  callStatusText.value = '已接通';
+  stopCallRingtone();
+  syncCallAmbientPlayback();
+  startCallTimer(connectedAt);
+  if (!activeCall.value.muted) startCallTranscription();
+  if (options.requestOpeningReply !== false) await startCallOpeningReply(direction);
+}
+
+async function startOutgoingCall(mode: ChatCallMode) {
+  if (chatActionLocked.value || activeCall.value) return;
+  showActionMenu.value = false;
+  const callId = createId('call');
+  const startedAt = Date.now();
+  const callEvent = await store.appendCallEventMessage(props.id, {
+    callId,
+    mode,
+    direction: 'outgoing',
+    status: 'ringing',
+    startedAt
+  });
+  if (!callEvent?.call) return;
+  activeCall.value = {
+    callId,
+    eventMessageId: callEvent.id,
+    mode,
+    direction: 'outgoing',
+    status: 'outgoing-ringing',
+    startedAt,
+    muted: false,
+    cameraEnabled: false,
+    speakerEnabled: true
+  };
+  callStatusText.value = '正在等待接听';
+  syncCallRingtonePlayback();
+  await scrollMessagesToBottom();
+  const scene = mode === 'video' ? '视频通话' : '语音通话';
+  await store.requestRoleplayReply(props.id, {
+    callResponseTargetMessageId: callEvent.id,
+    replyInstruction: `用户刚刚在 LINK 里向你拨打${scene}。这仍然是一轮正常线上聊天回复：你可以像平时一样发送 text、voice、sticker、image、location、transfer 等消息气泡，但必须同时在 messageActions.callResponse 写 accepted、rejected、busy 或 missed 表示你是否接听。不要输出来电理由或拒绝说明字段；只有 accepted 才表示进入通话。如果接听，不要把接通后的通话内容放进普通 messages，通话页会单独承接后续内容。`
+  });
+  if (!activeCall.value || activeCall.value.callId !== callId || activeCall.value.status !== 'outgoing-ringing') return;
+  const latestCall = store.messages.find((message) => message.id === callEvent.id)?.call;
+  if (latestCall?.status === 'accepted') {
+    await connectActiveCall('outgoing');
+    return;
+  }
+  if (latestCall?.status === 'ringing') await store.updateCallEventMessage(callEvent.id, { status: 'missed', endedAt: Date.now() });
+  closeActiveCall();
+}
+
+function openIncomingCall(message: ChatMessage) {
+  const call = message.call;
+  if (!call || activeCall.value) return;
+  clearCallTimer();
+  stopCallAudio();
+  activeCall.value = {
+    callId: call.callId,
+    eventMessageId: message.id,
+    mode: call.mode,
+    direction: 'incoming',
+    status: 'incoming-ringing',
+    startedAt: call.startedAt,
+    muted: false,
+    cameraEnabled: false,
+    speakerEnabled: true
+  };
+  callStatusText.value = '';
+  syncCallRingtonePlayback();
+}
+
+async function acceptIncomingCall() {
+  const call = activeCall.value;
+  if (!call || call.status !== 'incoming-ringing') return;
+  await connectActiveCall('incoming');
+}
+
+async function rejectIncomingCall() {
+  const call = activeCall.value;
+  if (!call || call.status !== 'incoming-ringing') return;
+  await store.updateCallEventMessage(call.eventMessageId, { status: 'rejected', endedAt: Date.now() });
+  closeActiveCall();
+}
+
+async function acceptCallMessage(message: ChatMessage) {
+  if (!message.call || message.call.direction !== 'incoming' || message.call.status !== 'ringing') return;
+  if (!activeCall.value) openIncomingCall(message);
+  if (activeCall.value?.callId !== message.call.callId) return;
+  await acceptIncomingCall();
+}
+
+async function rejectCallMessage(message: ChatMessage) {
+  if (!message.call || message.call.direction !== 'incoming' || message.call.status !== 'ringing') return;
+  if (!activeCall.value) openIncomingCall(message);
+  if (activeCall.value?.callId !== message.call.callId) return;
+  await rejectIncomingCall();
+}
+
+async function finishActiveCall(status: ChatCallStatus = 'ended') {
+  const call = activeCall.value;
+  if (!call) return;
+  if (call.status === 'incoming-ringing') {
+    await rejectIncomingCall();
+    return;
+  }
+  const endedAt = Date.now();
+  const duration = call.connectedAt ? Math.max(1, Math.round((endedAt - call.connectedAt) / 1000)) : undefined;
+  await store.updateCallEventMessage(call.eventMessageId, {
+    status,
+    endedAt,
+    duration
+  });
+  closeActiveCall();
+}
+
+async function handleCallHangup() {
+  const call = activeCall.value;
+  if (!call) return;
+  if (call.status === 'ended') {
+    closeEndedCall();
+    return;
+  }
+  if (call.status === 'outgoing-ringing') {
+    await finishActiveCall('cancelled');
+    return;
+  }
+  await finishActiveCall('ended');
+}
+
+function toggleCallMute() {
+  const call = activeCall.value;
+  if (!call) return;
+  const muted = !call.muted;
+  activeCall.value = { ...call, muted };
+  if (muted) stopCallTranscription();
+  else if (activeCall.value.status === 'active') startCallTranscription();
+}
+
+function toggleCallSpeaker() {
+  const call = activeCall.value;
+  if (!call) return;
+  const speakerEnabled = !call.speakerEnabled;
+  activeCall.value = { ...call, speakerEnabled };
+  if (callAudio) callAudio.muted = !speakerEnabled;
+}
+
+async function toggleCallCamera() {
+  const call = activeCall.value;
+  if (!call || call.mode !== 'video') return;
+  if (call.cameraEnabled) {
+    stopLocalCamera();
+    activeCall.value = { ...call, cameraEnabled: false };
+    return;
+  }
+  activeCall.value = { ...call, cameraEnabled: true };
+  const started = await startLocalCamera();
+  if (!started && activeCall.value?.callId === call.callId) activeCall.value = { ...activeCall.value, cameraEnabled: false };
+}
+
+async function sendCallInput() {
+  const call = activeCall.value;
+  const content = callInputDraft.value.trim();
+  if (!call || callInputDisabled.value || !content) return;
+  callInputDraft.value = '';
+  await store.appendUserCallMessage(props.id, content, call.callId, call.mode);
+  await scrollCallTranscriptToBottom();
+}
+
+async function submitCallReply() {
+  const call = activeCall.value;
+  if (!call || callReplyButtonDisabled.value) return;
+  const content = callInputDraft.value.trim();
+  if (content) {
+    callInputDraft.value = '';
+    await store.appendUserCallMessage(props.id, content, call.callId, call.mode);
+    await scrollCallTranscriptToBottom();
+  }
+  const scene = call.mode === 'video' ? '视频通话' : '语音通话';
+  const userCue = content ? `用户刚在通话里说：“${content}”。` : '用户点击了“回复”，希望你回应当前通话里最近还未回应的内容。';
+  await requestCallReply(`当前正在${scene}中，${userCue}请像真实通话一样用适合朗读的短句回应；如果用户连续说了多条，请合并理解后回复。可以连续发送多个短句；每个短句会显示成字幕并播放 TTS。不要替用户补充未说出口的动作、位置或心理。`);
 }
 
 function getPreferredAudioMimeType() {
@@ -1614,6 +2667,7 @@ function messageActionText(message: ChatMessage) {
   if (message.location) return `[定位] ${[message.location.name, message.location.address, message.location.distance].filter(Boolean).join(' · ')}`;
   if (message.transfer) return `${message.transfer.responseToMessageId ? '[转账回执]' : '[转账]'} ¥${message.transfer.amount} · ${message.transfer.status === 'pending' ? '待处理' : message.transfer.status === 'accepted' ? '已接收' : '已拒绝'}`;
   if (message.theaterLink) return `[网站链接] ${message.theaterLink.title} · ${message.theaterLink.summary} · ${message.theaterLink.url}`;
+  if (message.call) return `[${message.call.mode === 'video' ? '视频通话' : '语音通话'}] ${message.call.status}`;
   return message.content;
 }
 
@@ -1736,7 +2790,9 @@ async function confirmDeleteMessages() {
     cancelDeleteConfirm();
     return;
   }
+  const shouldCloseDeletedActiveCall = Boolean(activeCall.value && ids.includes(activeCall.value.eventMessageId));
   await store.deleteMessages(ids);
+  if (shouldCloseDeletedActiveCall) closeActiveCall();
   clearQuoteIfMessagesRemoved(ids);
   if (pendingDeleteFromSelection.value) cancelSelection();
   cancelDeleteConfirm();
@@ -1985,6 +3041,18 @@ async function enterOffline() {
 onBeforeUnmount(() => {
   writeComposerDraft(props.id, composerText.value);
   abortVoiceRecording();
+  if (activeCall.value) {
+    callMinimized.value = true;
+    syncActiveCallMetadata();
+  }
+  clearCallTimer();
+  stopCallAudio();
+  stopCallRingtone();
+  stopCallAmbient();
+  stopLocalCamera();
+  stopCallTranscription(true);
+  clearCallSpeechFlushTimer();
+  clearCallInputBlurTimer();
   clearQueuedBottomRestores();
   if (proactiveReplyTimer !== undefined) window.clearInterval(proactiveReplyTimer);
 });
@@ -2016,6 +3084,652 @@ onBeforeUnmount(() => {
   -webkit-overflow-scrolling: touch;
   overflow-anchor: none;
   scroll-padding-bottom: calc(8px + var(--keyboard-inset) + var(--sticker-panel-offset, 0px));
+}
+
+.call-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  background: #111111;
+  background-position: center;
+  background-size: cover;
+  color: #ffffff;
+  font-family: var(--app-current-font-family);
+}
+
+.call-screen--video {
+  background: #111111;
+}
+
+.call-visual-layer {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: calc(16px + var(--safe-top)) 18px calc(18px + var(--safe-bottom));
+}
+
+.call-visual-layer::before,
+.call-visual-layer::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+}
+
+.call-visual-layer::before {
+  display: none;
+}
+
+.call-visual-layer::after {
+  inset: 0;
+  background: rgba(0, 0, 0, 0.34);
+}
+
+.call-topbar,
+.call-profile,
+.call-video-stage,
+.call-self-preview,
+.call-subtitles,
+.call-input,
+.call-controls {
+  position: relative;
+  z-index: 1;
+}
+
+.call-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 13px;
+}
+
+.call-topbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.call-topbar button,
+.call-input button,
+.call-control-button {
+  border: 0;
+  color: inherit;
+  font: inherit;
+}
+
+.call-topbar button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.call-profile {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 24px 0 130px;
+  text-align: center;
+}
+
+.call-profile.active {
+  justify-content: flex-start;
+  padding-top: 56px;
+}
+
+.call-avatar-wrap {
+  position: relative;
+  display: grid;
+  width: 116px;
+  height: 116px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.call-avatar-wrap::before {
+  display: none;
+}
+
+.call-avatar-wrap img {
+  position: relative;
+  z-index: 1;
+  width: 96px;
+  height: 96px;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28);
+}
+
+.call-ring {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 50%;
+  animation: call-ring-pulse 1.8s ease-out infinite;
+}
+
+.call-profile h2 {
+  max-width: min(78vw, 360px);
+  margin: 12px 0 5px;
+  overflow: hidden;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-profile p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 14px;
+}
+
+.call-profile > span {
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 13px;
+}
+
+.call-video-stage {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 0;
+  overflow: visible;
+  border-radius: 0;
+  margin: 0 0 96px;
+  padding: 42px 0 18px;
+  isolation: isolate;
+  text-align: center;
+}
+
+.call-video-stage.active {
+  margin-bottom: 18px;
+  padding-top: 54px;
+}
+
+.call-video-character {
+  position: relative;
+  display: grid;
+  width: clamp(132px, 42vw, 176px);
+  aspect-ratio: 1;
+  place-items: center;
+  border: 0;
+  border-radius: 34%;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  padding: 0;
+  transform: none;
+}
+
+.call-video-character img {
+  position: relative;
+  z-index: 2;
+  width: 78%;
+  height: 78%;
+  border: 2px solid rgba(255, 255, 255, 0.76);
+  border-radius: 32%;
+  object-fit: cover;
+  box-shadow: 0 24px 54px rgba(0, 0, 0, 0.34);
+  transition: transform 0.28s ease, filter 0.28s ease;
+}
+
+.call-video-halo {
+  position: absolute;
+  inset: 8%;
+  z-index: 1;
+  border-radius: 36%;
+  background: rgba(255, 255, 255, 0.12);
+  filter: blur(8px);
+}
+
+.call-video-mouth {
+  position: absolute;
+  z-index: 3;
+  bottom: 33%;
+  left: 50%;
+  width: 22px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(40, 20, 28, 0.56);
+  transform: translateX(-50%) scaleY(0.55);
+  opacity: 0.55;
+}
+
+.call-video-stage.speaking .call-video-character img {
+  animation: call-video-speaking 1.08s ease-in-out infinite;
+}
+
+.call-video-stage.speaking .call-video-mouth {
+  animation: call-mouth-speaking 0.42s ease-in-out infinite;
+}
+
+.call-video-stage.is-happy .call-video-character img {
+  filter: brightness(1.08) saturate(1.12);
+}
+
+.call-video-stage.is-shy .call-video-character img {
+  filter: sepia(0.12) saturate(1.14) brightness(1.06);
+  transform: translateY(4px) rotate(-1deg);
+}
+
+.call-video-stage.is-surprised .call-video-character img {
+  transform: scale(1.045);
+}
+
+.call-video-stage.is-soft .call-video-character img {
+  filter: saturate(0.88) brightness(0.96);
+  transform: translateY(6px);
+}
+
+.call-video-stage.is-thinking .call-video-character img {
+  filter: contrast(0.96) saturate(0.96);
+  transform: translateX(-3px);
+}
+
+.call-video-copy {
+  position: static;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  width: min(100%, 280px);
+  min-width: 0;
+  padding: 0 8px;
+  text-align: center;
+}
+
+.call-video-stage.active .call-video-copy {
+  position: static;
+}
+
+.call-video-copy h2,
+.call-video-copy p,
+.call-video-copy span {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-video-copy h2 {
+  max-width: 100%;
+  font-size: 22px;
+  font-weight: 850;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.36);
+}
+
+.call-video-copy p {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.32);
+}
+
+.call-video-copy span {
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 12px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.call-self-preview {
+  position: absolute;
+  top: calc(58px + var(--safe-top));
+  right: 16px;
+  z-index: 2;
+  display: grid;
+  width: 86px;
+  height: 124px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.32);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+}
+
+.call-self-preview img,
+.call-self-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.call-self-preview video {
+  transform: scaleX(-1);
+}
+
+.call-self-preview > span {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.42);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-self-preview.off {
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.call-subtitles {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(34vh, 240px);
+  margin-bottom: 12px;
+  overflow-y: auto;
+  padding: 0 2px;
+}
+
+.call-subtitle {
+  display: flex;
+}
+
+.call-subtitle.user {
+  justify-content: flex-end;
+}
+
+.call-subtitle span {
+  max-width: min(78vw, 360px);
+  padding: 8px 11px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.17);
+  color: #ffffff;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.call-subtitle.user span {
+  background: #ffffff;
+  color: #202329;
+}
+
+.call-subtitle-waiting span {
+  display: inline-flex;
+  align-items: center;
+  min-width: 44px;
+  min-height: 34px;
+}
+
+.call-typing-dots {
+  display: inline-flex;
+  gap: 4px;
+  padding: 0;
+  background: transparent;
+}
+
+.call-typing-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.78);
+  animation: typing 0.9s infinite ease-in-out;
+}
+
+.call-typing-dots i:nth-child(2) {
+  animation-delay: 0.12s;
+}
+
+.call-typing-dots i:nth-child(3) {
+  animation-delay: 0.24s;
+}
+
+.call-input {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.call-input.active {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.call-input input {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  height: 42px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  font: inherit;
+  outline: none;
+  padding: 0 15px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.call-input input::placeholder {
+  color: rgba(255, 255, 255, 0.52);
+}
+
+.call-input button {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-width: 0;
+  height: 42px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(238, 241, 244, 0.92);
+  color: #17191d;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 820;
+  letter-spacing: 0;
+  box-shadow: none;
+}
+
+.call-input button:disabled {
+  opacity: 0.48;
+}
+
+.call-input-send {
+  width: 48px;
+}
+
+.call-input-reply {
+  width: 48px;
+}
+
+.call-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 58px;
+}
+
+.call-control-button {
+  display: grid;
+  min-width: 56px;
+  height: 56px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.call-control-button[aria-pressed="true"] {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.call-control-button span {
+  display: none;
+}
+
+.call-control-danger {
+  background: #ef4444;
+}
+
+.call-control-accept {
+  background: #22c55e;
+}
+
+.call-screen--incoming-ringing .call-controls {
+  gap: 52px;
+}
+
+.call-screen--incoming-ringing .call-control-button {
+  width: 64px;
+  height: 64px;
+}
+
+.call-floating-window {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 82;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 166px;
+  min-height: 64px;
+  overflow: hidden;
+  padding: 7px 10px 7px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.54);
+  border-radius: 20px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(255, 246, 249, 0.78) 46%, rgba(243, 250, 255, 0.84)),
+    rgba(255, 255, 255, 0.82);
+  color: #2c2630;
+  box-shadow: 0 16px 36px rgba(30, 24, 36, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-backdrop-filter: blur(20px) saturate(1.08);
+  backdrop-filter: blur(20px) saturate(1.08);
+}
+
+.call-floating-window--video {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(247, 245, 255, 0.82) 45%, rgba(241, 252, 255, 0.84)),
+    rgba(255, 255, 255, 0.82);
+}
+
+.call-floating-window:active {
+  cursor: grabbing;
+}
+
+.call-floating-window:focus-visible {
+  outline: 2px solid rgba(255, 143, 183, 0.72);
+  outline-offset: 3px;
+}
+
+.call-floating-icon {
+  position: relative;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  margin-left: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 10px 20px rgba(54, 42, 64, 0.12), inset 0 0 0 4px rgba(255, 255, 255, 0.35);
+}
+
+.call-floating-icon img {
+  width: 36px;
+  height: 36px;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.call-floating-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.call-floating-copy strong,
+.call-floating-copy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-floating-copy strong {
+  color: #2a2430;
+  font-size: 12px;
+  font-weight: 920;
+  line-height: 1.12;
+}
+
+.call-floating-copy small {
+  color: #756a77;
+  font-size: 9.5px;
+  font-weight: 720;
+  line-height: 1.2;
+}
+
+@keyframes call-ring-pulse {
+  0% {
+    opacity: 0.8;
+    transform: scale(0.82);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.28);
+  }
+}
+
+@keyframes call-video-speaking {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-3px) scale(1.018);
+  }
+}
+
+@keyframes call-mouth-speaking {
+  0%, 100% {
+    transform: translateX(-50%) scaleY(0.45);
+  }
+  50% {
+    transform: translateX(-50%) scaleY(1.55);
+  }
 }
 
 .listen-status-strip {

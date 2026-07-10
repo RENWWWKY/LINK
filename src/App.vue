@@ -9,11 +9,35 @@
     </section>
   </AppModal>
   <audio ref="musicAudioRef" class="global-music-audio" preload="metadata"></audio>
+  <section
+    v-if="showGlobalCallFloating"
+    class="global-call-floating"
+    :class="`global-call-floating--${globalCall?.mode ?? 'voice'}`"
+    :style="globalCallFloatingStyle"
+    role="button"
+    tabindex="0"
+    aria-label="返回通话"
+    @click="openGlobalCallFloating"
+    @keydown.enter.prevent="openGlobalCallFloating"
+    @keydown.space.prevent="openGlobalCallFloating"
+    @pointercancel="endGlobalCallFloatDrag"
+    @pointerdown="startGlobalCallFloatDrag"
+    @pointermove="moveGlobalCallFloat"
+    @pointerup="endGlobalCallFloatDrag"
+  >
+    <span class="global-call-floating-avatar" aria-hidden="true">
+      <img v-if="globalCall?.avatar" :src="globalCall.avatar" alt="" draggable="false" />
+    </span>
+    <span class="global-call-floating-copy">
+      <strong>{{ globalCall?.peerName || '通话中' }}</strong>
+      <small>{{ globalCallSubtitle }}</small>
+    </span>
+  </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import MobileShell from '@/components/layout/MobileShell.vue';
 import AppModal from '@/components/common/AppModal.vue';
 import FirstRunDisclaimer from '@/components/common/FirstRunDisclaimer.vue';
@@ -27,9 +51,12 @@ import { defaultOfflineThemeCss, defaultOfflineThemePresetId, defaultOnlineTheme
 
 const store = useAppStore();
 const route = useRoute();
+const router = useRouter();
 const musicPlayer = useMusicPlayerStore();
 const musicAudioRef = ref<HTMLAudioElement | null>(null);
 let githubAutoBackupTimer: number | undefined;
+let globalCallFloatDrag: { pointerId: number; startX: number; startY: number; originX: number; originY: number; moved: boolean } | null = null;
+let suppressGlobalCallFloatClick = false;
 const themeFontStyleId = 'link-theme-fonts';
 const onlineThemeStyleId = 'link-online-theme-styles';
 const offlineThemeStyleId = 'link-offline-theme-styles';
@@ -55,6 +82,95 @@ const routeCharacter = computed(() => {
   return conversation ? store.characterById(conversation.charId) : null;
 });
 const keepAliveSettings = computed(() => store.settings?.keepAlive ?? null);
+const globalCall = computed(() => store.activeCall);
+const routeChatConversationId = computed(() => {
+  if (String(route.name ?? '') !== 'chat-room') return '';
+  const rawId = route.params.id;
+  return Array.isArray(rawId) ? String(rawId[0] ?? '') : String(rawId ?? '');
+});
+const showGlobalCallFloating = computed(() => {
+  const call = globalCall.value;
+  if (!call) return false;
+  return routeChatConversationId.value !== call.conversationId;
+});
+const globalCallFloatingStyle = computed(() => {
+  const position = globalCall.value?.floatPosition ?? { x: 16, y: 92 };
+  return { transform: `translate3d(${position.x}px, ${position.y}px, 0)` };
+});
+const globalCallSubtitle = computed(() => {
+  const call = globalCall.value;
+  if (!call) return '';
+  if (call.subtitle) return call.subtitle;
+  if (call.status === 'incoming-ringing') return '来电中';
+  if (call.status === 'outgoing-ringing') return '呼叫中';
+  if (call.status === 'active') return call.mode === 'video' ? '视频通话中' : '语音通话中';
+  return '通话已结束';
+});
+
+function clampGlobalCallFloatPosition(x: number, y: number) {
+  if (typeof window === 'undefined') return { x, y };
+  const padding = 8;
+  const floatWidth = 166;
+  const floatHeight = 64;
+  return {
+    x: Math.min(Math.max(padding, x), Math.max(padding, window.innerWidth - floatWidth - padding)),
+    y: Math.min(Math.max(padding + 36, y), Math.max(padding + 36, window.innerHeight - floatHeight - padding))
+  };
+}
+
+function updateGlobalCallFloatPosition(x: number, y: number) {
+  const call = globalCall.value;
+  if (!call) return;
+  store.patchActiveCall(call.conversationId, { floatPosition: clampGlobalCallFloatPosition(x, y) });
+}
+
+async function openGlobalCallFloating() {
+  if (suppressGlobalCallFloatClick) {
+    suppressGlobalCallFloatClick = false;
+    return;
+  }
+  const call = globalCall.value;
+  if (!call) return;
+  store.patchActiveCall(call.conversationId, { minimized: false });
+  await router.push({ name: 'chat-room', params: { id: call.conversationId } });
+}
+
+function startGlobalCallFloatDrag(event: PointerEvent) {
+  if (event.button !== 0) return;
+  const call = globalCall.value;
+  if (!call) return;
+  const target = event.currentTarget as HTMLElement | null;
+  target?.setPointerCapture?.(event.pointerId);
+  globalCallFloatDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    originX: call.floatPosition.x,
+    originY: call.floatPosition.y,
+    moved: false
+  };
+}
+
+function moveGlobalCallFloat(event: PointerEvent) {
+  const drag = globalCallFloatDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  const deltaX = event.clientX - drag.startX;
+  const deltaY = event.clientY - drag.startY;
+  if (Math.abs(deltaX) + Math.abs(deltaY) > 4) drag.moved = true;
+  updateGlobalCallFloatPosition(drag.originX + deltaX, drag.originY + deltaY);
+}
+
+function endGlobalCallFloatDrag(event: PointerEvent) {
+  const drag = globalCallFloatDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  const target = event.currentTarget as HTMLElement | null;
+  target?.releasePointerCapture?.(event.pointerId);
+  suppressGlobalCallFloatClick = drag.moved;
+  globalCallFloatDrag = null;
+  if (suppressGlobalCallFloatClick) window.setTimeout(() => {
+    suppressGlobalCallFloatClick = false;
+  }, 0);
+}
 
 function sanitizeCssText(value: string) {
   return value.replace(/[{};]/g, '').replace(/\s+/g, ' ').trim();
@@ -284,5 +400,86 @@ async function handleDisclaimerComplete() {
 
 .global-music-audio {
   display: none;
+}
+
+.global-call-floating {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 220;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 166px;
+  min-height: 64px;
+  padding: 7px 10px 7px 8px;
+  border: 1px solid rgba(31, 107, 58, 0.1);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #17211b;
+  box-shadow: 0 14px 30px rgba(20, 30, 24, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-backdrop-filter: blur(18px) saturate(1.04);
+  backdrop-filter: blur(18px) saturate(1.04);
+}
+
+.global-call-floating--video {
+  border-color: rgba(35, 83, 132, 0.12);
+}
+
+.global-call-floating:active {
+  cursor: grabbing;
+}
+
+.global-call-floating:focus-visible {
+  outline: 2px solid rgba(6, 199, 85, 0.48);
+  outline-offset: 3px;
+}
+
+.global-call-floating-avatar {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 15px;
+  background: #edf8f1;
+}
+
+.global-call-floating-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.global-call-floating-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.global-call-floating-copy strong,
+.global-call-floating-copy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.global-call-floating-copy strong {
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.global-call-floating-copy small {
+  color: #6d7671;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.2;
 }
 </style>

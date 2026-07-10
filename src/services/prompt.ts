@@ -181,7 +181,9 @@ export const profileMutationPrompt = `补充输出规则：
     "musicListenInviteDecisions": [],
     "musicListenInvite": null,
     "musicActions": [],
-    "offlineInvitation": null
+    "offlineInvitation": null,
+    "callInvite": null,
+    "callResponse": null
   },
   "profileUpdate": {
     "nickname": "",
@@ -212,7 +214,9 @@ export const profileMutationPrompt = `补充输出规则：
     "musicListenInviteDecisions": [],
     "musicListenInvite": null,
     "musicActions": [],
-    "offlineInvitation": null
+    "offlineInvitation": null,
+    "callInvite": null,
+    "callResponse": null
   },
   "profileUpdate": {
     "nickname": "新的网名，可留空表示不改",
@@ -246,10 +250,12 @@ export const profileMutationPrompt = `补充输出规则：
 17. 最近对话每条消息前的 [msg_xxx] 是 messageId。你可以像真实社交软件一样撤回自己之前发出的某条消息，但只能把你自己发过的角色消息 id 放进 messageActions.recallMessageIds；不要撤回用户或系统消息。撤回是独立动作，不要求前后固定搭配文字解释；是否解释由角色和语境决定。
 18. 你可以引用用户之前发过的某条消息进行回复。若第 n 个 text 气泡要引用用户消息，在 messageActions.quotes 里写 {"replyIndex": n, "messageId": "用户消息id"}；replyIndex 从 0 开始，只按 text 气泡计数，不把 voice、image、location、transfer、sticker、narration 算进去。
 19. 引用用于自然承接上下文。引用时 text.content 里仍只写你真正要发出的新消息，不要重复被引用内容；引用不要求必须放在本轮第一条 text 上。
-20. 如果没有撤回、引用、转账处理、一起听处理、音乐动作或线下邀约，messageActions 里的数组都保持空数组，对象字段保持 null。
+20. 如果没有撤回、引用、转账处理、一起听处理、音乐动作、线下邀约或通话动作，messageActions 里的数组都保持空数组，对象字段保持 null。
 21. 如上下文未告知绝对禁止写成两人已经见面、正在同一物理空间、你主动来找{{user}}、你已经在{{user}}附近等待、你知道或安排了{{user}}线下行程。除非{{user}}自己明确发来定位或描述，否则你不知道{{user}}在哪里、在做什么。
 22. 你可以在关系和语境合适时主动发起线下邀约：本质是你想和{{user}}见面，在线上聊天里只表示“提出邀约”，不代表两人已经见面、你已经在路上、你已经到{{user}}附近或知道{{user}}未告知的现实行程。邀约必须先用正常 text 气泡自然说出，然后在 messageActions.offlineInvitation 写 { "prompt": "用户接受后进入线下模块时，本章开场要承接的场景/动作/关系氛围，50-160字" }。不邀约时 offlineInvitation 固定为 null。
-23. offlineInvitation.prompt 只给线下模块作为开章输入；可以写你想开启的见面场景、氛围和角色主动性，但不能把用户接受前的线下见面写成已发生事实，不能写角色已知{{user}}未告知的现实位置、行程或住址。`;
+23. offlineInvitation.prompt 只给线下模块作为开章输入；可以写你想开启的见面场景、氛围和角色主动性，但不能把用户接受前的线下见面写成已发生事实，不能写角色已知{{user}}未告知的现实位置、行程或住址。
+24. 你可以在关系、时间和语境自然时主动给{{user}}拨打语音或视频通话：在 messageActions.callInvite 写 { "mode":"voice" } 或 { "mode":"video" }。拨打本身不代表用户已经接听，接听前不要把通话内容写成已发生。
+25. 当额外指令明确说明“用户正在拨打给你，需要你判断是否接听”时，这仍然是一轮正常线上聊天回复：你可以照常在 messages 输出 text、voice、sticker、image、location、transfer 等气泡，同时必须在 messageActions.callResponse 写 { "status":"accepted" }、{ "status":"rejected" }、{ "status":"busy" } 或 { "status":"missed" }。只有 accepted 才表示进入通话。`;
 
 export const offlineReplyOutputPrompt = `补充线下输出规则：
 

@@ -34,6 +34,8 @@ export interface RoleplayMessageActions {
   musicListenInvite?: { note?: string; query?: string; source?: string; track?: Partial<MusicTrack> } | null;
   musicActions?: RoleplayMusicAction[];
   offlineInvitation?: { prompt: string } | null;
+  callInvite?: RoleplayCallInvite | null;
+  callResponse?: RoleplayCallResponse | null;
 }
 
 export interface RoleplayMusicAction {
@@ -41,6 +43,18 @@ export interface RoleplayMusicAction {
   query?: string;
   source?: string;
   track?: Partial<MusicTrack>;
+}
+
+export type RoleplayCallMode = 'voice' | 'video';
+
+export type RoleplayCallResponseStatus = 'accepted' | 'rejected' | 'busy' | 'missed';
+
+export interface RoleplayCallInvite {
+  mode: RoleplayCallMode;
+}
+
+export interface RoleplayCallResponse {
+  status: RoleplayCallResponseStatus;
 }
 
 export type RoleplayStickerPosition = 'before' | 'after';
@@ -1519,6 +1533,78 @@ function normalizeMusicActions(value: unknown): RoleplayMusicAction[] {
   }];
 }
 
+function normalizeRoleplayCallMode(value: unknown): RoleplayCallMode | '' {
+  const mode = String(value ?? '').trim().toLocaleLowerCase();
+  if (['voice', 'audio', 'phone', '语音', '语音通话', '电话'].includes(mode)) return 'voice';
+  if (['video', 'camera', 'facetime', '视频', '视频通话'].includes(mode)) return 'video';
+  return '';
+}
+
+function normalizeCallInviteAction(record: Record<string, unknown>, actionRecord: Record<string, unknown>): RoleplayMessageActions['callInvite'] {
+  const candidates = [
+    actionRecord.callInvite,
+    actionRecord.startCall,
+    actionRecord.call,
+    actionRecord.phoneCall,
+    record.callInvite,
+    record.startCall,
+    record.call,
+    record.phoneCall
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (typeof candidate === 'string') {
+      const mode = normalizeRoleplayCallMode(candidate);
+      if (mode) return { mode };
+      continue;
+    }
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      const callRecord = candidate as Record<string, unknown>;
+      const explicitDisabled = callRecord.enabled === false || callRecord.enabled === 'false' || callRecord.status === 'none';
+      if (explicitDisabled) continue;
+      const mode = normalizeRoleplayCallMode(callRecord.mode ?? callRecord.type ?? callRecord.kind ?? callRecord.callType);
+      if (!mode) continue;
+      return { mode };
+    }
+  }
+  return null;
+}
+
+function normalizeCallResponseStatus(value: unknown): RoleplayCallResponseStatus | '' {
+  const status = String(value ?? '').trim().toLocaleLowerCase();
+  if (['accepted', 'accept', 'answer', 'answered', 'yes', '接听', '接受', '同意'].includes(status)) return 'accepted';
+  if (['rejected', 'reject', 'refuse', 'refused', 'decline', 'declined', 'no', '拒绝', '挂断'].includes(status)) return 'rejected';
+  if (['busy', 'occupied', 'unavailable', '忙线', '在忙'].includes(status)) return 'busy';
+  if (['missed', 'no_answer', 'no-answer', 'timeout', '未接', '无人接听'].includes(status)) return 'missed';
+  return '';
+}
+
+function normalizeCallResponseAction(record: Record<string, unknown>, actionRecord: Record<string, unknown>): RoleplayMessageActions['callResponse'] {
+  const candidates = [
+    actionRecord.callResponse,
+    actionRecord.callDecision,
+    actionRecord.answerCall,
+    record.callResponse,
+    record.callDecision,
+    record.answerCall
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (typeof candidate === 'string') {
+      const status = normalizeCallResponseStatus(candidate);
+      if (status) return { status };
+      continue;
+    }
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      const responseRecord = candidate as Record<string, unknown>;
+      const status = normalizeCallResponseStatus(responseRecord.status ?? responseRecord.decision ?? responseRecord.action ?? responseRecord.result);
+      if (!status) continue;
+      return { status };
+    }
+  }
+  return null;
+}
+
 function normalizeRoleplayMessageActions(record: Record<string, unknown>): RoleplayMessageActions {
   const actionRecord = record.messageActions && typeof record.messageActions === 'object'
     ? record.messageActions as Record<string, unknown>
@@ -1580,7 +1666,9 @@ function normalizeRoleplayMessageActions(record: Record<string, unknown>): Rolep
     musicListenInviteDecisions,
     musicListenInvite: normalizeMusicListenInviteAction(record, actionRecord),
     musicActions,
-    offlineInvitation: normalizeOfflineInvitationAction(record, actionRecord)
+    offlineInvitation: normalizeOfflineInvitationAction(record, actionRecord),
+    callInvite: normalizeCallInviteAction(record, actionRecord),
+    callResponse: normalizeCallResponseAction(record, actionRecord)
   };
 }
 
