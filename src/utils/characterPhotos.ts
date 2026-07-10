@@ -95,6 +95,11 @@ function sortPhotoItems(left: CharacterPhotoItem, right: CharacterPhotoItem) {
   return right.createdAt - left.createdAt || left.key.localeCompare(right.key);
 }
 
+function addPhotoItem(items: CharacterPhotoItem[], hiddenKeys: Set<string>, item: CharacterPhotoItem) {
+  if (hiddenKeys.has(item.key)) return;
+  items.push(item);
+}
+
 export function collectCharacterPhotoItems(input: {
   character: CharacterProfile;
   conversations: Conversation[];
@@ -122,36 +127,69 @@ export function collectCharacterPhotoItems(input: {
     if (!conversationIds.has(message.conversationId)) continue;
     const image = message.image;
     const imageUrl = image?.url?.trim() ?? '';
-    if (image?.kind !== 'generated' || !isUsableGeneratedImage(imageUrl, image.provider)) continue;
-    const key = chatPhotoKey(message);
-    if (hiddenKeys.has(key)) continue;
-    items.push({
-      key,
-      imageUrl,
-      title: image.description || '聊天配图',
-      source: 'chat',
-      sourceLabel: '聊天配图',
-      createdAt: message.createdAt,
-      messageId: message.id,
-      canDelete: true
-    });
+    const usedMessageImageUrls = new Set<string>();
+    if (image?.kind === 'generated' && isUsableGeneratedImage(imageUrl, image.provider)) {
+      usedMessageImageUrls.add(imageUrl);
+      addPhotoItem(items, hiddenKeys, {
+        key: chatPhotoKey(message),
+        imageUrl,
+        title: image.description || '聊天配图',
+        source: 'chat',
+        sourceLabel: '聊天配图',
+        createdAt: message.createdAt,
+        messageId: message.id,
+        canDelete: true
+      });
+    }
+    for (const candidate of image?.candidates ?? []) {
+      const candidateUrl = candidate.image.trim();
+      if (!isUsableGeneratedImage(candidateUrl, candidate.provider) || usedMessageImageUrls.has(candidateUrl)) continue;
+      usedMessageImageUrls.add(candidateUrl);
+      addPhotoItem(items, hiddenKeys, {
+        key: `${chatPhotoKey(message)}:candidate:${candidate.id}`,
+        imageUrl: candidateUrl,
+        title: candidate.description || image?.description || '聊天配图',
+        source: 'chat',
+        sourceLabel: '聊天配图',
+        createdAt: candidate.createdAt || message.createdAt,
+        messageId: message.id,
+        canDelete: true
+      });
+    }
   }
 
   for (const post of input.voomPosts) {
     const imageUrl = post.image?.trim() ?? '';
-    if (post.charId !== input.character.id || !isUsableGeneratedImage(imageUrl, post.imageProvider)) continue;
-    const key = voomPhotoKey(post);
-    if (hiddenKeys.has(key)) continue;
-    items.push({
-      key,
-      imageUrl,
-      title: post.imageDescription || post.content || 'VOOM 配图',
-      source: 'voom',
-      sourceLabel: 'VOOM 配图',
-      createdAt: post.createdAt,
-      postId: post.id,
-      canDelete: true
-    });
+    if (post.charId !== input.character.id) continue;
+    const usedPostImageUrls = new Set<string>();
+    if (isUsableGeneratedImage(imageUrl, post.imageProvider)) {
+      usedPostImageUrls.add(imageUrl);
+      addPhotoItem(items, hiddenKeys, {
+        key: voomPhotoKey(post),
+        imageUrl,
+        title: post.imageDescription || post.content || 'VOOM 配图',
+        source: 'voom',
+        sourceLabel: 'VOOM 配图',
+        createdAt: post.createdAt,
+        postId: post.id,
+        canDelete: true
+      });
+    }
+    for (const candidate of post.imageCandidates ?? []) {
+      const candidateUrl = candidate.image.trim();
+      if (!isUsableGeneratedImage(candidateUrl, candidate.provider) || usedPostImageUrls.has(candidateUrl)) continue;
+      usedPostImageUrls.add(candidateUrl);
+      addPhotoItem(items, hiddenKeys, {
+        key: `${voomPhotoKey(post)}:candidate:${candidate.id}`,
+        imageUrl: candidateUrl,
+        title: candidate.description || post.imageDescription || post.content || 'VOOM 配图',
+        source: 'voom',
+        sourceLabel: 'VOOM 配图',
+        createdAt: candidate.createdAt || post.createdAt,
+        postId: post.id,
+        canDelete: true
+      });
+    }
   }
 
   return items.sort(sortPhotoItems);

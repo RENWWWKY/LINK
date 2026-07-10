@@ -1391,6 +1391,7 @@ async function ensureCallBackgroundImage() {
     if (runId !== callBackgroundRunId.value || callBackgroundRequestKey.value !== requestKey) return;
     callGeneratedBackgroundUrl.value = result.imageUrl;
     await saveGeneratedCallPhoto(result);
+    if (!callRotatingBackgroundUrl.value) callRotatingBackgroundUrl.value = result.imageUrl;
   } catch (error) {
     console.warn('Call character photo generation failed, using photo pool fallback.', error);
   } finally {

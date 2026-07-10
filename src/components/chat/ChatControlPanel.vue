@@ -692,10 +692,11 @@
             </label>
           </section>
           <section v-if="characterPhotoItems.length" class="character-photo-library" aria-label="角色照片列表">
-            <article v-for="photo in characterPhotoItems" :key="photo.key" class="character-photo-card">
-              <button class="character-photo-thumb" type="button" :style="{ backgroundImage: `url(${photo.imageUrl})` }" @click="downloadCharacterPhoto(photo)">
+            <article v-for="(photo, photoIndex) in characterPhotoItems" :key="photo.key" class="character-photo-card">
+              <div :ref="(element) => observeCharacterPhotoThumb(element, photo.key, photoIndex)" class="character-photo-thumb" :aria-label="photo.title" role="img">
+                <img v-if="isCharacterPhotoVisible(photo.key, photoIndex)" :src="photo.imageUrl" :alt="photo.title" loading="lazy" decoding="async" fetchpriority="low" draggable="false" />
                 <span>{{ photo.sourceLabel }}</span>
-              </button>
+              </div>
               <div class="character-photo-meta">
                 <strong>{{ photo.title }}</strong>
                 <span>{{ photo.sourceLabel }} · {{ formatTimelineTime(photo.createdAt) }}</span>
@@ -1137,6 +1138,11 @@ const characterPhotoItems = computed(() => collectCharacterPhotoItems({
   messages: store.messages,
   voomPosts: store.voomPosts
 }));
+const eagerCharacterPhotoCount = 8;
+const visibleCharacterPhotoKeys = ref<Set<string>>(new Set());
+const observedCharacterPhotoElements = new Map<string, Element>();
+const characterPhotoKeyByElement = new WeakMap<Element, string>();
+let characterPhotoObserver: IntersectionObserver | undefined;
 const localWorldBookSelectValue = '__local_world_book_summary__';
 const stickerGroupSelectValue = '__sticker_group_summary__';
 const localWorldBooks = computed(() => store.worldBooks.filter((book) => book.scope === 'local'));
@@ -1378,6 +1384,59 @@ function showMoreMemories() {
   memoryDisplayLimit.value += 40;
 }
 
+function revealCharacterPhoto(key: string) {
+  if (visibleCharacterPhotoKeys.value.has(key)) return;
+  const nextKeys = new Set(visibleCharacterPhotoKeys.value);
+  nextKeys.add(key);
+  visibleCharacterPhotoKeys.value = nextKeys;
+}
+
+function isCharacterPhotoVisible(key: string, index: number) {
+  return index < eagerCharacterPhotoCount || visibleCharacterPhotoKeys.value.has(key);
+}
+
+function ensureCharacterPhotoObserver() {
+  if (!('IntersectionObserver' in window)) return null;
+  if (characterPhotoObserver) return characterPhotoObserver;
+  characterPhotoObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting && entry.intersectionRatio <= 0) continue;
+      const key = characterPhotoKeyByElement.get(entry.target);
+      if (!key) continue;
+      revealCharacterPhoto(key);
+      characterPhotoObserver?.unobserve(entry.target);
+      observedCharacterPhotoElements.delete(key);
+    }
+  }, { rootMargin: '420px 0px' });
+  return characterPhotoObserver;
+}
+
+function observeCharacterPhotoThumb(element: unknown, key: string, index: number) {
+  const target = element instanceof Element ? element : null;
+  if (index < eagerCharacterPhotoCount) revealCharacterPhoto(key);
+  const previousElement = observedCharacterPhotoElements.get(key);
+  if (previousElement && previousElement !== target) characterPhotoObserver?.unobserve(previousElement);
+  if (!target) {
+    observedCharacterPhotoElements.delete(key);
+    return;
+  }
+  observedCharacterPhotoElements.set(key, target);
+  characterPhotoKeyByElement.set(target, key);
+  if (visibleCharacterPhotoKeys.value.has(key)) return;
+  const observer = ensureCharacterPhotoObserver();
+  if (!observer) {
+    revealCharacterPhoto(key);
+    return;
+  }
+  observer.observe(target);
+}
+
+function disconnectCharacterPhotoObserver() {
+  characterPhotoObserver?.disconnect();
+  characterPhotoObserver = undefined;
+  observedCharacterPhotoElements.clear();
+}
+
 watch(
   () => [props.conversationId, currentConversationSettings.value] as const,
   () => {
@@ -1407,6 +1466,23 @@ watch(
 );
 
 onBeforeUnmount(cancelScheduledTokenEstimate);
+onBeforeUnmount(disconnectCharacterPhotoObserver);
+
+watch(
+  characterPhotoItems,
+  (items) => {
+    const availableKeys = new Set(items.map((photo) => photo.key));
+    const nextVisibleKeys = new Set([...visibleCharacterPhotoKeys.value].filter((key) => availableKeys.has(key)));
+    for (const photo of items.slice(0, eagerCharacterPhotoCount)) nextVisibleKeys.add(photo.key);
+    visibleCharacterPhotoKeys.value = nextVisibleKeys;
+    for (const [key, element] of observedCharacterPhotoElements) {
+      if (availableKeys.has(key)) continue;
+      characterPhotoObserver?.unobserve(element);
+      observedCharacterPhotoElements.delete(key);
+    }
+  },
+  { immediate: true }
+);
 
 watch(
   mergeableMemories,
@@ -2471,6 +2547,8 @@ function applyEditedAvatar(value: string) {
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.74);
   box-shadow: inset 0 0 0 1px rgba(42, 75, 60, 0.07);
+  content-visibility: auto;
+  contain-intrinsic-size: 236px 320px;
 }
 
 .character-photo-thumb {
@@ -2481,10 +2559,15 @@ function applyEditedAvatar(value: string) {
   overflow: hidden;
   border: 0;
   border-radius: 12px;
-  background-color: #eef3ef;
-  background-position: center;
-  background-size: cover;
-  cursor: pointer;
+  background:
+    linear-gradient(135deg, rgba(238, 243, 239, 0.95), rgba(218, 228, 223, 0.78));
+}
+
+.character-photo-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .character-photo-thumb::after {
