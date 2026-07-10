@@ -170,10 +170,12 @@
             </section>
           </template>
           <template v-else>
-            <span>{{ displayContent }}</span>
+            <span v-if="displayContentHtml" class="message-html-content" v-html="displayContentHtml"></span>
+            <span v-else>{{ displayContent }}</span>
             <template v-if="showInlineTranslation">
               <span class="translation-divider" aria-hidden="true"></span>
-              <span class="translation-copy">{{ displayTranslation }}</span>
+              <span v-if="displayTranslationHtml" class="translation-copy message-html-content" v-html="displayTranslationHtml"></span>
+              <span v-else class="translation-copy">{{ displayTranslation }}</span>
             </template>
           </template>
         </div>
@@ -259,6 +261,7 @@ import { useAppStore } from '@/stores/appStore';
 import { getCharacterDisplayName } from '@/utils/character';
 import { formatChatTime } from '@/utils/time';
 import { defaultConversationSettings } from '@/utils/memory';
+import { renderSafeMessageHtml } from '@/utils/messageHtml';
 import { defaultProfileAvatar } from '@/utils/profile';
 import { downloadImageUrl } from '@/utils/download';
 import { getStickerDisplayImageUrl } from '@/utils/stickers';
@@ -411,6 +414,8 @@ const parsedTranslation = computed(() => {
 });
 
 const displayTranslation = computed(() => normalizeTranslationText(props.message.translation) || parsedTranslation.value);
+const displayContentHtml = computed(() => renderSafeMessageHtml(displayContent.value));
+const displayTranslationHtml = computed(() => renderSafeMessageHtml(displayTranslation.value));
 const showInlineTranslation = computed(() => props.message.sender === 'char'
   && props.message.mode === 'online'
   && !props.message.sticker
@@ -2399,6 +2404,59 @@ onBeforeUnmount(() => {
 
 .translation-copy {
   display: block;
+}
+
+.message-html-content {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.message-html-content :deep(p),
+.message-html-content :deep(ul),
+.message-html-content :deep(ol),
+.message-html-content :deep(blockquote),
+.message-html-content :deep(pre),
+.message-html-content :deep(details),
+.message-html-content :deep(h1),
+.message-html-content :deep(h2),
+.message-html-content :deep(h3),
+.message-html-content :deep(h4),
+.message-html-content :deep(h5),
+.message-html-content :deep(h6),
+.message-html-content :deep(hr) {
+  margin: 0 0 0.55em;
+}
+
+.message-html-content :deep(:last-child) {
+  margin-bottom: 0;
+}
+
+.message-html-content :deep(summary) {
+  cursor: pointer;
+  font-weight: 850;
+}
+
+.message-html-content :deep(ul),
+.message-html-content :deep(ol) {
+  padding-left: 1.35em;
+}
+
+.message-html-content :deep(pre),
+.message-html-content :deep(code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.message-html-content :deep(pre) {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.message-html-content :deep(a) {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .message-row.user .bubble.sticker {

@@ -19,9 +19,10 @@ export const defaultOnlineThemeCss = `/* LINK 线上页默认完整样式。
   1. 想改整页底色，搜 .chat-room，改 background。
   2. 想改顶部栏，搜 .chat-header；顶部按钮搜 .icon-button。
   3. 想改聊天气泡，搜 .bubble；自己的气泡搜 .message-row.user .bubble。
-  4. 想改 5 分钟时间分割，搜 .message-time-divider。
-  5. 想改底部输入栏，搜 .composer；输入框搜 .composer-input；发送按钮搜 .send-button。
-  6. 常用属性：background 改背景，color 改文字，border-radius 改圆角，padding 改内边距，box-shadow 改阴影。 */
+  4. 想改消息里的安全 HTML（如 details/summary/p），搜 .message-html-content。
+  5. 想改 5 分钟时间分割，搜 .message-time-divider。
+  6. 想改底部输入栏，搜 .composer；输入框搜 .composer-input；发送按钮搜 .send-button。
+  7. 常用属性：background 改背景，color 改文字，border-radius 改圆角，padding 改内边距，box-shadow 改阴影。 */
 .chat-room {
   background: #f4f7f2;
   color: #111111;
@@ -120,6 +121,45 @@ export const defaultOnlineThemeCss = `/* LINK 线上页默认完整样式。
   overflow-wrap: anywhere;
   word-break: break-word;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+}
+
+.chat-room .message-html-content {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.chat-room .message-html-content :where(p, ul, ol, blockquote, pre, details, h1, h2, h3, h4, h5, h6, hr) {
+  margin: 0 0 0.55em;
+}
+
+.chat-room .message-html-content > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-room .message-html-content :where(summary) {
+  cursor: pointer;
+  font-weight: 850;
+}
+
+.chat-room .message-html-content :where(ul, ol) {
+  padding-left: 1.35em;
+}
+
+.chat-room .message-html-content :where(pre, code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.chat-room .message-html-content :where(pre) {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.chat-room .message-html-content :where(a) {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .chat-room .message-row.user .bubble {
@@ -539,7 +579,53 @@ export const defaultOfflineThemeCss = `/* LINK 线下页默认完整样式。
   overflow-wrap: anywhere;
 }
 
+.offline-room .chapter-entry-body {
+  margin: 0;
+  color: #282328;
+  font-size: 14px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.offline-room .chapter-entry-html :where(p, ul, ol, blockquote, pre, details, h1, h2, h3, h4, h5, h6, hr) {
+  margin: 0 0 0.62em;
+}
+
+.offline-room .chapter-entry-html > :last-child {
+  margin-bottom: 0;
+}
+
+.offline-room .chapter-entry-html :where(summary) {
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.offline-room .chapter-entry-html :where(ul, ol) {
+  padding-left: 1.35em;
+}
+
+.offline-room .chapter-entry-html :where(pre, code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.offline-room .chapter-entry-html :where(pre) {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.offline-room .chapter-entry-html :where(a) {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .offline-room .chapter-entry--user p {
+  font-weight: 800;
+}
+
+.offline-room .chapter-entry--user .chapter-entry-body {
   font-weight: 800;
 }
 

@@ -57,7 +57,8 @@
           </div>
 
           <template v-else>
-            <p>
+            <div v-if="htmlContentForFloor(floor)" class="chapter-entry-body chapter-entry-html" v-html="htmlContentForFloor(floor)"></div>
+            <p v-else class="chapter-entry-body">
               <template v-for="(segment, index) in contentSegmentsForFloor(floor)" :key="`${floor.id}-${index}`">
                 <span :class="{ 'inner-voice-segment': segment.innerVoice, 'dialogue-segment': segment.dialogue }">{{ segment.text }}</span>
               </template>
@@ -214,6 +215,7 @@ import type { ChatMessage } from '@/types/domain';
 import { getCharacterDisplayName } from '@/utils/character';
 import { useKeyboardScrollGuard } from '@/utils/keyboardScrollGuard';
 import { getConversationFloors } from '@/utils/memory';
+import { renderSafeMessageHtml } from '@/utils/messageHtml';
 import { getUserAiName } from '@/utils/profile';
 import { formatChatTime } from '@/utils/time';
 import { isVoomNarrationMessage } from '@/utils/voomMessages';
@@ -504,6 +506,10 @@ function parseStyledContentSegments(content: string): ContentSegment[] {
 
 function contentSegmentsForFloor(floor: ChapterFloor) {
   return parseStyledContentSegments(displayContentForFloor(floor));
+}
+
+function htmlContentForFloor(floor: ChapterFloor) {
+  return renderSafeMessageHtml(displayContentForFloor(floor));
 }
 
 function isEditingFloor(floor: ChapterFloor) {
@@ -1165,13 +1171,61 @@ async function exitOffline() {
   text-align: center;
 }
 
-.chapter-entry p {
+.chapter-entry p,
+.chapter-entry-body {
   margin: 0;
   color: #282328;
   font-size: 14px;
   line-height: 1.8;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.chapter-entry-html :deep(p),
+.chapter-entry-html :deep(ul),
+.chapter-entry-html :deep(ol),
+.chapter-entry-html :deep(blockquote),
+.chapter-entry-html :deep(pre),
+.chapter-entry-html :deep(details),
+.chapter-entry-html :deep(h1),
+.chapter-entry-html :deep(h2),
+.chapter-entry-html :deep(h3),
+.chapter-entry-html :deep(h4),
+.chapter-entry-html :deep(h5),
+.chapter-entry-html :deep(h6),
+.chapter-entry-html :deep(hr) {
+  margin: 0 0 0.62em;
+}
+
+.chapter-entry-html :deep(:last-child) {
+  margin-bottom: 0;
+}
+
+.chapter-entry-html :deep(summary) {
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.chapter-entry-html :deep(ul),
+.chapter-entry-html :deep(ol) {
+  padding-left: 1.35em;
+}
+
+.chapter-entry-html :deep(pre),
+.chapter-entry-html :deep(code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.chapter-entry-html :deep(pre) {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.chapter-entry-html :deep(a) {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .inner-voice-segment {
@@ -1269,6 +1323,10 @@ async function exitOffline() {
 }
 
 .chapter-entry--user p {
+  font-weight: 800;
+}
+
+.chapter-entry--user .chapter-entry-body {
   font-weight: 800;
 }
 
