@@ -940,6 +940,7 @@ const callRotatingBackgroundUrl = ref('');
 const callBackgroundRequestKey = ref('');
 const callBackgroundGenerating = ref(false);
 const callBackgroundRunId = ref(0);
+const callBackgroundPendingRefresh = ref(false);
 let voiceRecorder: MediaRecorder | null = null;
 let voiceStream: MediaStream | null = null;
 let voiceChunks: Blob[] = [];
@@ -1209,31 +1210,60 @@ const callCameraStatusLabel = computed(() => {
   return '头像';
 });
 
+const recentCallSceneText = computed(() => callTranscriptMessages.value
+  .slice(-8)
+  .map((message) => `${message.sender === 'char' ? callCharacterAiName.value : callUserAiName.value}: ${callMessageText(message)}`.trim())
+  .filter(Boolean)
+  .join('\n')
+  .slice(0, 900));
+
 function joinCallBackgroundPromptPieces(...pieces: Array<string | undefined>) {
   return pieces.map((piece) => String(piece ?? '').trim()).filter(Boolean).join('\n');
 }
 
-function buildCallBackgroundPrompt() {
-  const currentCharacter = character.value;
+function buildCallCharacterAppearancePrompt() {
   const imageProfile = characterImageProfile.value;
+  return joinCallBackgroundPromptPieces(
+    imageProfile.appearancePrompt ? `Character appearance: ${imageProfile.appearancePrompt}` : '',
+    imageProfile.facePrompt ? `Face identity lock: ${imageProfile.facePrompt}` : ''
+  );
+}
+
+function buildCallSceneDescription() {
+  const call = activeCall.value;
+  const currentCharacter = character.value;
   const profile = currentCharacter?.profile;
-  const characterContext = [
-    currentCharacter?.nickname,
+  const identityContext = [
     currentCharacter?.description,
     currentCharacter?.signature,
     currentCharacter?.subtitle,
     profile?.location,
-    profile?.bio,
-    imageProfile.appearancePrompt,
-    imageProfile.facePrompt,
-    callMessageText(latestCharacterCallMessage.value ?? latestCallTranscriptMessage.value ?? ({ content: '' } as ChatMessage))
-  ].map((value) => String(value ?? '').trim()).filter(Boolean).join('; ').slice(0, 600);
+    profile?.bio
+  ].map((value) => String(value ?? '').trim()).filter(Boolean).join('; ').slice(0, 500);
+  const modeText = call?.mode === 'video' ? 'video call' : 'voice call';
+  const statusText = call?.status === 'active' ? 'connected' : call?.status === 'incoming-ringing' || call?.status === 'outgoing-ringing' ? 'ringing' : 'in-call';
   return joinCallBackgroundPromptPieces(
-    'A vertical 9:16 full-screen character photo for a mobile call background.',
-    'One person only: the character appears as the main subject, full body or half body, looking natural in a call-like portrait.',
-    'The image should fill the whole phone screen, polished anime or cinematic portrait style, no text, no watermark, no user interface, no phone frame.',
-    characterContext ? `Character identity and appearance: ${characterContext}.` : '',
-    'Keep the face recognizable and consistent, leave gentle space near the top and bottom for call controls, immersive but not visually busy.'
+    `${callCharacterAiName.value} during a ${statusText} ${modeText} in LINK.`,
+    identityContext ? `Character context: ${identityContext}.` : '',
+    recentCallSceneText.value ? `Recent call dialogue and mood:\n${recentCallSceneText.value}` : '',
+    'Infer the character\'s current real environment, pose, outfit, styling, and facial expression from the dialogue, time, profile, and relationship context. If details are not explicit, choose a believable everyday moment that fits the character instead of a generic portrait.'
+  );
+}
+
+function buildCallBackgroundPrompt() {
+  const sceneDescription = buildCallSceneDescription();
+  const characterAppearance = buildCallCharacterAppearancePrompt();
+  const faceConsistency = characterImageProfile.value.referenceImageEnabled && characterImageProfile.value.referenceImage
+    ? 'Use the character reference image as identity guidance; keep the same facial structure, eyes, nose, mouth, hairstyle, and overall likeness across call photos.'
+    : 'Keep the same character identity and consistent facial features across call photos.';
+  return joinCallBackgroundPromptPieces(
+    'A vertical 9:16 full-screen realistic character photo for a mobile call background.',
+    `Subject: ${callCharacterAiName.value}, one person only, shown as the clear main subject in the current moment of the call.`,
+    sceneDescription,
+    characterAppearance,
+    faceConsistency,
+    'Show a believable current background, natural pose, outfit, hairstyle, and facial expression; the image should feel like a fresh live call snapshot, not a staged studio portrait.',
+    'The image fills the whole phone screen, immersive but not visually busy, with gentle space near the top and bottom for call controls, no text, no watermark, no user interface, no phone frame.'
   );
 }
 
@@ -1289,6 +1319,7 @@ function resetCallBackgroundImage() {
   callRotatingBackgroundUrl.value = '';
   callBackgroundRequestKey.value = '';
   callBackgroundGenerating.value = false;
+  callBackgroundPendingRefresh.value = false;
 }
 
 function stopCallBackgroundRotation() {
@@ -1317,6 +1348,11 @@ function syncCallBackgroundRotation() {
   if (!call) {
     stopCallBackgroundRotation();
     callRotatingBackgroundUrl.value = '';
+    return;
+  }
+  if (call.mode === 'video' && callGeneratedBackgroundUrl.value) {
+    stopCallBackgroundRotation();
+    callRotatingBackgroundUrl.value = callGeneratedBackgroundUrl.value;
     return;
   }
   if (!characterPhotoPool.value.length) {
@@ -1365,13 +1401,17 @@ async function ensureCallBackgroundImage() {
   const settings = store.settings;
   const selectedModel = settings && settings.imageGenerationEnabled !== false ? getSelectedImageModelOption(settings, 'callBackground') : null;
   const imageProfile = characterImageProfile.value;
-  const requestKey = [props.id, character.value?.id ?? '', call.callId, selectedModel?.key ?? 'none', imageProfile.appearancePrompt, imageProfile.facePrompt, imageProfile.referenceImageEnabled ? imageProfile.referenceImage : '', imageProfile.seed].join(':');
+  const sceneKey = buildCallSceneDescription();
+  const requestKey = [props.id, character.value?.id ?? '', call.callId, call.mode, selectedModel?.key ?? 'none', imageProfile.appearancePrompt, imageProfile.facePrompt, imageProfile.referenceImageEnabled ? imageProfile.referenceImage : '', imageProfile.seed, sceneKey].join(':');
   if (callBackgroundRequestKey.value === requestKey && (callGeneratedBackgroundUrl.value || callBackgroundGenerating.value)) return;
+  if (callBackgroundGenerating.value) {
+    callBackgroundPendingRefresh.value = true;
+    return;
+  }
 
   const runId = callBackgroundRunId.value + 1;
   callBackgroundRunId.value = runId;
   callBackgroundRequestKey.value = requestKey;
-  callGeneratedBackgroundUrl.value = '';
   callBackgroundGenerating.value = false;
 
   if (!settings || !selectedModel) return;
@@ -1381,13 +1421,18 @@ async function ensureCallBackgroundImage() {
     const result = await generateCallBackgroundImage(settings, selectedModel);
     if (runId !== callBackgroundRunId.value || callBackgroundRequestKey.value !== requestKey) return;
     callGeneratedBackgroundUrl.value = result.imageUrl;
+    if (call.mode === 'video') stopCallBackgroundRotation();
     await saveGeneratedCallPhoto(result);
-    if (!callRotatingBackgroundUrl.value) callRotatingBackgroundUrl.value = result.imageUrl;
+    callRotatingBackgroundUrl.value = result.imageUrl;
   } catch (error) {
     console.warn('Call character photo generation failed, using photo pool fallback.', error);
   } finally {
     if (runId === callBackgroundRunId.value && callBackgroundRequestKey.value === requestKey) {
       callBackgroundGenerating.value = false;
+      if (callBackgroundPendingRefresh.value) {
+        callBackgroundPendingRefresh.value = false;
+        void ensureCallBackgroundImage();
+      }
     }
   }
 }
@@ -1653,6 +1698,7 @@ watch([
   () => characterImageProfile.value.referenceImageEnabled,
   () => characterImageProfile.value.referenceImage,
   () => characterImageProfile.value.seed,
+  () => recentCallSceneText.value,
   () => store.settings?.imageGenerationEnabled,
   () => getSelectedImageModelOption(store.settings, 'callBackground')?.key ?? ''
 ], () => {
