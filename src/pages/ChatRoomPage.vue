@@ -3190,7 +3190,7 @@ function messageActionText(message: ChatMessage) {
 }
 
 function canQuoteMessage(message: ChatMessage) {
-  return message.sender === 'char' && !message.id.includes('__') && Boolean(store.createMessageQuoteSnapshot(message));
+  return message.sender !== 'system' && !message.id.includes('__') && Boolean(store.createMessageQuoteSnapshot(message));
 }
 
 function quoteMessage(message: ChatMessage) {

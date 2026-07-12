@@ -210,7 +210,7 @@ export interface CharacterProfileHomepageAutoCleanupSettings {
   lastCleanupAt: number;
 }
 
-export type ChatModelScope = 'online' | 'offline' | 'summary' | 'voom' | 'theater';
+export type ChatModelScope = 'online' | 'offline' | 'summary' | 'voom' | 'theater' | 'groupDiscovery';
 
 export interface ChatModelOverrides {
   online: string;
@@ -218,6 +218,7 @@ export interface ChatModelOverrides {
   summary: string;
   voom: string;
   theater: string;
+  groupDiscovery: string;
 }
 
 export interface CharacterThemeStyleBindings {

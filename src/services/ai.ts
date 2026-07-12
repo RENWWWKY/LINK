@@ -3201,6 +3201,7 @@ export interface GroupGeneratedMessage {
   content: string;
   type: 'text' | 'voice' | 'image' | 'sticker';
   stickerId?: string;
+  quoteMessageId?: string;
 }
 
 export interface GroupPrivateInitiation {
@@ -3362,14 +3363,14 @@ ${stickerList || '无'}
 规则：
 1. 只允许成员表里的角色发言，绝不代替用户发言；authorMemberId 必须来自成员表。
 2. 所有行为描述、消息正文中的人物指代只能使用用户真名或角色/NPC真名。网名和群昵称只是可修改资料，绝不能写成网名做了某事。
-3. ${mode === 'offline' ? '这是群聊线下 RP。每条 content 都是该成员视角下可直接展示的沉浸式章节正文，包含必要的场景、动作、神情、对白与多人互动；不得写成聊天气泡口吻，不得替用户决定、行动或发言。输出 1-4 个自然章节，不要机械轮流。' : '像真实群聊：允许无人回复、单人回复、多人插话、连续多条、引用语气、@、跑题与沉默；本轮输出 0-8 条，不要机械轮流。'}
+3. ${mode === 'offline' ? '这是群聊线下 RP。每条 content 都是该成员视角下可直接展示的沉浸式章节正文，包含必要的场景、动作、神情、对白与多人互动；不得写成聊天气泡口吻，不得替用户决定、行动或发言。输出 1-4 个自然章节，不要机械轮流。' : '像真实群聊：允许无人回复、单人回复、多人插话、连续多条、引用、@、跑题与沉默；本轮输出 0-8 条，不要机械轮流。需要引用最近群聊中的历史消息时，在该条消息填写 quoteMessageId；可以引用用户、其他成员，也可以自然引用该发言成员自己此前发过的消息。只能填写最近群聊里方括号标出的真实消息 ID，不要在 content 中复述被引用内容。'}
 4. 已有角色必须结合其跨会话记忆，不得把群聊当作孤立世界；但角色不能知道自己未参与且未被转述的秘密。
 5. ${mode === 'offline' ? '线下模式的 type 必须为 text。' : 'type 可为 text、voice、image、sticker。voice 的 content 是语音转写；image 的 content 是图片画面描述；sticker 必须填写 stickerId，content 可填贴纸含义。'}
 6. 如果群内情境让某个已有角色很自然地想单独联系用户，可在 privateInitiations 放入该角色ID和原因；最多 1 个，不能使用 NPC，不能每轮都触发。
 7. 如果当前用户状态为 pending，群主或管理员可根据群设定和上下文决定是否通过申请，在 membershipDecision 输出 approve、reject 或 null；其他状态必须输出 null。
 8. 群内出现匿名小号消息时，不得推断、暗示或泄露它与当前用户的真实身份关系。
 9. 图片与语音是群内所有当前成员共同可见的真实消息：真实图片已随请求附带时可直接识图；文字描述卡片要理解为用户发送了描述所表达的图片；语音条要理解为发送者用语音说出了转写内容。引用消息必须结合被引用内容理解，不能当成孤立文本。
-10. 只输出 JSON：{"messages":[{"authorMemberId":"成员id","type":"text|voice|image|sticker","content":"正文或描述","stickerId":"可选"}],"privateInitiations":[{"characterId":"已有角色ID","reason":"为什么此刻要私聊用户"}],"membershipDecision":"approve|reject|null"}`;
+10. 只输出 JSON：{"messages":[{"authorMemberId":"成员id","type":"text|voice|image|sticker","content":"正文或描述","stickerId":"可选","quoteMessageId":"可选，仅线上引用的历史消息id"}],"privateInitiations":[{"characterId":"已有角色ID","reason":"为什么此刻要私聊用户"}],"membershipDecision":"approve|reject|null"}`;
   const apiReply = await callTextApi(input.settings, prompt, input.modelOverride, await getPreparedVisualImageParts(input));
   const parsed = JSON.parse(extractJsonContent(apiReply)) as Record<string, unknown>;
   const rawMessages = Array.isArray(parsed.messages) ? parsed.messages : [];
@@ -3382,10 +3383,11 @@ ${stickerList || '无'}
     const content = String(record.content ?? '').trim();
     const requestedType = String(record.type ?? 'text').trim();
     const stickerId = String(record.stickerId ?? '').trim();
+    const quoteMessageId = mode === 'online' ? String(record.quoteMessageId ?? '').trim() : '';
     const type = mode === 'offline' ? 'text' : requestedType === 'voice' || requestedType === 'image' || requestedType === 'sticker' ? requestedType : 'text';
     if (!allowedMembers.has(authorMemberId) || (!content && type !== 'sticker')) return [];
     if (type === 'sticker' && !availableStickerIds.has(stickerId)) return [];
-    return [{ authorMemberId, content, type, stickerId: type === 'sticker' ? stickerId : undefined } satisfies GroupGeneratedMessage];
+    return [{ authorMemberId, content, type, stickerId: type === 'sticker' ? stickerId : undefined, quoteMessageId: quoteMessageId || undefined } satisfies GroupGeneratedMessage];
   });
   const characterIds = new Set(input.characterContexts.map((entry) => entry.character.id));
   const rawPrivateInitiations = Array.isArray(parsed.privateInitiations) ? parsed.privateInitiations : [];

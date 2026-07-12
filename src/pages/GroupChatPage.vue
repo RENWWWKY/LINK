@@ -74,6 +74,7 @@
 
     <AppModal v-model="showActionMenu" title="群聊操作" :show-header="false" variant="ins">
       <section class="action-menu">
+        <button type="button" @click="openModelSwitch">模型切换</button>
         <button type="button" :disabled="replying" @click="openRegenerate">重新回复</button>
         <button type="button" @click="openInvitePanel">邀请群成员</button>
         <button type="button" @click="openLeaveGroup">退出群聊</button>
@@ -196,6 +197,7 @@
       @panel-height-change="handleStickerPanelHeightChange"
       @sent="quoteTarget = null"
     />
+    <ChatModelSwitchPanel v-model="showModelSwitch" :conversation-id="props.id" />
   </section>
   <section v-else class="screen no-tabs missing-group"><p>群聊不存在或已被删除</p><button type="button" @click="router.replace({ name: 'chats' })">返回聊天列表</button></section>
 </template>
@@ -206,6 +208,7 @@ import { useRouter } from 'vue-router';
 import { X } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
 import ChatHeader from '@/components/chat/ChatHeader.vue';
+import ChatModelSwitchPanel from '@/components/chat/ChatModelSwitchPanel.vue';
 import GroupAnnouncementBanner from '@/components/chat/GroupAnnouncementBanner.vue';
 import MessageBubble from '@/components/chat/MessageBubble.vue';
 import MessageComposer from '@/components/chat/MessageComposer.vue';
@@ -225,6 +228,7 @@ const loadingEarlierMessages = ref(false);
 const shouldStickToBottom = ref(true);
 const showDetails = ref(false);
 const showActionMenu = ref(false);
+const showModelSwitch = ref(false);
 const showMessageActions = ref(false);
 const showEditModal = ref(false);
 const showDeleteMessagesConfirm = ref(false);
@@ -321,6 +325,7 @@ function quoteMessage(message: ChatMessage) { if (!canQuoteMessage(message)) ret
 function handleStickerPanelHeightChange(height: number) { stickerPanelHeight.value = Math.max(0, height); }
 function openChatSearch() { void router.push({ name: 'chat-search', params: { id: props.id } }); }
 function openChatSettings() { void router.push({ name: 'chat-settings', params: { id: props.id } }); }
+function openModelSwitch() { showActionMenu.value = false; showModelSwitch.value = true; }
 async function enterOffline() { if (replying.value || !isJoined.value) return; await store.updateConversationMode(props.id, 'offline'); await router.replace({ name: 'offline-room', params: { id: props.id } }); }
 function openRegenerate() { showActionMenu.value = false; regenerateInstruction.value = ''; showRegenerate.value = true; }
 function openDeleteGroup() { showActionMenu.value = false; showDeleteConfirm.value = true; }

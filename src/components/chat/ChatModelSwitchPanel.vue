@@ -1,7 +1,7 @@
 <template>
   <AppModal :model-value="modelValue" :title="panelTitle" :show-header="false" variant="ins" @update:model-value="emit('update:modelValue', $event)">
     <section class="model-switch-panel form-grid">
-      <label v-for="scope in modelScopes" :key="scope.id" class="field model-select-field">
+      <label v-for="scope in visibleModelScopes" :key="scope.id" class="field model-select-field">
         <span>{{ scope.label }}</span>
         <div class="model-select-shell">
           <img v-if="selectedModelMeta(modelValueFor(scope.id))" :src="selectedModelMeta(modelValueFor(scope.id))?.avatar" :alt="selectedModelMeta(modelValueFor(scope.id))?.vendorName" />
@@ -46,11 +46,20 @@ const modelScopes: Array<{ id: ChatModelScope; label: string }> = [
   { id: 'offline', label: '线下 RP 模型' },
   { id: 'summary', label: '总结模型' },
   { id: 'voom', label: 'VOOM 生成模型' },
-  { id: 'theater', label: '小剧场模型' }
+  { id: 'theater', label: '小剧场模型' },
+  { id: 'groupDiscovery', label: '搜索角色群聊模型' }
 ];
 const draft = reactive<ChatModelOverrides>(normalizeChatModelOverrides(null));
 const settingsDraft = reactive<AppSettings>(normalizeAppSettings(null));
 const isGlobal = computed(() => props.variant === 'global');
+const isGroupConversation = computed(() => store.conversationById(props.conversationId)?.kind === 'group');
+const visibleModelScopes = computed(() => {
+  if (isGlobal.value) return modelScopes;
+  const allowedScopes: ChatModelScope[] = isGroupConversation.value
+    ? ['online', 'offline', 'summary']
+    : ['online', 'offline', 'summary', 'voom', 'theater'];
+  return modelScopes.filter((scope) => allowedScopes.includes(scope.id));
+});
 const panelTitle = computed(() => (isGlobal.value ? '全局模型切换' : '模型切换'));
 const currentLocalModelOverrides = computed(() => store.modelOverridesForConversation(props.conversationId));
 const currentGlobalSettings = computed(() => normalizeAppSettings(store.settings));
@@ -103,7 +112,8 @@ function fallbackLabel(scope: ChatModelScope) {
     offline: '跟随全局线下 RP 模型',
     summary: '跟随全局总结模型',
     voom: '跟随全局 VOOM 生成模型',
-    theater: '跟随全局小剧场模型'
+    theater: '跟随全局小剧场模型',
+    groupDiscovery: '跟随全局搜索角色群聊模型'
   };
   return labels[scope];
 }

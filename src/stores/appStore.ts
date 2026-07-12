@@ -1222,6 +1222,7 @@ export const useAppStore = defineStore('app', () => {
   function modelOverridesForConversation(id: string): ChatModelOverrides {
     const chatSettings = settingsForConversation(id);
     const conversation = conversationById(id);
+    if (conversation?.kind === 'group') return normalizeChatModelOverrides(chatSettings.modelOverrides);
     const character = conversation ? characterById(conversation.charId) : null;
     const characterOverrides = normalizeChatModelOverrides(character?.modelOverrides);
     const legacyConversationOverrides = normalizeChatModelOverrides(chatSettings.modelOverrides);
@@ -1231,7 +1232,8 @@ export const useAppStore = defineStore('app', () => {
       offline: characterOverrides.offline || legacyConversationOverrides.offline,
       summary: characterOverrides.summary || legacyConversationOverrides.summary,
       voom: characterOverrides.voom || legacyConversationOverrides.voom,
-      theater: characterOverrides.theater || legacyConversationOverrides.theater
+      theater: characterOverrides.theater || legacyConversationOverrides.theater,
+      groupDiscovery: characterOverrides.groupDiscovery || legacyConversationOverrides.groupDiscovery
     });
   }
 
@@ -1275,7 +1277,7 @@ export const useAppStore = defineStore('app', () => {
     const character = conversation ? characterById(conversation.charId) : null;
     const chatSettings = settingsForConversation(conversationId);
 
-    if (character) {
+    if (character && conversation?.kind !== 'group') {
       await saveCharacter({
         ...character,
         modelOverrides: normalizedOverrides
@@ -3754,7 +3756,12 @@ export const useAppStore = defineStore('app', () => {
       return character && character.boundUserId === activeUser.id ? [character] : [];
     });
     if (!selectedCharacters.length) throw new Error('请至少选择一个当前账号绑定的角色。');
-    return discoverGeneratedGroups({ user: activeUser, characters: selectedCharacters.map(groupCharacterContext), settings: settings.value ?? undefined });
+    return discoverGeneratedGroups({
+      user: activeUser,
+      characters: selectedCharacters.map(groupCharacterContext),
+      settings: settings.value ?? undefined,
+      modelOverride: getGlobalTextModelOverride('groupDiscovery')
+    });
   }
 
   async function createGroup(name: string, characterIds: string[], announcement = '', npcMembers: GroupNpcDraft[] = []) {
@@ -4175,7 +4182,7 @@ export const useAppStore = defineStore('app', () => {
         const quoteText = message.quote
           ? `【引用 ${message.quote.authorName}：${normalizeGroupIdentityText(groupMessageContent(message.quote), conversation)}】\n`
           : '';
-        return `${message.authorName || (message.sender === 'user' ? getUserAiName(activeUser) : '系统')}：${quoteText}${normalizeGroupIdentityText(groupMessageContent(message), conversation)}`;
+        return `[${message.id}] ${message.authorName || (message.sender === 'user' ? getUserAiName(activeUser) : '系统')}：${quoteText}${normalizeGroupIdentityText(groupMessageContent(message), conversation)}`;
       }).join('\n');
       const characterContexts = conversation.groupMembers.flatMap((member) => {
         if (member.identityType !== 'character' || !member.identityId) return [];
@@ -4202,6 +4209,9 @@ export const useAppStore = defineStore('app', () => {
       const generatedMessages = generated.messages.map((entry, index) => {
         const member = conversation.groupMembers?.find((item) => item.id === entry.authorMemberId);
         const sticker = entry.type === 'sticker' ? availableGroupStickers.find((item) => item.id === entry.stickerId) : null;
+        const quotedMessage = entry.quoteMessageId
+          ? recentMessages.find((message) => message.id === entry.quoteMessageId && message.sender !== 'system')
+          : undefined;
         const normalizedEntryContent = normalizeGroupIdentityText(entry.content, conversation);
         const content = entry.type === 'voice' ? `[语音] ${normalizedEntryContent}` : entry.type === 'image' ? `[图片描述卡片] ${normalizedEntryContent}` : entry.type === 'sticker' ? `[Sticker] ${sticker?.description || normalizedEntryContent}` : normalizedEntryContent;
         return {
@@ -4211,6 +4221,7 @@ export const useAppStore = defineStore('app', () => {
           voice: entry.type === 'voice' ? { source: 'text' as const, transcript: normalizedEntryContent, duration: estimateVoiceDuration(normalizedEntryContent) } : undefined,
           image: entry.type === 'image' ? { kind: 'description' as const, description: normalizedEntryContent } : undefined,
           sticker: sticker ? { stickerId: sticker.id, description: sticker.description, imageUrl: sticker.imageUrl, cachedImageUrl: sticker.cachedImageUrl } : undefined,
+          quote: quotedMessage ? createMessageQuoteSnapshot(quotedMessage) ?? undefined : undefined,
           replyBatchId, createdAt: baseTime + index, status: 'sent' as const
         } satisfies ChatMessage;
       });
@@ -6621,7 +6632,7 @@ export const useAppStore = defineStore('app', () => {
         : null;
       const quoteByReplyIndex = new Map<number, ChatMessageQuote>();
       for (const quoteAction of parsedReply.messageActions?.quotes ?? []) {
-        const targetMessage = messages.value.find((message) => message.id === quoteAction.messageId && message.conversationId === conversationId && message.sender === 'user');
+        const targetMessage = messages.value.find((message) => message.id === quoteAction.messageId && message.conversationId === conversationId && message.sender !== 'system');
         const quote = targetMessage ? createMessageQuoteSnapshot(targetMessage) : null;
         if (quote) quoteByReplyIndex.set(Math.max(0, Math.floor(quoteAction.replyIndex)), quote);
       }

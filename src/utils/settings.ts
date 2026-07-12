@@ -153,7 +153,8 @@ export function normalizeChatModelOverrides(overrides?: Partial<ChatModelOverrid
     offline: String(overrides?.offline ?? '').trim(),
     summary: String(overrides?.summary ?? '').trim(),
     voom: String(overrides?.voom ?? '').trim(),
-    theater: String(overrides?.theater ?? '').trim()
+    theater: String(overrides?.theater ?? '').trim(),
+    groupDiscovery: String(overrides?.groupDiscovery ?? '').trim()
   };
 }
 
