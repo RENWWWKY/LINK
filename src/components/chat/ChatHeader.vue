@@ -36,7 +36,8 @@ import type { CharacterProfile, ChatMode } from '@/types/domain';
 import { getCharacterDisplayName } from '@/utils/character';
 
 const props = defineProps<{
-  character: CharacterProfile;
+  character?: CharacterProfile;
+  title?: string;
   mode: ChatMode;
   offlineDisabled?: boolean;
 }>();
@@ -49,7 +50,7 @@ defineEmits<{
 }>();
 
 const router = useRouter();
-const displayName = computed(() => getCharacterDisplayName(props.character));
+const displayName = computed(() => props.title?.trim() || (props.character ? getCharacterDisplayName(props.character) : '聊天'));
 </script>
 
 <style scoped>

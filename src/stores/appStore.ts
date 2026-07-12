@@ -2,7 +2,7 @@ import { computed, ref, toRaw, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { deleteEntity, loadSnapshot, pruneUnusedStoredMediaCache, putEntity, replaceSnapshot, scheduleStartupStorageMaintenance } from '@/data/db';
 import { defaultSettings } from '@/data/seed';
-import type { AppSettings, AppSnapshot, CharacterProfile, CharacterProfileHistoryEntry, CharacterProfileHistoryField, ChatCallAttachment, ChatCallMode, ChatCallStatus, ChatImageAttachment, ChatImageCandidate, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatMode, ChatModelOverrides, ChatModelScope, ChatMusicListenInviteAttachment, ChatMusicListenInviteStatus, ChatOfflineInvitationAttachment, ChatOfflineInvitationStatus, ChatSmallTheaterLinkAttachment, ChatTransferAttachment, ChatTransferStatus, ChatVoiceAttachment, Conversation, ConversationMemoryAtom, ConversationMemoryRecord, ConversationSettings, FavoriteMessageKind, FavoriteMessageRecord, GenerateReplyInput, GeneratedImageRecord, ImageModuleId, MusicCommentThread, MusicListeningContext, MusicTrack, ProfileHomepageRecord, ProfileTheme, SmallTheater, SmallTheaterTopic, Sticker, StickerGroup, UserProfile, VisualProfile, VoomComment, VoomFrequency, VoomImageCandidate, VoomPost, VoomPostVisibility, WorldBookEntry } from '@/types/domain';
+import type { AppSettings, AppSnapshot, CharacterProfile, CharacterProfileHistoryEntry, CharacterProfileHistoryField, ChatCallAttachment, ChatCallMode, ChatCallStatus, ChatImageAttachment, ChatImageCandidate, ChatLocationAttachment, ChatMessage, ChatMessageQuote, ChatMode, ChatModelOverrides, ChatModelScope, ChatMusicListenInviteAttachment, ChatMusicListenInviteStatus, ChatOfflineInvitationAttachment, ChatOfflineInvitationStatus, ChatSmallTheaterLinkAttachment, ChatTransferAttachment, ChatTransferStatus, ChatVoiceAttachment, Conversation, ConversationMemoryRecord, ConversationSettings, FavoriteMessageKind, FavoriteMessageRecord, GenerateReplyInput, GeneratedImageRecord, GroupDiscoveryCandidate, GroupMember, GroupNpcDraft, ImageModuleId, MusicCommentThread, MusicListeningContext, MusicTrack, ProfileHomepageRecord, ProfileTheme, SmallTheater, SmallTheaterTopic, Sticker, StickerGroup, UserProfile, VisualProfile, VoomComment, VoomFrequency, VoomImageCandidate, VoomPost, VoomPostVisibility, WorldBookEntry } from '@/types/domain';
 import { createAccountId, createId } from '@/utils/id';
 import { getCharacterAiName, getCharacterInitialProfile, getCharacterVoomAuthorName, getCharacterVoomDisplayName, normalizeCharacterMindStateLines, normalizeCharacterProfile } from '@/utils/character';
 import { getUserAiName, getUserDisplayName, getUserVoomAuthorName, normalizeUserProfile, normalizeVisualProfile } from '@/utils/profile';
@@ -14,7 +14,7 @@ import { getSmallTheaterVisibleText } from '@/utils/smallTheaterHtml';
 import { RECENT_STICKER_GROUP_NAME, cacheStickerImageUrl, createStickerFromDraft, createStickerGroup, getStickerDisplayImageUrl, isLegacyGanadiSticker, isLegacyGanadiStickerGroup, isRecentStickerGroupId, normalizeSticker, normalizeStickerGroup, shouldLocalizeStickerImageUrl, sortRecentStickers, type StickerImportDraft } from '@/utils/stickers';
 import { ageMemoryKind, collectIncrementalGrandSummaries, createMemoryRecord, estimateTokenCount, filterHighestMemoryLayers, getConversationActiveMessages, getConversationFloorCount, getGrandSummaryHiddenRange, getHiddenMessageIds, getMemoryContext, getMemoryMergeDepth, getMessageFloorMap, getMessagesInFloorRange, getNextSummaryRange, getNextSummaryStartFloor, getVisibleMessages, isIncrementalGrandSummary, normalizeConversationSettings, normalizeMemoryRecordEntries, renderCharacterMemoryPrompt, shouldCompressMemory } from '@/utils/memory';
 import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
-import { estimateRoleplayReplyInputTokens, fetchVendorModels, generateConversationSummary, generateImageByProvider, generateRoleplayReply, generateSmallTheater, generateUserVoomComments, generateVoomCommentReplies, generateVoomPost, hasTextGenerationConfig, shouldAutoGenerateMoment, type ConversationSummaryIdentityRule, type RoleplayCallResponse, type RoleplayReplyResult, type RoleplayReplySegment } from '@/services/ai';
+import { discoverGeneratedGroups, estimateRoleplayReplyInputTokens, fetchVendorModels, generateConversationSummary, generateGroupChatReply, generateImageByProvider, generateRoleplayReply, generateSmallTheater, generateUserVoomComments, generateVoomCommentReplies, generateVoomPost, hasTextGenerationConfig, shouldAutoGenerateMoment, type ConversationSummaryIdentityRule, type GroupDiscoveryCharacterContext, type RoleplayCallResponse, type RoleplayReplyResult, type RoleplayReplySegment } from '@/services/ai';
 import { fetchMusicCoverUrl, mergeMusicTrack, refreshPlayableMusicTrack, searchMusicTracks } from '@/services/music';
 import { useMusicPlayerStore } from '@/stores/musicPlayerStore';
 import { GitHubBackupError, downloadGitHubBackup, downloadGitHubBackupVersion, ensureGitHubBackupRepository, formatGitHubBackupError, listGitHubBackupHistory, uploadGitHubBackup } from '@/services/githubBackup';
@@ -119,7 +119,7 @@ interface ImportBackupResult {
 type ConversationSummaryResultStatus = 'created' | 'updated' | 'existing' | 'busy';
 
 export type DataCleanupAction = 'generated-images' | 'message-media' | 'user-sent-images' | 'sticker-local-cache' | 'image-candidates' | 'voice-audio' | 'memory-vectors';
-export type ClearableDataSection = 'messages' | 'voomPosts' | 'smallTheaters' | 'music' | 'worldBooks' | 'stickers' | 'conversationSettings' | 'conversationMemories' | 'conversationMemoryAtoms' | 'generatedImages';
+export type ClearableDataSection = 'messages' | 'voomPosts' | 'smallTheaters' | 'music' | 'worldBooks' | 'stickers' | 'conversationSettings' | 'conversationMemories' | 'generatedImages';
 
 type ConversationSummaryResult =
   | { record: ConversationMemoryRecord; status: Exclude<ConversationSummaryResultStatus, 'busy'> }
@@ -358,7 +358,6 @@ export const useAppStore = defineStore('app', () => {
   const stickers = ref<Sticker[]>([]);
   const conversationSettings = ref<ConversationSettings[]>([]);
   const conversationMemories = ref<ConversationMemoryRecord[]>([]);
-  const conversationMemoryAtoms = ref<ConversationMemoryAtom[]>([]);
   const generatedImages = ref<GeneratedImageRecord[]>([]);
   const musicPlayer = useMusicPlayerStore();
   const favorites = ref<FavoriteMessageRecord[]>([]);
@@ -444,18 +443,6 @@ export const useAppStore = defineStore('app', () => {
     }
     return groupedMemories;
   });
-  const memoryAtomsByConversationId = computed(() => {
-    const groupedAtoms = new Map<string, ConversationMemoryAtom[]>();
-    for (const atom of conversationMemoryAtoms.value) {
-      const conversationAtoms = groupedAtoms.get(atom.conversationId) ?? [];
-      conversationAtoms.push(atom);
-      groupedAtoms.set(atom.conversationId, conversationAtoms);
-    }
-    for (const conversationAtoms of groupedAtoms.values()) {
-      conversationAtoms.sort((leftAtom, rightAtom) => rightAtom.updatedAt - leftAtom.updatedAt);
-    }
-    return groupedAtoms;
-  });
   const stickersByPrimaryGroupId = computed(() => {
     const groupedStickers = new Map<string, Sticker[]>();
     for (const sticker of sortedStickers.value) {
@@ -539,7 +526,6 @@ export const useAppStore = defineStore('app', () => {
       vector: Array.isArray(memory.vector) ? memory.vector : [],
       entries: normalizeMemoryRecordEntries(memory)
     }))).memories;
-    const normalizedMemoryAtoms = normalizeConversationMemoryAtoms(snapshot.conversationMemoryAtoms ?? [], normalizedConversationMemories);
     const normalizedSettings = normalizeAppSettings({
       ...defaultSettings,
       ...snapshot.settings,
@@ -571,18 +557,12 @@ export const useAppStore = defineStore('app', () => {
         characterStickerGroupIds: entry.characterStickerGroupIds.filter((id) => !isRecentStickerGroupId(id) && !stickerLibrary.removedGroupIds.includes(id))
       }, entry.conversationId, snapshot.conversations.find((conversation) => conversation.id === entry.conversationId)?.activeMode)),
       conversationMemories: normalizedConversationMemories,
-      conversationMemoryAtoms: normalizedMemoryAtoms,
       generatedImages: normalizeGeneratedImages(snapshot.generatedImages ?? []),
       favorites: normalizeFavorites(snapshot.favorites ?? []),
       settings: sharedLibraryData.settings
     };
   }
 
-  function normalizeConversationMemoryAtoms(rawAtoms: ConversationMemoryAtom[], memories: ConversationMemoryRecord[]) {
-    void rawAtoms;
-    void memories;
-    return [];
-  }
 
   function getMemoryRangeKey(memory: Pick<ConversationMemoryRecord, 'conversationId' | 'startFloor' | 'endFloor' | 'isMergedSummary'>) {
     return `${memory.conversationId}:${memory.isMergedSummary ? 'merged' : 'single'}:${memory.startFloor}-${memory.endFloor}`;
@@ -630,10 +610,6 @@ export const useAppStore = defineStore('app', () => {
     return dedupedMemories;
   }
 
-  async function persistMissingMemoryAtoms(atoms: ConversationMemoryAtom[]) {
-    if (!atoms.length) return;
-    await Promise.all(atoms.map((atom) => putEntity('conversationMemoryAtoms', atom)));
-  }
 
   function keepDeviceGitHubBackupSettings(snapshot: AppSnapshot): AppSnapshot {
     const currentBackup = settings.value?.githubBackup;
@@ -670,7 +646,6 @@ export const useAppStore = defineStore('app', () => {
     stickers.value = snapshot.stickers;
     conversationSettings.value = snapshot.conversationSettings;
     conversationMemories.value = dedupeConversationMemories(snapshot.conversationMemories).memories;
-    conversationMemoryAtoms.value = normalizeConversationMemoryAtoms(snapshot.conversationMemoryAtoms ?? [], conversationMemories.value);
     generatedImages.value = snapshot.generatedImages;
     favorites.value = normalizeFavorites(snapshot.favorites ?? []);
     settings.value = sharedLibraryData.settings;
@@ -695,7 +670,6 @@ export const useAppStore = defineStore('app', () => {
       smallTheaters: normalizeStoredSmallTheaters(snapshot.smallTheaters ?? []),
       musicCommentThreads: normalizeStoredMusicCommentThreads(snapshot.musicCommentThreads ?? []),
       conversationMemories: normalizedMemories,
-      conversationMemoryAtoms: normalizeConversationMemoryAtoms(snapshot.conversationMemoryAtoms ?? [], normalizedMemories),
       favorites: normalizeFavorites(snapshot.favorites ?? []),
       settings: sharedLibraryData.settings
     };
@@ -721,8 +695,8 @@ export const useAppStore = defineStore('app', () => {
     return (Array.isArray(memory.vector) && memory.vector.length > 0) || Boolean(memory.entries?.some((entry) => entry.vector?.length));
   }
 
-  async function purgeLegacyMemoryVectorData(legacyAtomIds: string[], shouldPersistMemories: boolean) {
-    const tasks: Array<Promise<unknown>> = legacyAtomIds.map((atomId) => deleteEntity('conversationMemoryAtoms', atomId));
+  async function purgeLegacyMemoryVectorData(shouldPersistMemories: boolean) {
+    const tasks: Array<Promise<unknown>> = [];
     if (shouldPersistMemories) {
       tasks.push(...conversationMemories.value.map((memory) => putEntity('conversationMemories', stripMemoryVectorCache(memory))));
     }
@@ -733,8 +707,7 @@ export const useAppStore = defineStore('app', () => {
   function stripRestoreVectorCaches(snapshot: AppSnapshot): AppSnapshot {
     return {
       ...snapshot,
-      conversationMemories: snapshot.conversationMemories.map((memory) => stripMemoryVectorCache(memory)),
-      conversationMemoryAtoms: []
+      conversationMemories: snapshot.conversationMemories.map((memory) => stripMemoryVectorCache(memory))
     };
   }
 
@@ -814,7 +787,6 @@ export const useAppStore = defineStore('app', () => {
     if (hydratePromise) return hydratePromise;
     hydratePromise = (async () => {
     const snapshot = await hydrateStoredMediaRefs(await loadSnapshot());
-    const legacyMemoryAtomIds = (snapshot.conversationMemoryAtoms ?? []).map((atom) => atom.id);
     const shouldPersistMemoryVectorCleanup = snapshot.conversationMemories.some((memory) => memoryHasVectorCache(memory));
     users.value = snapshot.users.map((entry) => normalizeUserProfile(entry));
     const fallbackUserId = snapshot.settings.activeUserId || snapshot.users[0]?.id || '';
@@ -872,7 +844,6 @@ export const useAppStore = defineStore('app', () => {
       vector: [],
       entries: normalizeMemoryRecordEntries(memory).map((entry) => ({ ...entry, vector: [] }))
     })));
-    conversationMemoryAtoms.value = [];
     generatedImages.value = normalizeGeneratedImages(snapshot.generatedImages ?? []);
     favorites.value = normalizeFavorites(favorites.value);
     settings.value = normalizeAppSettings({
@@ -908,8 +879,8 @@ export const useAppStore = defineStore('app', () => {
       ]);
     }
     ready.value = true;
-    if (legacyMemoryAtomIds.length || shouldPersistMemoryVectorCleanup) {
-      void purgeLegacyMemoryVectorData(legacyMemoryAtomIds, shouldPersistMemoryVectorCleanup).catch(() => undefined);
+    if (shouldPersistMemoryVectorCleanup) {
+      void purgeLegacyMemoryVectorData(shouldPersistMemoryVectorCleanup).catch(() => undefined);
     }
     scheduleStartupStorageMaintenance();
     void refreshEnabledVendorModels();
@@ -1029,10 +1000,6 @@ export const useAppStore = defineStore('app', () => {
     return [memoryText.trim(), `【记忆时间线】\n${timeline}`].filter(Boolean).join('\n\n');
   }
 
-  function memoryAtomsForConversation(id: string) {
-    void id;
-    return [];
-  }
 
   function stickersForGroup(groupId: string) {
     if (isRecentStickerGroupId(groupId)) return recentStickers.value;
@@ -1824,7 +1791,10 @@ export const useAppStore = defineStore('app', () => {
 
     favorites.value = favorites.value.map((favorite) => {
       const favoriteConversation = conversationById(favorite.conversationId);
-      const belongsToCharacter = favorite.characterId === characterId || favoriteConversation?.charId === characterId;
+      const favoriteGroupMember = groupMemberForMessage(favoriteConversation, favorite.message);
+      const belongsToCharacter = favoriteConversation?.kind === 'group'
+        ? favoriteGroupMember?.identityType === 'character' && favoriteGroupMember.identityId === characterId
+        : favorite.characterId === characterId || favoriteConversation?.charId === characterId;
       if (!belongsToCharacter) return favorite;
 
       const nextAuthorAvatar = favorite.sender === 'char' ? avatar : favorite.authorAvatar;
@@ -2680,6 +2650,8 @@ export const useAppStore = defineStore('app', () => {
       messageId: quote.messageId,
       sender: quote.sender,
       authorName: quote.authorName.trim() || '未知',
+      authorType: quote.authorType,
+      authorId: quote.authorId,
       content: quote.content.trim(),
       sticker: quote.sticker ? { ...quote.sticker } : undefined,
       image: quote.image ? { ...quote.image } : undefined,
@@ -2727,23 +2699,39 @@ export const useAppStore = defineStore('app', () => {
     return Boolean(message.content.trim() || message.displayStyle === 'narration');
   }
 
+  function groupMemberForMessage(conversation: Conversation | undefined, message: Pick<ChatMessage, 'authorId' | 'authorName' | 'authorType'>) {
+    if (conversation?.kind !== 'group') return undefined;
+    return conversation.groupMembers?.find((member) => (message.authorId && (member.id === message.authorId || member.identityId === message.authorId))
+      || (message.authorType === member.identityType && Boolean(message.authorName?.trim()) && member.trueName === message.authorName?.trim()));
+  }
+
   function normalizeFavorites(entries: FavoriteMessageRecord[]) {
     return entries
       .filter((entry) => entry?.id && entry.sourceMessageId && entry.message)
       .map((entry) => {
         const conversation = conversationById(entry.conversationId);
-        const character = entry.characterId ? characterById(entry.characterId) : conversation ? characterById(conversation.charId) : null;
-        const boundUser = entry.userId ? userById(entry.userId) : conversation ? userById(conversation.userId) : null;
         const message = normalizeStoredMessageIdentityReferences(entry.message);
-        const authorName = entry.sender === 'char'
+        const groupMember = groupMemberForMessage(conversation, message);
+        const character = conversation?.kind === 'group'
+          ? groupMember?.identityType === 'character' && groupMember.identityId ? characterById(groupMember.identityId) : null
+          : entry.characterId
+            ? characterById(entry.characterId)
+            : conversation
+              ? characterById(conversation.charId)
+              : null;
+        const boundUser = entry.userId ? userById(entry.userId) : conversation ? userById(conversation.userId) : null;
+        const authorName = groupMember?.trueName || (entry.sender === 'char'
           ? character ? getCharacterAiName(character) : voomAiNameForIdentity(entry.authorName, entry.characterId)
           : entry.sender === 'user'
             ? boundUser ? getUserAiName(boundUser) : voomAiNameForIdentity(entry.authorName, entry.userId)
-            : '系统';
+            : '系统');
         return {
           ...entry,
           authorName,
-          characterName: character ? getCharacterAiName(character) : entry.characterName ? voomAiNameForIdentity(entry.characterName, entry.characterId) : undefined,
+          authorAvatar: groupMember?.avatar || character?.avatar || entry.authorAvatar,
+          characterId: character?.id,
+          characterName: character ? getCharacterAiName(character) : conversation?.kind === 'group' ? undefined : entry.characterName ? voomAiNameForIdentity(entry.characterName, entry.characterId) : undefined,
+          characterAvatar: character?.avatar,
           userName: boundUser ? getUserAiName(boundUser) : entry.userName ? voomAiNameForIdentity(entry.userName, entry.userId) : undefined,
           message,
           kind: favoriteKindForMessage(message),
@@ -2758,6 +2746,7 @@ export const useAppStore = defineStore('app', () => {
   const sortedFavorites = computed(() => [...favorites.value].sort((left, right) => right.favoritedAt - left.favoritedAt));
 
   function messageAuthorName(message: ChatMessage) {
+    if (message.authorName?.trim()) return message.authorName.trim();
     const conversation = conversationById(message.conversationId);
     if (message.sender === 'char') {
       const character = conversation ? characterById(conversation.charId) : null;
@@ -2778,6 +2767,8 @@ export const useAppStore = defineStore('app', () => {
       messageId: message.id,
       sender: message.sender,
       authorName: messageAuthorName(message),
+      authorType: message.authorType,
+      authorId: message.authorId,
       content,
       sticker: message.sticker ? { ...message.sticker } : undefined,
       image: message.image ? { ...message.image } : undefined,
@@ -2793,14 +2784,19 @@ export const useAppStore = defineStore('app', () => {
 
   function createFavoriteSnapshot(message: ChatMessage): FavoriteMessageRecord {
     const conversation = conversationById(message.conversationId);
-    const character = conversation ? characterById(conversation.charId) : null;
+    const groupMember = groupMemberForMessage(conversation, message);
+    const character = groupMember?.identityType === 'character' && groupMember.identityId
+      ? characterById(groupMember.identityId)
+      : conversation?.kind !== 'group' && conversation
+        ? characterById(conversation.charId)
+        : null;
     const boundUser = conversation ? userById(conversation.userId) : null;
     const authorName = messageAuthorName(message);
-    const authorAvatar = message.sender === 'char'
+    const authorAvatar = groupMember?.avatar || (message.sender === 'char'
       ? character?.avatar
       : message.sender === 'user'
         ? boundUser?.avatar || user.value?.avatar
-        : undefined;
+        : undefined);
 
     return {
       id: createId('fav'),
@@ -2867,9 +2863,16 @@ export const useAppStore = defineStore('app', () => {
     const idSet = new Set(ids);
     const messagesToRemove = messages.value.filter((message) => idSet.has(message.id));
     if (!messagesToRemove.length) return 0;
+    const changedGroupSourceIds = new Map<string, string[]>();
+    for (const message of messagesToRemove) {
+      const conversation = conversationById(message.conversationId);
+      if (conversation?.kind !== 'group' || message.contextOnly) continue;
+      changedGroupSourceIds.set(conversation.id, [...(changedGroupSourceIds.get(conversation.id) ?? []), message.id]);
+    }
     const affectedConversationIds = [...new Set(messagesToRemove.map((message) => message.conversationId))];
     messages.value = messages.value.filter((message) => !idSet.has(message.id));
     await Promise.all(messagesToRemove.map((message) => deleteEntity('messages', message.id)));
+    await Promise.all([...changedGroupSourceIds].map(([groupId, sourceMessageIds]) => refreshGroupSyncedContexts(groupId, sourceMessageIds)));
     await Promise.all(affectedConversationIds.map((conversationId) => touchConversationAfterMessageChange(conversationId)));
     queueStoredMediaPrune();
     return messagesToRemove.length;
@@ -2909,6 +2912,8 @@ export const useAppStore = defineStore('app', () => {
     };
     messages.value[messageIndex] = nextMessage;
     await putEntity('messages', nextMessage);
+    const conversation = conversationById(nextMessage.conversationId);
+    if (conversation?.kind === 'group') await refreshGroupSyncedContexts(conversation.id, [nextMessage.id]);
     await touchConversationAfterMessageChange(nextMessage.conversationId, nextMessage.editedAt);
     return nextMessage;
   }
@@ -3111,11 +3116,13 @@ export const useAppStore = defineStore('app', () => {
     const actorName = targetMessage.sender === 'user' ? '你' : messageAuthorName(targetMessage);
     const recalledContent = messageReadableContent(targetMessage);
     await deleteMessages(targetMessage.id);
-    return appendConversationEvent(
+    const recallEvent = await appendConversationEvent(
       targetMessage.conversationId,
       `${actorName}撤回了一条消息：${recalledContent}`,
       { mode: targetMessage.mode, replyBatchId: options.replyBatchId }
     );
+    if (conversation.kind === 'group' && recallEvent) await syncGroupEventsToCharacterConversations(conversation, [recallEvent]);
+    return recallEvent;
   }
 
   async function recordVoomPostEvents(post: VoomPost, mode?: ChatMode) {
@@ -3703,6 +3710,600 @@ export const useAppStore = defineStore('app', () => {
     await Promise.all([putEntity('characters', character), putEntity('conversations', conversation)]);
   }
 
+  function groupCharacterContext(character: CharacterProfile): GroupDiscoveryCharacterContext {
+    const privateConversation = conversations.value.find((conversation) => conversation.kind !== 'group' && conversation.charId === character.id && conversation.userId === character.boundUserId);
+    const recentMessages = privateConversation ? messagesForConversation(privateConversation.id).filter((message) => message.replyVariantState !== 'inactive').slice(-18) : [];
+    const boundUser = userById(character.boundUserId) ?? user.value;
+    const recentConversation = recentMessages.map((message) => {
+      const speaker = message.sender === 'user' ? getUserAiName(boundUser) : message.sender === 'char' ? getCharacterAiName(character) : '系统';
+      return `${speaker}：${messageReadableContent(message)}`;
+    }).join('\n');
+    return {
+      character,
+      conversationSummary: privateConversation?.summary ?? '',
+      memorySummary: privateConversation ? memoryContextForConversation(privateConversation.id, recentConversation, { storeDebug: false }) : '',
+      recentConversation,
+      localWorldBooks: worldBooks.value.filter((book) => book.scope === 'local' && character.localWorldBookIds.includes(book.id))
+    };
+  }
+
+  function normalizeGroupIdentityText(value: string, group: Pick<Conversation, 'userId' | 'groupMembers'>) {
+    const replacements = (group.groupMembers ?? []).flatMap((member) => {
+      const aliases = new Set<string>([member.nickname]);
+      if (member.identityType === 'character' && member.identityId) {
+        const character = characterById(member.identityId);
+        [character?.nickname, character?.userNote, character?.profile?.nickname, character?.profile?.handle].forEach((alias) => aliases.add(String(alias ?? '').trim()));
+      }
+      if (member.identityType === 'user') {
+        const groupUser = userById(group.userId);
+        [groupUser?.nickname, groupUser?.profile?.nickname, groupUser?.profile?.handle].forEach((alias) => aliases.add(String(alias ?? '').trim()));
+      }
+      return [...aliases]
+        .map((alias) => alias.trim())
+        .filter((alias) => alias.length >= 2 && alias !== member.trueName)
+        .map((alias) => ({ alias, trueName: member.trueName }));
+    }).sort((left, right) => right.alias.length - left.alias.length);
+    return replacements.reduce((text, replacement) => text.split(replacement.alias).join(replacement.trueName), value);
+  }
+
+  async function discoverGroups(characterIds: string[]) {
+    const activeUser = user.value;
+    if (!activeUser) return [];
+    const selectedCharacters = [...new Set(characterIds)].flatMap((id) => {
+      const character = characterById(id);
+      return character && character.boundUserId === activeUser.id ? [character] : [];
+    });
+    if (!selectedCharacters.length) throw new Error('请至少选择一个当前账号绑定的角色。');
+    return discoverGeneratedGroups({ user: activeUser, characters: selectedCharacters.map(groupCharacterContext), settings: settings.value ?? undefined });
+  }
+
+  async function createGroup(name: string, characterIds: string[], announcement = '', npcMembers: GroupNpcDraft[] = []) {
+    const activeUser = user.value;
+    const normalizedName = name.trim();
+    if (!activeUser || !normalizedName) throw new Error('请填写群名称。');
+    const selectedCharacters = [...new Set(characterIds)].flatMap((id) => {
+      const character = characterById(id);
+      return character && character.boundUserId === activeUser.id ? [character] : [];
+    });
+    if (!selectedCharacters.length) throw new Error('请至少选择一个当前账号绑定的角色。');
+    const joinedAt = Date.now();
+    const userMemberId = `member_user_${activeUser.id}`;
+    const normalizedNpcMembers = npcMembers.map((npc): GroupMember => ({
+      id: createId('member-npc'),
+      identityType: 'npc',
+      trueName: npc.trueName.trim(),
+      nickname: npc.nickname.trim() || npc.trueName.trim(),
+      avatar: npc.avatar?.trim() || undefined,
+      description: npc.description.trim(),
+      role: 'member',
+      joinedAt
+    })).filter((npc) => npc.trueName && npc.description);
+    const candidate: GroupDiscoveryCandidate = {
+      id: createId('group-candidate'), name: normalizedName,
+      description: `${getUserAiName(activeUser)}创建的群聊。`, announcement: announcement.trim(), ownerMemberId: userMemberId,
+      discoveryReason: '由当前用户创建', recentMessages: [],
+      members: [...selectedCharacters.map((character): GroupMember => ({
+        id: `member_character_${character.id}`, identityType: 'character', identityId: character.id,
+        trueName: getCharacterAiName(character), nickname: character.nickname || getCharacterAiName(character),
+        avatar: character.avatar, description: character.description, role: 'member', joinedAt
+      })), ...normalizedNpcMembers]
+    };
+    const conversation = await joinGeneratedGroup(candidate);
+    if (!conversation) return;
+    const members = conversation.groupMembers?.map((member) => ({ ...member, role: member.identityType === 'user' ? 'owner' as const : member.role === 'owner' ? 'member' as const : member.role })) ?? [];
+    const nextConversation = { ...conversation, groupMembers: members, summary: `${getUserAiName(activeUser)}创建了群聊「${normalizedName}」。` };
+    conversations.value = conversations.value.map((item) => item.id === conversation.id ? nextConversation : item);
+    await putEntity('conversations', nextConversation);
+    return nextConversation;
+  }
+
+  async function joinGeneratedGroup(candidate: GroupDiscoveryCandidate) {
+    const activeUser = user.value;
+    if (!activeUser) throw new Error('当前没有可用的用户账号。');
+    const joinedAt = Date.now();
+    const userMember: GroupMember = {
+      id: `member_user_${activeUser.id}`, identityType: 'user', identityId: activeUser.id,
+      trueName: getUserAiName(activeUser), nickname: activeUser.nickname || getUserAiName(activeUser),
+      avatar: activeUser.avatar, description: activeUser.description, role: 'member', joinedAt, membershipStatus: 'active'
+    };
+    const members = [...candidate.members.map((member) => ({ ...member, joinedAt: member.joinedAt || joinedAt, membershipStatus: member.membershipStatus ?? 'active' as const })), userMember];
+    const firstCharacter = members.find((member) => member.identityType === 'character' && member.identityId);
+    if (!firstCharacter?.identityId) throw new Error('该群没有可关联的已有角色。');
+    const conversation: Conversation = {
+      id: createId('group'), userId: activeUser.id, charId: firstCharacter.identityId, title: candidate.name,
+      activeMode: 'online', updatedAt: joinedAt, unreadCount: 0,
+      summary: `${getUserAiName(activeUser)}刚加入群聊「${candidate.name}」。${candidate.description}`,
+      kind: 'group', groupAvatar: candidate.avatar || firstCharacter.avatar,
+      groupAnnouncement: candidate.announcement, groupMembers: members, joinedAt,
+      groupAnonymousId: createId('anonymous'), groupAnonymousName: `匿名用户${Math.floor(1000 + Math.random() * 9000)}`
+    };
+    const initialMessages: ChatMessage[] = candidate.recentMessages.map((message, index) => {
+      const member = members.find((item) => item.id === message.authorMemberId);
+      return {
+        id: createId('msg'), conversationId: conversation.id, sender: member?.identityType === 'user' ? 'user' : 'char',
+        authorType: member?.identityType ?? 'npc', authorId: member?.identityId || member?.id,
+        authorName: member?.trueName || '群成员', mode: 'online', content: normalizeGroupIdentityText(message.content, conversation),
+        createdAt: joinedAt - Math.max(0, Math.abs(message.createdAtOffsetMinutes ?? index + 1)) * 60_000, status: 'sent'
+      };
+    });
+    const joinEvent: ChatMessage = {
+      id: createId('msg'), conversationId: conversation.id, sender: 'system', authorType: 'system', authorName: '系统',
+      mode: 'online', content: `${getUserAiName(activeUser)}加入了群聊`, createdAt: joinedAt, status: 'sent'
+    };
+    conversations.value.unshift(conversation);
+    messages.value.push(...initialMessages, joinEvent);
+    await Promise.all([putEntity('conversations', conversation), ...initialMessages.map((message) => putEntity('messages', message)), putEntity('messages', joinEvent)]);
+    await syncGroupEventsToCharacterConversations(conversation, [...initialMessages, joinEvent]);
+    return conversation;
+  }
+
+  function groupUserMessageIdentity(conversation: Conversation) {
+    if (conversation.kind !== 'group') return {};
+    const activeUser = userById(conversation.userId) ?? user.value;
+    return activeUser ? {
+      authorType: 'user' as const,
+      authorId: activeUser.id,
+      authorName: getUserAiName(activeUser)
+    } : {};
+  }
+
+  function groupUserMember(conversation: Conversation) {
+    return conversation.groupMembers?.find((member) => member.identityType === 'user' && member.identityId === conversation.userId) ?? null;
+  }
+
+  function isActiveGroupMember(member: GroupMember | null | undefined) {
+    return Boolean(member && (member.membershipStatus ?? 'active') === 'active');
+  }
+
+  function canCurrentUserManageGroup(conversation: Conversation) {
+    const member = groupUserMember(conversation);
+    return isActiveGroupMember(member) && (member?.role === 'owner' || member?.role === 'admin');
+  }
+
+  function canCurrentUserSendGroupMessage(conversation: Conversation) {
+    if (!isActiveGroupMember(groupUserMember(conversation))) {
+      showConfigAlert('当前账号已经退出群聊或正在等待申请审核，只能使用匿名小号发言。', '无法实名发送');
+      return false;
+    }
+    if (conversation.groupMessagePermission === 'admins' && !canCurrentUserManageGroup(conversation)) {
+      showConfigAlert('当前群只允许群主和管理员发言。', '无法发送');
+      return false;
+    }
+    return true;
+  }
+
+  async function saveGroupConversation(conversation: Conversation) {
+    conversations.value = conversations.value.map((entry) => entry.id === conversation.id ? conversation : entry);
+    await putEntity('conversations', conversation);
+    return conversation;
+  }
+
+  async function appendGroupSystemEvent(conversation: Conversation, content: string) {
+    const createdAt = Date.now();
+    const message: ChatMessage = {
+      id: createId('msg'), conversationId: conversation.id, sender: 'system', authorType: 'system', authorName: '系统',
+      mode: 'online', content: content.trim(), createdAt, status: 'sent'
+    };
+    messages.value.push(message);
+    const nextConversation = { ...conversation, updatedAt: createdAt };
+    await Promise.all([putEntity('messages', message), saveGroupConversation(nextConversation)]);
+    await syncGroupEventsToCharacterConversations(nextConversation, [message]);
+    return message;
+  }
+
+  async function appendGroupUserMessage(conversationId: string, content: string, quote?: ChatMessageQuote | null) {
+    const conversation = conversationById(conversationId);
+    const activeUser = userById(conversation?.userId ?? '') ?? user.value;
+    const trimmedContent = content.trim();
+    if (!conversation || conversation.kind !== 'group' || !activeUser || !trimmedContent) return;
+    if (!canCurrentUserSendGroupMessage(conversation)) return;
+    const message: ChatMessage = {
+      id: createId('msg'), conversationId, sender: 'user', authorType: 'user', authorId: activeUser.id,
+      authorName: getUserAiName(activeUser), mode: conversation.activeMode, content: trimmedContent,
+      quote: cloneMessageQuote(quote), createdAt: Date.now(), status: 'sent'
+    };
+    messages.value.push(message);
+    const nextConversation = { ...conversation, updatedAt: message.createdAt, unreadCount: 0 };
+    conversations.value = conversations.value.map((item) => item.id === conversationId ? nextConversation : item);
+    await Promise.all([putEntity('messages', message), putEntity('conversations', nextConversation)]);
+    await syncGroupEventsToCharacterConversations(nextConversation, [message]);
+    return message;
+  }
+
+  async function appendAnonymousGroupMessage(conversationId: string, content: string) {
+    const conversation = conversationById(conversationId);
+    const trimmedContent = content.trim();
+    if (!conversation || conversation.kind !== 'group' || !trimmedContent) return;
+    const anonymousId = conversation.groupAnonymousId || createId('anonymous');
+    const anonymousName = conversation.groupAnonymousName || `匿名用户${Math.floor(1000 + Math.random() * 9000)}`;
+    const ensuredConversation = conversation.groupAnonymousId && conversation.groupAnonymousName ? conversation : { ...conversation, groupAnonymousId: anonymousId, groupAnonymousName: anonymousName };
+    const message: ChatMessage = {
+      id: createId('msg'), conversationId, sender: 'user', authorType: 'user', authorId: anonymousId, authorName: anonymousName,
+      mode: 'online', content: trimmedContent, createdAt: Date.now(), status: 'sent'
+    };
+    messages.value.push(message);
+    const nextConversation = { ...ensuredConversation, updatedAt: message.createdAt, unreadCount: 0 };
+    await Promise.all([putEntity('messages', message), saveGroupConversation(nextConversation)]);
+    await syncGroupEventsToCharacterConversations(nextConversation, [message]);
+    return message;
+  }
+
+  async function leaveGroupConversation(conversationId: string) {
+    const conversation = conversationById(conversationId);
+    if (!conversation || conversation.kind !== 'group') return false;
+    const member = groupUserMember(conversation);
+    if (!isActiveGroupMember(member)) return false;
+    const exitedAt = Date.now();
+    const members = conversation.groupMembers?.map((entry) => entry.id === member?.id ? { ...entry, membershipStatus: 'left' as const, exitedAt } : entry) ?? [];
+    const nextConversation = await saveGroupConversation({ ...conversation, groupMembers: members, updatedAt: exitedAt });
+    await appendGroupSystemEvent(nextConversation, `${member?.trueName || getUserAiName(userById(conversation.userId) ?? user.value)}退出了群聊`);
+    return true;
+  }
+
+  async function applyToRejoinGroup(conversationId: string) {
+    const conversation = conversationById(conversationId);
+    if (!conversation || conversation.kind !== 'group') return false;
+    const member = groupUserMember(conversation);
+    if (!member || (member.membershipStatus ?? 'active') === 'active') return false;
+    if (conversation.groupJoinPolicy === 'invite-only') {
+      showConfigAlert('当前群仅允许通过邀请重新加入。', '无法申请加入');
+      return false;
+    }
+    if (conversation.groupJoinPolicy === 'open') {
+      const joinedAt = Date.now();
+      const members = conversation.groupMembers?.map((entry) => entry.id === member.id ? { ...entry, membershipStatus: 'active' as const, joinedAt, exitedAt: undefined } : entry) ?? [];
+      const nextConversation = await saveGroupConversation({ ...conversation, groupMembers: members, joinedAt, updatedAt: joinedAt });
+      await appendGroupSystemEvent(nextConversation, `${member.trueName}重新加入了群聊`);
+      return true;
+    }
+    const members = conversation.groupMembers?.map((entry) => entry.id === member.id ? { ...entry, membershipStatus: 'pending' as const } : entry) ?? [];
+    const nextConversation = await saveGroupConversation({ ...conversation, groupMembers: members, updatedAt: Date.now() });
+    await appendGroupSystemEvent(nextConversation, `${member.trueName}申请重新加入群聊`);
+    await requestGroupReply(conversationId, { instruction: `${member.trueName}刚刚提交了重新加入群聊的申请。请由群主或管理员结合群性质与当前关系自然回应，并在 membershipDecision 作出通过、拒绝或暂不处理的决定。`, allowPrivateInitiation: false });
+    return true;
+  }
+
+  async function inviteCharactersToGroup(conversationId: string, characterIds: string[]) {
+    const conversation = conversationById(conversationId);
+    if (!conversation || conversation.kind !== 'group' || !isActiveGroupMember(groupUserMember(conversation))) throw new Error('只有仍在群内时才能邀请成员。');
+    if (conversation.groupInvitePermission === 'admins' && !canCurrentUserManageGroup(conversation)) throw new Error('当前群只允许群主和管理员邀请成员。');
+    const selected = [...new Set(characterIds)].flatMap((characterId) => {
+      const character = characterById(characterId);
+      return character && character.boundUserId === conversation.userId ? [character] : [];
+    });
+    if (!selected.length) throw new Error('请选择至少一个当前账号绑定的角色。');
+    const existingCharacterIds = new Set(conversation.groupMembers?.filter((member) => member.identityType === 'character').map((member) => member.identityId) ?? []);
+    const invited = selected.filter((character) => !existingCharacterIds.has(character.id));
+    if (!invited.length) throw new Error('所选角色已经在群聊中。');
+    const joinedAt = Date.now();
+    const newMembers: GroupMember[] = invited.map((character) => ({
+      id: `member_character_${character.id}_${conversation.id}`, identityType: 'character', identityId: character.id,
+      trueName: getCharacterAiName(character), nickname: character.nickname || getCharacterAiName(character), avatar: character.avatar,
+      description: character.description, role: 'member', joinedAt, membershipStatus: 'active'
+    }));
+    const nextConversation = await saveGroupConversation({ ...conversation, groupMembers: [...(conversation.groupMembers ?? []), ...newMembers], updatedAt: joinedAt });
+    const actorName = groupUserMember(nextConversation)?.trueName || getUserAiName(userById(conversation.userId) ?? user.value);
+    await appendGroupSystemEvent(nextConversation, `${actorName}邀请${newMembers.map((member) => member.trueName).join('、')}加入了群聊`);
+    return newMembers;
+  }
+
+  async function updateManagedGroupProfile(conversationId: string, payload: {
+    title: string;
+    announcement: string;
+    joinPolicy?: NonNullable<Conversation['groupJoinPolicy']>;
+    invitePermission?: NonNullable<Conversation['groupInvitePermission']>;
+    messagePermission?: NonNullable<Conversation['groupMessagePermission']>;
+    historyVisibleToNewMembers?: boolean;
+  }) {
+    const conversation = conversationById(conversationId);
+    if (!conversation || conversation.kind !== 'group' || !canCurrentUserManageGroup(conversation)) throw new Error('只有当前账号作为群主或管理员时才能修改群资料。');
+    const title = payload.title.trim();
+    const announcement = payload.announcement.trim();
+    if (!title) throw new Error('群名称不能为空。');
+    const actorName = groupUserMember(conversation)?.trueName || getUserAiName(userById(conversation.userId) ?? user.value);
+    let nextConversation = conversation;
+    if (title !== conversation.title) {
+      const previousTitle = conversation.title;
+      nextConversation = await saveGroupConversation({ ...nextConversation, title, updatedAt: Date.now() });
+      await appendGroupSystemEvent(nextConversation, `${actorName}将群名从「${previousTitle}」修改为「${title}」`);
+    }
+    if (announcement !== (nextConversation.groupAnnouncement ?? '')) {
+      nextConversation = await saveGroupConversation({ ...nextConversation, groupAnnouncement: announcement, updatedAt: Date.now() });
+      await appendGroupSystemEvent(nextConversation, announcement ? `${actorName}更新了群公告：${announcement}` : `${actorName}清空了群公告`);
+    }
+    const managedSettings = {
+      groupJoinPolicy: payload.joinPolicy ?? nextConversation.groupJoinPolicy ?? 'approval',
+      groupInvitePermission: payload.invitePermission ?? nextConversation.groupInvitePermission ?? 'members',
+      groupMessagePermission: payload.messagePermission ?? nextConversation.groupMessagePermission ?? 'members',
+      groupHistoryVisibleToNewMembers: payload.historyVisibleToNewMembers ?? nextConversation.groupHistoryVisibleToNewMembers ?? true
+    };
+    const settingsChanged = Object.entries(managedSettings).some(([key, value]) => nextConversation[key as keyof Conversation] !== value);
+    if (settingsChanged) {
+      nextConversation = await saveGroupConversation({ ...nextConversation, ...managedSettings, updatedAt: Date.now() });
+      await appendGroupSystemEvent(nextConversation, `${actorName}更新了群聊权限与加入设置`);
+    }
+    return nextConversation;
+  }
+
+  async function updateGroupAvatar(conversationId: string, avatar: string) {
+    const conversation = conversationById(conversationId);
+    const member = conversation?.kind === 'group' ? groupUserMember(conversation) : undefined;
+    if (!conversation || conversation.kind !== 'group' || !isActiveGroupMember(member)) throw new Error('只有当前群成员可以修改群头像。');
+    const groupAvatar = avatar.trim() || undefined;
+    if (groupAvatar === conversation.groupAvatar) return conversation;
+    const nextConversation = await saveGroupConversation({ ...conversation, groupAvatar, updatedAt: Date.now() });
+    await appendGroupSystemEvent(nextConversation, `${member?.trueName || '群成员'}修改了群头像`);
+    return nextConversation;
+  }
+
+  async function updateGroupNpcAvatar(conversationId: string, memberId: string, avatar: string) {
+    const conversation = conversationById(conversationId);
+    const actor = conversation?.kind === 'group' ? groupUserMember(conversation) : undefined;
+    const npc = conversation?.kind === 'group' ? conversation.groupMembers?.find((member) => member.id === memberId && member.identityType === 'npc') : undefined;
+    if (!conversation || conversation.kind !== 'group' || !isActiveGroupMember(actor)) throw new Error('只有当前群成员可以修改 NPC 头像。');
+    if (!npc) throw new Error('NPC 群成员不存在。');
+    const normalizedAvatar = avatar.trim() || undefined;
+    if (normalizedAvatar === npc.avatar) return conversation;
+    const groupMembers = conversation.groupMembers?.map((member) => member.id === memberId ? { ...member, avatar: normalizedAvatar } : member);
+    const nextConversation = await saveGroupConversation({ ...conversation, groupMembers, updatedAt: Date.now() });
+    const changedFavorites: FavoriteMessageRecord[] = [];
+    favorites.value = favorites.value.map((favorite) => {
+      if (favorite.conversationId !== conversationId || groupMemberForMessage(conversation, favorite.message)?.id !== memberId) return favorite;
+      const nextFavorite = { ...favorite, authorAvatar: normalizedAvatar };
+      changedFavorites.push(nextFavorite);
+      return nextFavorite;
+    });
+    await Promise.all(changedFavorites.map((favorite) => putEntity('favorites', toRaw(favorite))));
+    await appendGroupSystemEvent(nextConversation, `${actor?.trueName || '群成员'}修改了${npc.trueName}的头像`);
+    return nextConversation;
+  }
+
+  async function updateGroupPersonalPreferences(conversationId: string, payload: { pinned?: boolean; muted?: boolean; nickname?: string }) {
+    const conversation = conversationById(conversationId);
+    const member = conversation?.kind === 'group' ? groupUserMember(conversation) : undefined;
+    if (!conversation || conversation.kind !== 'group' || !isActiveGroupMember(member)) throw new Error('只有群内成员可以修改本群偏好。');
+    const nickname = payload.nickname?.trim();
+    const groupMembers = nickname === undefined ? conversation.groupMembers : conversation.groupMembers?.map((entry) => entry.id === member?.id ? { ...entry, nickname: nickname || entry.trueName } : entry);
+    const nextConversation = await saveGroupConversation({
+      ...conversation,
+      groupPinned: payload.pinned ?? conversation.groupPinned ?? false,
+      groupMuted: payload.muted ?? conversation.groupMuted ?? false,
+      groupMembers,
+      updatedAt: Date.now()
+    });
+    if (nickname !== undefined && nickname !== (member?.nickname || member?.trueName)) {
+      await appendGroupSystemEvent(nextConversation, `${member?.trueName}将群内昵称修改为「${nickname || member?.trueName}」`);
+    }
+    return nextConversation;
+  }
+
+  function groupMessageContextContent(message: ChatMessage | ChatMessageQuote) {
+    if (message.sticker) return `[Sticker] ${message.sticker.description}`;
+    if (message.image) {
+      if (message.image.kind === 'description') return `[图片描述卡片] ${message.image.description}`;
+      return `[${message.image.kind === 'photo' ? '相机照片' : '本地图片'}] ${message.image.description}${message.image.aiHint ? `；补充线索：${message.image.aiHint}` : ''}`;
+    }
+    if (message.voice) return `[语音] ${message.voice.transcript}`;
+    return message.content.trim();
+  }
+
+  function renderSyncedGroupContext(group: Conversation, sourceMessages: ChatMessage[]) {
+    const eventText = sourceMessages.map((message) => {
+      const quoteText = message.quote ? `（引用${message.quote.authorName}：${groupMessageContextContent(message.quote)}）` : '';
+      return `${message.authorName || '群成员'}：${quoteText}${groupMessageContextContent(message)}`;
+    }).join('\n');
+    return eventText ? `【角色亲历的群聊事件｜${group.title}】\n${eventText}` : '';
+  }
+
+  async function syncGroupEventsToCharacterConversations(group: Conversation, sourceMessages: ChatMessage[]) {
+    if (!sourceMessages.length) return;
+    const characterIds = new Set(group.groupMembers?.filter((member) => member.identityType === 'character' && (member.membershipStatus ?? 'active') === 'active').map((member) => member.identityId).filter((id): id is string => Boolean(id)) ?? []);
+    const targets = conversations.value.filter((conversation) => conversation.kind !== 'group' && characterIds.has(conversation.charId));
+    await Promise.all(targets.flatMap((conversation) => sourceMessages.map(async (sourceMessage, index) => {
+      const content = renderSyncedGroupContext(group, [sourceMessage]);
+      if (!content) return;
+      const alreadySynced = messages.value.some((message) => message.conversationId === conversation.id
+        && message.contextOnly
+        && message.sourceConversationId === group.id
+        && message.sourceMessageIds?.length === 1
+        && message.sourceMessageIds[0] === sourceMessage.id);
+      if (alreadySynced) return;
+      const contextMessage: ChatMessage = {
+        id: createId('msg'), conversationId: conversation.id, sender: 'system', authorType: 'system', authorName: '系统',
+        mode: conversation.activeMode, content,
+        sourceConversationId: group.id, sourceMessageIds: [sourceMessage.id],
+        contextOnly: true, createdAt: Date.now() + index, status: 'sent'
+      };
+      messages.value.push(contextMessage);
+      await putEntity('messages', contextMessage);
+    })));
+  }
+
+  async function refreshGroupSyncedContexts(groupId: string, changedSourceMessageIds: string[]) {
+    const changedIds = new Set(changedSourceMessageIds.map((id) => id.trim()).filter(Boolean));
+    if (!changedIds.size) return;
+    const affectedContexts = messages.value.filter((message) => message.contextOnly
+      && message.sourceConversationId === groupId
+      && message.sourceMessageIds?.some((sourceId) => changedIds.has(sourceId)));
+    const sourceIdsToRebuild = new Set([...changedIds, ...affectedContexts.flatMap((message) => message.sourceMessageIds ?? [])]);
+    if (affectedContexts.length) {
+      const affectedContextIds = new Set(affectedContexts.map((message) => message.id));
+      messages.value = messages.value.filter((message) => !affectedContextIds.has(message.id));
+      await Promise.all(affectedContexts.map((message) => deleteEntity('messages', message.id)));
+    }
+    const group = conversationById(groupId);
+    if (!group || group.kind !== 'group') return;
+    const remainingSources = messages.value.filter((message) => message.conversationId === groupId
+      && !message.contextOnly
+      && sourceIdsToRebuild.has(message.id));
+    await syncGroupEventsToCharacterConversations(group, remainingSources);
+  }
+
+  async function triggerGroupPrivateInitiations(group: Conversation, initiations: Array<{ characterId: string; reason: string }>) {
+    for (const initiation of initiations.slice(0, 1)) {
+      const character = characterById(initiation.characterId);
+      const privateConversation = conversations.value.find((entry) => entry.kind !== 'group' && entry.charId === initiation.characterId && entry.userId === group.userId);
+      if (!character || !privateConversation || isConversationReplying(privateConversation.id)) continue;
+      if (privateConversation.activeMode !== 'online') await updateConversationMode(privateConversation.id, 'online');
+      await requestRoleplayReply(privateConversation.id, {
+        proactive: true,
+        replyInstruction: `你刚刚参与了群聊「${group.title}」，现在因为“${initiation.reason}”自然地想单独联系${getUserAiName(userById(group.userId) ?? user.value)}。请在一对一线上聊天里主动发一组符合当前关系和语境的消息；不要说自己是被系统安排来私聊，也不要复述整段群聊。`
+      });
+    }
+  }
+
+  async function requestGroupReply(conversationId: string, options: { proactive?: boolean; instruction?: string; allowPrivateInitiation?: boolean } = {}) {
+    const conversation = conversationById(conversationId);
+    const activeUser = userById(conversation?.userId ?? '') ?? user.value;
+    if (!conversation || conversation.kind !== 'group' || !activeUser || !conversation.groupMembers?.length || isConversationReplying(conversationId)) return [];
+    const runId = startConversationReply(conversationId);
+    if (!runId) return [];
+    try {
+      const recentMessages = messagesForConversation(conversationId).filter((message) => !message.contextOnly).slice(-36);
+      const groupMessageContent = (message: ChatMessage | ChatMessageQuote) => {
+        if (message.sticker) return `[Sticker] ${message.sticker.description}`;
+        if (message.image) {
+          if (message.image.kind === 'description') return `发送了一张图片，图片内容为“${message.image.description}”。`;
+          const kindLabel = message.image.kind === 'photo' ? '相机照片' : '本地图片';
+          const hintText = message.image.aiHint ? ` 图片内容线索：${message.image.aiHint}。` : '';
+          return `发送了一张${kindLabel}，真实图片已随请求附带，可直接识图。${hintText}`;
+        }
+        if (message.voice) return `发送了一条语音消息，语音内容为“${message.voice.transcript}”。`;
+        return message.content;
+      };
+      const history = recentMessages.map((message) => {
+        const quoteText = message.quote
+          ? `【引用 ${message.quote.authorName}：${normalizeGroupIdentityText(groupMessageContent(message.quote), conversation)}】\n`
+          : '';
+        return `${message.authorName || (message.sender === 'user' ? getUserAiName(activeUser) : '系统')}：${quoteText}${normalizeGroupIdentityText(groupMessageContent(message), conversation)}`;
+      }).join('\n');
+      const characterContexts = conversation.groupMembers.flatMap((member) => {
+        if (member.identityType !== 'character' || !member.identityId) return [];
+        const character = characterById(member.identityId);
+        return character ? [groupCharacterContext(character)] : [];
+      });
+      const chatSettings = settingsForConversation(conversationId);
+      const availableGroupStickers = stickersForGroups(chatSettings.characterStickerGroupIds);
+      const generated = await generateGroupChatReply({
+        user: activeUser, groupName: conversation.title, announcement: conversation.groupAnnouncement ?? '',
+        members: conversation.groupMembers, history, messages: recentMessages, stickerVisionEnabled: chatSettings.stickerVisionEnabled,
+        memorySummary: memoryContextForConversation(conversationId, history, { storeDebug: false }),
+        characterContexts,
+        availableStickers: availableGroupStickers.map((sticker) => ({ id: sticker.id, description: sticker.description })),
+        proactive: options.proactive,
+        instruction: options.instruction,
+        membershipStatus: groupUserMember(conversation)?.membershipStatus ?? 'active',
+        mode: conversation.activeMode,
+        settings: settings.value ?? undefined,
+        modelOverride: getConversationTextModelOverride(chatSettings, conversation.activeMode)
+      });
+      const baseTime = Date.now();
+      const replyBatchId = createId('group-reply');
+      const generatedMessages = generated.messages.map((entry, index) => {
+        const member = conversation.groupMembers?.find((item) => item.id === entry.authorMemberId);
+        const sticker = entry.type === 'sticker' ? availableGroupStickers.find((item) => item.id === entry.stickerId) : null;
+        const normalizedEntryContent = normalizeGroupIdentityText(entry.content, conversation);
+        const content = entry.type === 'voice' ? `[语音] ${normalizedEntryContent}` : entry.type === 'image' ? `[图片描述卡片] ${normalizedEntryContent}` : entry.type === 'sticker' ? `[Sticker] ${sticker?.description || normalizedEntryContent}` : normalizedEntryContent;
+        return {
+          id: createId('msg'), conversationId, sender: 'char' as const, authorType: member?.identityType ?? 'npc',
+          authorId: member?.identityId || member?.id, authorName: member?.trueName || '群成员', mode: conversation.activeMode,
+          content,
+          voice: entry.type === 'voice' ? { source: 'text' as const, transcript: normalizedEntryContent, duration: estimateVoiceDuration(normalizedEntryContent) } : undefined,
+          image: entry.type === 'image' ? { kind: 'description' as const, description: normalizedEntryContent } : undefined,
+          sticker: sticker ? { stickerId: sticker.id, description: sticker.description, imageUrl: sticker.imageUrl, cachedImageUrl: sticker.cachedImageUrl } : undefined,
+          replyBatchId, createdAt: baseTime + index, status: 'sent' as const
+        } satisfies ChatMessage;
+      });
+      const latestConversation = conversationById(conversationId) ?? conversation;
+      const nextConversation = { ...latestConversation, updatedAt: generatedMessages.at(-1)?.createdAt ?? baseTime };
+      if (generatedMessages.length) {
+        messages.value.push(...generatedMessages);
+        conversations.value = conversations.value.map((item) => item.id === conversationId ? nextConversation : item);
+        await Promise.all([...generatedMessages.map((message) => putEntity('messages', message)), putEntity('conversations', nextConversation)]);
+        await syncGroupEventsToCharacterConversations(nextConversation, generatedMessages);
+      }
+      if (generated.membershipDecision) {
+        const latestGroup = conversationById(conversationId) ?? nextConversation;
+        const applicant = groupUserMember(latestGroup);
+        if (applicant?.membershipStatus === 'pending') {
+          const approved = generated.membershipDecision === 'approve';
+          const members = latestGroup.groupMembers?.map((member) => member.id === applicant.id ? { ...member, membershipStatus: approved ? 'active' as const : 'left' as const, exitedAt: approved ? undefined : Date.now(), joinedAt: approved ? Date.now() : member.joinedAt } : member) ?? [];
+          const decidedConversation = await saveGroupConversation({ ...latestGroup, groupMembers: members, updatedAt: Date.now() });
+          await appendGroupSystemEvent(decidedConversation, approved ? `${applicant.trueName}的入群申请已通过` : `${applicant.trueName}的入群申请被拒绝`);
+        }
+      }
+      if (options.allowPrivateInitiation !== false && generated.privateInitiations.length) {
+        await triggerGroupPrivateInitiations(nextConversation, generated.privateInitiations);
+      }
+      void maybeAutoSummarizeConversation(conversationId);
+      return generatedMessages;
+    } catch (error) {
+      showConfigAlert(error instanceof Error ? error.message : '群聊回复生成失败。', '无法生成群聊回复');
+      return [];
+    } finally {
+      finishConversationReply(conversationId, runId);
+    }
+  }
+
+  async function regenerateLatestGroupReply(conversationId: string, instruction = '') {
+    const conversation = conversationById(conversationId);
+    if (!conversation || conversation.kind !== 'group' || isConversationReplying(conversationId)) return false;
+    const conversationMessages = messagesForConversation(conversationId).filter((message) => !message.contextOnly && message.mode === conversation.activeMode);
+    const latestReply = [...conversationMessages].reverse().find((message) => message.sender === 'char' && message.replyBatchId);
+    if (!latestReply?.replyBatchId) {
+      showConfigAlert('暂无可重新生成的群聊回复。', '无法重新回复');
+      return false;
+    }
+    const removedMessages = conversationMessages.filter((message) => message.replyBatchId === latestReply.replyBatchId);
+    await deleteMessages(removedMessages.map((message) => message.id));
+    await requestGroupReply(conversationId, {
+      instruction: instruction.trim() ? `用户要求重新生成上一轮群回复，并补充引导：${instruction.trim()}` : '用户要求重新生成上一轮群回复。请给出与被删除版本不同、但仍符合上下文的自然回复。'
+    });
+    return true;
+  }
+
+  async function deleteGroupConversation(conversationId: string) {
+    const conversation = conversationById(conversationId);
+    if (!conversation || conversation.kind !== 'group') return false;
+    cancelConversationReply(conversationId);
+    const relatedMessages = messages.value.filter((message) => message.conversationId === conversationId || message.sourceConversationId === conversationId);
+    const relatedMemories = conversationMemories.value.filter((memory) => memory.conversationId === conversationId);
+    const relatedMemoryIds = new Set(relatedMemories.map((memory) => memory.id));
+    const relatedSettings = conversationSettings.value.filter((entry) => entry.conversationId === conversationId);
+    messages.value = messages.value.filter((message) => !relatedMessages.some((related) => related.id === message.id));
+    conversationMemories.value = conversationMemories.value.filter((memory) => !relatedMemoryIds.has(memory.id));
+    conversationSettings.value = conversationSettings.value.filter((entry) => entry.conversationId !== conversationId);
+    conversations.value = conversations.value.filter((entry) => entry.id !== conversationId);
+    await Promise.all([
+      deleteEntity('conversations', conversationId),
+      ...relatedMessages.map((message) => deleteEntity('messages', message.id)),
+      ...relatedMemories.map((memory) => deleteEntity('conversationMemories', memory.id)),
+      ...relatedSettings.map((entry) => deleteEntity('conversationSettings', entry.conversationId))
+    ]);
+    queueStoredMediaPrune();
+    return true;
+  }
+
+  async function maybeRequestProactiveGroupReply(conversationId: string) {
+    const conversation = conversationById(conversationId);
+    if (!conversation || conversation.kind !== 'group' || conversation.activeMode !== 'online' || isConversationReplying(conversationId)) return false;
+    const chatSettings = settingsForConversation(conversationId);
+    if (!chatSettings.proactiveReply.enabled) return false;
+    const now = Date.now();
+    const cooldown = proactiveReplyCooldownMs(chatSettings.proactiveReply.frequency);
+    if (chatSettings.proactiveReply.lastTriggeredAt && now - chatSettings.proactiveReply.lastTriggeredAt < cooldown) return false;
+    await touchProactiveReplyAttempt(chatSettings, now);
+    if (Math.random() >= getVoomFrequencyChance(chatSettings.proactiveReply.frequency)) return false;
+    await requestGroupReply(conversationId, { proactive: true });
+    return true;
+  }
+
+  async function runProactiveGroupScheduler() {
+    for (const conversation of conversations.value.filter((entry) => entry.kind === 'group')) {
+      await maybeRequestProactiveGroupReply(conversation.id);
+    }
+  }
+
   async function saveAccountProfile(nextUser: UserProfile) {
     const actualBoundCharacterIds = characters.value
       .filter((character) => character.boundUserId === nextUser.id)
@@ -3813,7 +4414,6 @@ export const useAppStore = defineStore('app', () => {
     const now = Date.now();
     const relatedMessages = conversationId ? messages.value.filter((message) => message.conversationId === conversationId) : [];
     const relatedMemories = conversationId ? conversationMemories.value.filter((memory) => memory.conversationId === conversationId) : [];
-    const relatedMemoryAtoms = conversationId ? conversationMemoryAtoms.value.filter((atom) => atom.conversationId === conversationId) : [];
     const characterNameKeys = new Set([character.id, character.nickname, character.name, getCharacterVoomAuthorName(character)]
       .map((name) => name.trim().toLocaleLowerCase())
       .filter(Boolean));
@@ -3879,7 +4479,6 @@ export const useAppStore = defineStore('app', () => {
     const postUpdateMap = new Map(postsToUpdate.map((post) => [post.id, post]));
     messages.value = messages.value.filter((message) => message.conversationId !== conversationId);
     conversationMemories.value = conversationMemories.value.filter((memory) => memory.conversationId !== conversationId);
-    conversationMemoryAtoms.value = conversationMemoryAtoms.value.filter((atom) => atom.conversationId !== conversationId);
     voomPosts.value = voomPosts.value
       .filter((post) => !postDeleteIds.has(post.id))
       .map((post) => postUpdateMap.get(post.id) ?? post);
@@ -3918,7 +4517,6 @@ export const useAppStore = defineStore('app', () => {
       ...(nextConversation ? [putEntity('conversations', nextConversation)] : []),
       ...relatedMessages.map((message) => deleteEntity('messages', message.id)),
       ...relatedMemories.map((memory) => deleteEntity('conversationMemories', memory.id)),
-      ...relatedMemoryAtoms.map((atom) => deleteEntity('conversationMemoryAtoms', atom.id)),
       ...postsToDelete.map((post) => deleteEntity('voomPosts', post.id)),
       ...postsToUpdate.map((post) => putEntity('voomPosts', post))
     ]);
@@ -4434,11 +5032,13 @@ export const useAppStore = defineStore('app', () => {
     const trimmedContent = content.trim();
     const conversation = conversationById(conversationId);
     if (!trimmedContent || !conversation) return;
+    if (conversation.kind === 'group' && !isActiveGroupMember(groupUserMember(conversation))) return;
 
     const userMessage: ChatMessage = {
       id: createId('msg'),
       conversationId,
       sender: 'user',
+      ...groupUserMessageIdentity(conversation),
       mode: conversation.activeMode,
       content: trimmedContent,
       quote: cloneMessageQuote(quote),
@@ -4528,6 +5128,7 @@ export const useAppStore = defineStore('app', () => {
   async function appendStickerMessage(conversationId: string, sticker: Sticker, quote?: ChatMessageQuote | null) {
     const conversation = conversationById(conversationId);
     if (!conversation) return;
+    if (conversation.kind === 'group' && !canCurrentUserSendGroupMessage(conversation)) return;
     const sentAt = Date.now();
     const resolvedSticker = {
       ...sticker,
@@ -4546,6 +5147,7 @@ export const useAppStore = defineStore('app', () => {
       id: createId('msg'),
       conversationId,
       sender: 'user',
+      ...groupUserMessageIdentity(conversation),
       mode: conversation.activeMode,
       content: `[Sticker] ${resolvedSticker.description}`,
       sticker: {
@@ -4564,6 +5166,7 @@ export const useAppStore = defineStore('app', () => {
     const conversationIndex = conversations.value.findIndex((item) => item.id === conversationId);
     if (conversationIndex >= 0) conversations.value[conversationIndex] = nextConversation;
     await putEntity('conversations', nextConversation);
+    if (nextConversation.kind === 'group') await syncGroupEventsToCharacterConversations(nextConversation, [userMessage]);
     void maybeAutoSummarizeConversation(conversationId);
     return userMessage;
   }
@@ -4620,8 +5223,8 @@ export const useAppStore = defineStore('app', () => {
         id: 'conversationMemories',
         label: '记忆摘要',
         description: '长期记忆摘要与回忆线索',
-        count: conversationMemories.value.length + conversationMemoryAtoms.value.length,
-        bytes: estimateGroupedArrayJsonBytes([conversationMemories.value, conversationMemoryAtoms.value]),
+        count: conversationMemories.value.length,
+        bytes: estimateArrayJsonBytes(conversationMemories.value),
         clearable: true
       },
       {
@@ -4712,8 +5315,7 @@ export const useAppStore = defineStore('app', () => {
       return estimateTransformedFreedBytes(messages.value, (message) => stripVoiceAudio(message));
     }
 
-    return estimateTransformedFreedBytes(conversationMemories.value, (memory) => stripMemoryVectorCache(memory))
-      + estimateArrayJsonBytes(conversationMemoryAtoms.value);
+    return estimateTransformedFreedBytes(conversationMemories.value, (memory) => stripMemoryVectorCache(memory));
   }
 
   function queueStoredMediaPrune() {
@@ -4787,17 +5389,12 @@ export const useAppStore = defineStore('app', () => {
 
     const nextMemories = conversationMemories.value.map((memory) => stripMemoryVectorCache(memory));
     const changedMemories = nextMemories.filter((memory, index) => memory !== conversationMemories.value[index]);
-    const removedAtoms = [...conversationMemoryAtoms.value];
     if (changedMemories.length) {
       const memoryMap = new Map(changedMemories.map((memory) => [memory.id, memory]));
       conversationMemories.value = conversationMemories.value.map((memory) => memoryMap.get(memory.id) ?? memory);
       await Promise.all(changedMemories.map((memory) => putEntity('conversationMemories', memory)));
     }
-    if (removedAtoms.length) {
-      conversationMemoryAtoms.value = [];
-      await Promise.all(removedAtoms.map((atom) => deleteEntity('conversationMemoryAtoms', atom.id)));
-    }
-    return finishDataCleanup(changedMemories.length + removedAtoms.length);
+    return finishDataCleanup(changedMemories.length);
   }
 
   async function clearDataSections(sectionIds: ClearableDataSection[]) {
@@ -4864,20 +5461,9 @@ export const useAppStore = defineStore('app', () => {
     }
     if (sectionSet.has('conversationMemories')) {
       const entries = [...conversationMemories.value];
-      const atoms = [...conversationMemoryAtoms.value];
       conversationMemories.value = [];
-      conversationMemoryAtoms.value = [];
-      await Promise.all([
-        ...entries.map((entry) => deleteEntity('conversationMemories', entry.id)),
-        ...atoms.map((atom) => deleteEntity('conversationMemoryAtoms', atom.id))
-      ]);
-      changed += entries.length + atoms.length;
-    }
-    if (sectionSet.has('conversationMemoryAtoms') && !sectionSet.has('conversationMemories')) {
-      const atoms = [...conversationMemoryAtoms.value];
-      conversationMemoryAtoms.value = [];
-      await Promise.all(atoms.map((atom) => deleteEntity('conversationMemoryAtoms', atom.id)));
-      changed += atoms.length;
+      await Promise.all(entries.map((entry) => deleteEntity('conversationMemories', entry.id)));
+      changed += entries.length;
     }
     if (sectionSet.has('generatedImages')) {
       const entries = [...generatedImages.value];
@@ -4894,11 +5480,13 @@ export const useAppStore = defineStore('app', () => {
     const description = image.description.trim();
     const conversation = conversationById(conversationId);
     if (!trimmedContent || !description || !conversation) return;
+    if (conversation.kind === 'group' && !canCurrentUserSendGroupMessage(conversation)) return;
 
     const userMessage: ChatMessage = {
       id: createId('msg'),
       conversationId,
       sender: 'user',
+      ...groupUserMessageIdentity(conversation),
       mode: conversation.activeMode,
       content: trimmedContent,
       image: {
@@ -4916,6 +5504,7 @@ export const useAppStore = defineStore('app', () => {
     const conversationIndex = conversations.value.findIndex((item) => item.id === conversationId);
     if (conversationIndex >= 0) conversations.value[conversationIndex] = nextConversation;
     await putEntity('conversations', nextConversation);
+    if (nextConversation.kind === 'group') await syncGroupEventsToCharacterConversations(nextConversation, [userMessage]);
     void maybeAutoSummarizeConversation(conversationId);
     return userMessage;
   }
@@ -4924,12 +5513,14 @@ export const useAppStore = defineStore('app', () => {
     const transcript = voice.transcript.trim();
     const conversation = conversationById(conversationId);
     if (!transcript || !conversation) return;
+    if (conversation.kind === 'group' && !canCurrentUserSendGroupMessage(conversation)) return;
 
     const duration = estimateVoiceDuration(transcript, voice.duration);
     const userMessage: ChatMessage = {
       id: createId('msg'),
       conversationId,
       sender: 'user',
+      ...groupUserMessageIdentity(conversation),
       mode: conversation.activeMode,
       content: `[语音] ${transcript}`,
       voice: {
@@ -4949,6 +5540,7 @@ export const useAppStore = defineStore('app', () => {
     const conversationIndex = conversations.value.findIndex((item) => item.id === conversationId);
     if (conversationIndex >= 0) conversations.value[conversationIndex] = nextConversation;
     await putEntity('conversations', nextConversation);
+    if (nextConversation.kind === 'group') await syncGroupEventsToCharacterConversations(nextConversation, [userMessage]);
     void maybeAutoSummarizeConversation(conversationId);
     return userMessage;
   }
@@ -8204,7 +8796,6 @@ export const useAppStore = defineStore('app', () => {
     recentStickers,
     conversationSettings,
     conversationMemories,
-    conversationMemoryAtoms,
     generatedImages,
     settings,
     hydrate,
@@ -8226,7 +8817,6 @@ export const useAppStore = defineStore('app', () => {
     settingsForConversation,
     modelOverridesForConversation,
     memoriesForConversation,
-    memoryAtomsForConversation,
     stickersForGroup,
     visibleMessagesForConversation,
     hiddenMessageIdsForConversation,
@@ -8258,6 +8848,23 @@ export const useAppStore = defineStore('app', () => {
     clearCharacterProfileHistory,
     markCharacterMindStateRead,
     addCharacter,
+    discoverGroups,
+    createGroup,
+    joinGeneratedGroup,
+    appendGroupUserMessage,
+    appendAnonymousGroupMessage,
+    requestGroupReply,
+    leaveGroupConversation,
+    applyToRejoinGroup,
+    inviteCharactersToGroup,
+    updateManagedGroupProfile,
+    updateGroupAvatar,
+    updateGroupNpcAvatar,
+    updateGroupPersonalPreferences,
+    regenerateLatestGroupReply,
+    deleteGroupConversation,
+    maybeRequestProactiveGroupReply,
+    runProactiveGroupScheduler,
     saveConversationSettings,
     saveCharacterModelOverridesForConversation,
     saveStickerGroup,

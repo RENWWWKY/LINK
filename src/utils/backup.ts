@@ -40,7 +40,6 @@ export const linkBackupSnapshotArrayKeys: Array<keyof Omit<AppSnapshot, 'setting
   'stickers',
   'conversationSettings',
   'conversationMemories',
-  'conversationMemoryAtoms',
   'generatedImages',
   'favorites'
 ];
@@ -242,7 +241,6 @@ function sanitizeSnapshotForBackup(snapshot: AppSnapshot): AppSnapshot {
     .map((record) => sanitizeGeneratedImageForBackup(record))
     .filter((record) => record.imageUrl && (record.source !== 'voom' || activeVoomImages.has(record.imageUrl.trim())));
   safeSnapshot.conversationMemories = safeSnapshot.conversationMemories.map((record) => sanitizeMemoryForBackup(record));
-  safeSnapshot.conversationMemoryAtoms = [];
   safeSnapshot.favorites = (safeSnapshot.favorites ?? []).map((record) => sanitizeFavoriteForBackup(record));
   safeSnapshot.settings = sanitizeSettingsForBackup(safeSnapshot.settings);
   return safeSnapshot;

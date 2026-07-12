@@ -8,11 +8,13 @@
           :disabled="disabled"
           :recommendation-query="recommendationQuery"
           :recommended-stickers="recommendedStickers"
+          :quote="quote"
           :show-toolbar-actions="false"
           show-manage-action
           presentation="modal"
           @close="close"
           @manage="openStickersPage"
+          @sent="emit('sent')"
         />
       </section>
     </div>
@@ -23,7 +25,7 @@
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import StickerLibraryPanel from '@/components/stickers/StickerLibraryPanel.vue';
-import type { Sticker } from '@/types/domain';
+import type { ChatMessageQuote, Sticker } from '@/types/domain';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -31,11 +33,13 @@ const props = defineProps<{
   disabled?: boolean;
   recommendationQuery?: string;
   recommendedStickers?: Sticker[];
+  quote?: ChatMessageQuote | null;
 }>();
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean];
   'panelHeightChange': [height: number];
+  sent: [];
 }>();
 
 const router = useRouter();

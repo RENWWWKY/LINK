@@ -2,13 +2,14 @@
   <section v-if="conversation && character" class="screen no-tabs chat-settings-page">
     <header class="top-bar chat-settings-topbar">
       <button class="chat-settings-title-button" type="button" aria-label="返回聊天" @click="goBack">
-        <h1 class="top-title">Chat Settings</h1>
+        <h1 class="top-title">{{ isGroup ? 'Group Settings' : 'Chat Settings' }}</h1>
       </button>
     </header>
 
     <main class="chat-settings-main">
       <section class="chat-settings-panel">
-        <ChatControlPanel :conversation-id="props.id" :character="character" :active-tab="activeTab" />
+        <GroupChatSettingsPanel v-if="isGroup" :conversation-id="props.id" :active-tab="activeTab as GroupSettingsTab" />
+        <ChatControlPanel v-else :conversation-id="props.id" :character="character" :active-tab="activeTab as PanelTab" />
       </section>
     </main>
 
@@ -31,18 +32,26 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { BookOpenText, Image, Palette, Settings2, UserRound } from 'lucide-vue-next';
+import { Bot, BookOpenText, Image, Palette, Settings2, UserRound, UsersRound } from 'lucide-vue-next';
 import ChatControlPanel, { type PanelTab } from '@/components/chat/ChatControlPanel.vue';
+import GroupChatSettingsPanel, { type GroupSettingsTab } from '@/components/chat/GroupChatSettingsPanel.vue';
 import { useAppStore } from '@/stores/appStore';
 
-const tabs = [
+const chatTabs = [
   { id: 'memory' as PanelTab, shortLabel: 'Memory', icon: BookOpenText },
   { id: 'beauty' as PanelTab, shortLabel: 'Beauty', icon: Palette },
   { id: 'profile' as PanelTab, shortLabel: 'Profile', icon: UserRound },
   { id: 'image' as PanelTab, shortLabel: 'Image', icon: Image },
   { id: 'other' as PanelTab, shortLabel: 'More', icon: Settings2 }
+] as const;
+const groupTabs = [
+  { id: 'group' as GroupSettingsTab, shortLabel: 'Group', icon: Settings2 },
+  { id: 'members' as GroupSettingsTab, shortLabel: 'Members', icon: UsersRound },
+  { id: 'memory' as GroupSettingsTab, shortLabel: 'Memory', icon: BookOpenText },
+  { id: 'appearance' as GroupSettingsTab, shortLabel: 'Beauty', icon: Palette },
+  { id: 'ai' as GroupSettingsTab, shortLabel: 'AI', icon: Bot }
 ] as const;
 
 const props = defineProps<{
@@ -52,25 +61,32 @@ const props = defineProps<{
 const route = useRoute();
 const router = useRouter();
 const store = useAppStore();
-const activeTab = ref<PanelTab>('memory');
+const activeTab = ref<PanelTab | GroupSettingsTab>('memory');
 
 const conversation = computed(() => store.conversationById(props.id));
-const character = computed(() => (conversation.value ? store.characterById(conversation.value.charId) : undefined));
+const character = computed(() => {
+  if (!conversation.value) return undefined;
+  if (conversation.value.kind !== 'group') return store.characterById(conversation.value.charId);
+  return conversation.value.groupMembers?.flatMap((member) => member.identityType === 'character' && member.identityId ? [store.characterById(member.identityId)] : []).find(Boolean);
+});
 const isOfflineSettings = computed(() => route.name === 'offline-chat-settings');
+const isGroup = computed(() => conversation.value?.kind === 'group');
+const tabs = computed(() => isGroup.value ? groupTabs : chatTabs);
 
 onMounted(() => {
   void store.hydrate();
 });
+watch(isGroup, (group) => { activeTab.value = group ? 'group' : 'memory'; }, { immediate: true });
 
 function goBack() {
   if (window.history.length > 1) {
     router.back();
     return;
   }
-  void router.push({ name: isOfflineSettings.value ? 'offline-room' : 'chat-room', params: { id: props.id } });
+  void router.push({ name: isOfflineSettings.value ? 'offline-room' : conversation.value?.kind === 'group' ? 'group-chat' : 'chat-room', params: { id: props.id } });
 }
 
-function openTab(tab: PanelTab) {
+function openTab(tab: PanelTab | GroupSettingsTab) {
   activeTab.value = tab;
 }
 </script>

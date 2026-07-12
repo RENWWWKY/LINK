@@ -195,7 +195,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { ArrowDown, ArrowUp, Check, FileUp, ImagePlus, MoveRight, PencilLine, Plus, Search, Settings2, Trash2, Upload, X } from 'lucide-vue-next';
 import { useAppStore } from '@/stores/appStore';
-import type { Sticker, StickerSourceType } from '@/types/domain';
+import type { ChatMessageQuote, Sticker, StickerSourceType } from '@/types/domain';
 import { RECENT_STICKER_GROUP_ID, RECENT_STICKER_GROUP_NAME, createImageFileStickerDraft, getStickerDisplayImageUrl, parseStickerImportText, readStickerImportFile } from '@/utils/stickers';
 import { RECOMMENDED_STICKER_GROUP_ID, RECOMMENDED_STICKER_GROUP_NAME } from '@/utils/stickerRecommendations';
 
@@ -210,6 +210,7 @@ const props = withDefaults(defineProps<{
   disabled?: boolean;
   recommendationQuery?: string;
   recommendedStickers?: Sticker[];
+  quote?: ChatMessageQuote | null;
   presentation?: 'page' | 'modal';
 }>(), {
   conversationId: undefined,
@@ -227,6 +228,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   close: [];
+  sent: [];
   manage: [];
   'update:activeGroupId': [value: string];
 }>();
@@ -435,7 +437,8 @@ async function handleStickerClick(sticker: Sticker) {
     return;
   }
   if (props.disabled) return;
-  await store.sendStickerMessage(props.conversationId, sticker);
+  await store.sendStickerMessage(props.conversationId, sticker, props.quote);
+  emit('sent');
   emit('close');
 }
 

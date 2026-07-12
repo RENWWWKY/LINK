@@ -1,5 +1,5 @@
 import { unzipSync } from 'fflate';
-import type { ApiVendor, AppSettings, CharacterProfile, ConversationTimeAwarenessSettings, GenerateReplyInput, ImageProviderType, MusicComment, MusicTrack, NovelAiModelOption, PollinationsModelOption, PromptContext, SmallTheater, SmallTheaterTopic, UserProfile, VoomComment, VoomFrequency, VoomPost } from '@/types/domain';
+import type { ApiVendor, AppSettings, CharacterProfile, ChatMessage, ConversationTimeAwarenessSettings, GenerateReplyInput, GroupDiscoveryCandidate, GroupMember, ImageProviderType, MusicComment, MusicTrack, NovelAiModelOption, PollinationsModelOption, PromptContext, SmallTheater, SmallTheaterTopic, UserProfile, VoomComment, VoomFrequency, VoomPost, WorldBookEntry } from '@/types/domain';
 import { createId } from '@/utils/id';
 import { getCharacterAiName } from '@/utils/character';
 import { getUserAiName } from '@/utils/profile';
@@ -1786,7 +1786,7 @@ async function prepareVisionImageUrl(url: string) {
   return isGifDataUrl(dataUrl) ? snapshotImageDataUrlAsPng(dataUrl) : dataUrl;
 }
 
-async function getPreparedVisualImageParts(input: GenerateReplyInput): Promise<TextApiContentPart[]> {
+async function getPreparedVisualImageParts(input: Pick<GenerateReplyInput, 'messages' | 'stickerVisionEnabled'>): Promise<TextApiContentPart[]> {
   const parts = await Promise.all(getVisualImageParts(input).map(async (part) => {
     if (part.type !== 'image_url') return part;
     try {
@@ -1799,7 +1799,7 @@ async function getPreparedVisualImageParts(input: GenerateReplyInput): Promise<T
   return parts.filter((part): part is TextApiContentPart => Boolean(part));
 }
 
-function getVisualImageParts(input: GenerateReplyInput): TextApiContentPart[] {
+function getVisualImageParts(input: Pick<GenerateReplyInput, 'messages' | 'stickerVisionEnabled'>): TextApiContentPart[] {
   const stickerParts = input.stickerVisionEnabled ? input.messages
     .slice(-12)
     .filter((message) => message.sender === 'user' && message.sticker?.imageUrl)
@@ -3186,4 +3186,217 @@ function normalizePollinationsModelPayload(payload: unknown): PollinationsModelO
   const byId = new Map(defaultPollinationsModels.map((model) => [model.id, model]));
   models.forEach((model) => byId.set(model.id, model));
   return [...byId.values()];
+}
+
+export interface GroupDiscoveryCharacterContext {
+  character: CharacterProfile;
+  conversationSummary: string;
+  memorySummary: string;
+  recentConversation: string;
+  localWorldBooks: WorldBookEntry[];
+}
+
+export interface GroupGeneratedMessage {
+  authorMemberId: string;
+  content: string;
+  type: 'text' | 'voice' | 'image' | 'sticker';
+  stickerId?: string;
+}
+
+export interface GroupPrivateInitiation {
+  characterId: string;
+  reason: string;
+}
+
+export interface GroupChatReplyResult {
+  messages: GroupGeneratedMessage[];
+  privateInitiations: GroupPrivateInitiation[];
+  membershipDecision: 'approve' | 'reject' | null;
+}
+
+function normalizeGeneratedGroupMembers(value: unknown, selectedCharacters: CharacterProfile[], createdAt: number): GroupMember[] {
+  if (!Array.isArray(value)) return [];
+  const selectedById = new Map(selectedCharacters.map((character) => [character.id, character]));
+  return value.flatMap((entry, index) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const record = entry as Record<string, unknown>;
+    const identityId = String(record.identityId ?? record.characterId ?? '').trim();
+    const selectedCharacter = selectedById.get(identityId);
+    const identityType = selectedCharacter ? 'character' : 'npc';
+    const trueName = selectedCharacter
+      ? getCharacterAiName(selectedCharacter)
+      : String(record.trueName ?? record.name ?? '').trim();
+    if (!trueName) return [];
+    return [{
+      id: String(record.id ?? '').trim() || `member_${identityId || index}_${createdAt}`,
+      identityType,
+      identityId: selectedCharacter?.id,
+      trueName,
+      nickname: String(record.nickname ?? '').trim() || trueName,
+      avatar: selectedCharacter?.avatar,
+      description: selectedCharacter?.description || String(record.description ?? '').trim(),
+      role: record.role === 'owner' || record.role === 'admin' ? record.role : 'member',
+      joinedAt: createdAt
+    } satisfies GroupMember];
+  });
+}
+
+export async function discoverGeneratedGroups(input: {
+  user: UserProfile;
+  characters: GroupDiscoveryCharacterContext[];
+  settings?: AppSettings;
+  modelOverride?: string;
+}): Promise<GroupDiscoveryCandidate[]> {
+  requireTextGenerationConfig(input.settings, input.modelOverride, '查找群聊');
+  const selectedCharacters = input.characters.map((entry) => entry.character);
+  const canonicalUserName = getUserAiName(input.user);
+  const characterContext = input.characters.map((entry) => {
+    const characterName = getCharacterAiName(entry.character);
+    const lore = entry.localWorldBooks.flatMap((book) => book.entries.filter((item) => item.enabled).map((item) => `${book.title}/${item.title}: ${item.content}`)).join('\n');
+    return [
+      `角色ID：${entry.character.id}`,
+      `角色真名：${characterName}`,
+      `角色当前网名（仅社交资料，禁止代替真名）：${entry.character.nickname}`,
+      `角色设定：${entry.character.description}`,
+      `会话总结：${entry.conversationSummary || '暂无'}`,
+      `记忆手册：${entry.memorySummary || '暂无'}`,
+      `近期线上/线下共同楼层：${entry.recentConversation || '暂无'}`,
+      `角色局部世界书：${lore || '暂无'}`
+    ].join('\n');
+  }).join('\n\n---\n\n');
+  const prompt = `你是社交软件 LINK 的群聊搜索模拟器。用户点击“查找目前已有群聊”，请根据用户选择的已有角色及其连续生活经历，生成 3-6 个仿佛本来就存在、用户有合理渠道发现并可申请加入的群聊。
+
+身份铁律：用户只能用真名「${canonicalUserName}」指代。已有角色只能使用下方角色ID和角色真名指代；网名可以作为资料展示，但绝不能写成网名做了某事。不要伪造新的已有角色ID。NPC 必须有稳定真名，可另设网名。
+
+角色上下文：
+${characterContext}
+
+生成要求：
+1. 每个群必须至少包含一位所选已有角色，也可包含 2-8 位合理 NPC；不同群的主题、规模和关系来源要明显不同。
+2. 群主可以是已有角色或 NPC。成员发言符合各自设定，最近消息 6-12 条，像真实群聊，不要人人轮流发言。
+3. discoveryReason 说明用户为何能搜索到该群，不能声称用户已经加入。
+4. existing character 成员写 identityId=角色ID、trueName=角色真名、identityType=character；NPC 不写 identityId，identityType=npc。
+5. 只输出 JSON，不要 Markdown：{"groups":[{"name":"","description":"","announcement":"","ownerMemberId":"成员临时id","discoveryReason":"","members":[{"id":"m1","identityType":"character|npc","identityId":"","trueName":"","nickname":"","description":"","role":"owner|admin|member"}],"recentMessages":[{"authorMemberId":"m1","content":"","createdAtOffsetMinutes":-20}]}]}`;
+  const apiReply = await callTextApi(input.settings, prompt, input.modelOverride);
+  const parsed = JSON.parse(extractJsonContent(apiReply)) as Record<string, unknown>;
+  const rawGroups = Array.isArray(parsed.groups) ? parsed.groups : [];
+  const createdAt = Date.now();
+  return rawGroups.slice(0, 6).flatMap((entry, groupIndex) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const record = entry as Record<string, unknown>;
+    const members = normalizeGeneratedGroupMembers(record.members, selectedCharacters, createdAt);
+    if (!members.some((member) => member.identityType === 'character')) return [];
+    const rawMessages = Array.isArray(record.recentMessages) ? record.recentMessages : [];
+    const memberIds = new Set(members.map((member) => member.id));
+    const recentMessages = rawMessages.slice(0, 12).flatMap((message) => {
+      if (!message || typeof message !== 'object') return [];
+      const messageRecord = message as Record<string, unknown>;
+      const authorMemberId = String(messageRecord.authorMemberId ?? '').trim();
+      const content = String(messageRecord.content ?? '').trim();
+      if (!memberIds.has(authorMemberId) || !content) return [];
+      return [{ authorMemberId, content, createdAtOffsetMinutes: Number(messageRecord.createdAtOffsetMinutes) || 0 }];
+    });
+    const owner = members.find((member) => member.id === String(record.ownerMemberId ?? '').trim()) ?? members.find((member) => member.role === 'owner') ?? members[0];
+    if (!owner) return [];
+    members.forEach((member) => { member.role = member.id === owner.id ? 'owner' : member.role === 'owner' ? 'member' : member.role; });
+    return [{
+      id: `group_candidate_${createdAt}_${groupIndex}`,
+      name: String(record.name ?? '').trim() || `群聊 ${groupIndex + 1}`,
+      description: String(record.description ?? '').trim(),
+      announcement: String(record.announcement ?? '').trim(),
+      ownerMemberId: owner.id,
+      members,
+      recentMessages,
+      discoveryReason: String(record.discoveryReason ?? '').trim()
+    } satisfies GroupDiscoveryCandidate];
+  });
+}
+
+export async function generateGroupChatReply(input: {
+  user: UserProfile;
+  groupName: string;
+  announcement: string;
+  members: GroupMember[];
+  history: string;
+  messages: ChatMessage[];
+  stickerVisionEnabled: boolean;
+  memorySummary: string;
+  characterContexts: GroupDiscoveryCharacterContext[];
+  availableStickers?: Array<{ id: string; description: string }>;
+  proactive?: boolean;
+  instruction?: string;
+  membershipStatus?: 'active' | 'left' | 'pending';
+  mode?: 'online' | 'offline';
+  settings?: AppSettings;
+  modelOverride?: string;
+}): Promise<GroupChatReplyResult> {
+  requireTextGenerationConfig(input.settings, input.modelOverride, '群聊回复');
+  const canonicalUserName = getUserAiName(input.user);
+  const mode = input.mode ?? 'online';
+  const memberTable = input.members.map((member) => `${member.id} | ${member.identityType} | 真名:${member.trueName} | 当前群昵称:${member.nickname} | 身份:${member.role} | 设定:${member.description || '无'}`).join('\n');
+  const characterMemory = input.characterContexts.map((entry) => `${getCharacterAiName(entry.character)}(${entry.character.id})：${entry.memorySummary || entry.conversationSummary || '暂无额外记忆'}`).join('\n');
+  const stickerList = (input.availableStickers ?? []).slice(0, 80).map((sticker) => `${sticker.id}: ${sticker.description}`).join('\n');
+  const prompt = `你是 LINK 群聊的消息导演，同时严格扮演群内角色和 NPC。当前模式是${mode === 'offline' ? '群聊线下 RP：所有群成员处于同一现实场景，以章节正文推进共同剧情' : '线上群聊：以真实社交软件消息推进对话'}。根据用户刚发出的内容与完整上下文，决定自然会回应或行动的成员并生成本轮内容。
+
+群名：${input.groupName}
+群公告：${input.announcement || '无'}
+当前用户真名：${canonicalUserName}
+当前用户群成员状态：${input.membershipStatus || 'active'}
+成员表：
+${memberTable}
+
+已有角色跨私聊/线下/群聊连续记忆：
+${characterMemory || '暂无'}
+
+当前群聊记忆：
+${input.memorySummary || '暂无'}
+
+最近群聊（每行均使用真实名）：
+${input.history || '暂无'}
+
+本轮任务：${input.instruction || (input.proactive ? '没有用户刚发来的新消息。请根据时间流逝和群内生活节奏，生成一轮自然的主动群消息。' : '回应最近发生的群聊。')}
+
+可用 Sticker（只能使用列表中的 id）：
+${stickerList || '无'}
+
+规则：
+1. 只允许成员表里的角色发言，绝不代替用户发言；authorMemberId 必须来自成员表。
+2. 所有行为描述、消息正文中的人物指代只能使用用户真名或角色/NPC真名。网名和群昵称只是可修改资料，绝不能写成网名做了某事。
+3. ${mode === 'offline' ? '这是群聊线下 RP。每条 content 都是该成员视角下可直接展示的沉浸式章节正文，包含必要的场景、动作、神情、对白与多人互动；不得写成聊天气泡口吻，不得替用户决定、行动或发言。输出 1-4 个自然章节，不要机械轮流。' : '像真实群聊：允许无人回复、单人回复、多人插话、连续多条、引用语气、@、跑题与沉默；本轮输出 0-8 条，不要机械轮流。'}
+4. 已有角色必须结合其跨会话记忆，不得把群聊当作孤立世界；但角色不能知道自己未参与且未被转述的秘密。
+5. ${mode === 'offline' ? '线下模式的 type 必须为 text。' : 'type 可为 text、voice、image、sticker。voice 的 content 是语音转写；image 的 content 是图片画面描述；sticker 必须填写 stickerId，content 可填贴纸含义。'}
+6. 如果群内情境让某个已有角色很自然地想单独联系用户，可在 privateInitiations 放入该角色ID和原因；最多 1 个，不能使用 NPC，不能每轮都触发。
+7. 如果当前用户状态为 pending，群主或管理员可根据群设定和上下文决定是否通过申请，在 membershipDecision 输出 approve、reject 或 null；其他状态必须输出 null。
+8. 群内出现匿名小号消息时，不得推断、暗示或泄露它与当前用户的真实身份关系。
+9. 图片与语音是群内所有当前成员共同可见的真实消息：真实图片已随请求附带时可直接识图；文字描述卡片要理解为用户发送了描述所表达的图片；语音条要理解为发送者用语音说出了转写内容。引用消息必须结合被引用内容理解，不能当成孤立文本。
+10. 只输出 JSON：{"messages":[{"authorMemberId":"成员id","type":"text|voice|image|sticker","content":"正文或描述","stickerId":"可选"}],"privateInitiations":[{"characterId":"已有角色ID","reason":"为什么此刻要私聊用户"}],"membershipDecision":"approve|reject|null"}`;
+  const apiReply = await callTextApi(input.settings, prompt, input.modelOverride, await getPreparedVisualImageParts(input));
+  const parsed = JSON.parse(extractJsonContent(apiReply)) as Record<string, unknown>;
+  const rawMessages = Array.isArray(parsed.messages) ? parsed.messages : [];
+  const allowedMembers = new Map(input.members.filter((member) => member.identityType !== 'user' && (member.membershipStatus ?? 'active') === 'active').map((member) => [member.id, member]));
+  const availableStickerIds = new Set((input.availableStickers ?? []).map((sticker) => sticker.id));
+  const messages = rawMessages.slice(0, 8).flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const record = entry as Record<string, unknown>;
+    const authorMemberId = String(record.authorMemberId ?? '').trim();
+    const content = String(record.content ?? '').trim();
+    const requestedType = String(record.type ?? 'text').trim();
+    const stickerId = String(record.stickerId ?? '').trim();
+    const type = mode === 'offline' ? 'text' : requestedType === 'voice' || requestedType === 'image' || requestedType === 'sticker' ? requestedType : 'text';
+    if (!allowedMembers.has(authorMemberId) || (!content && type !== 'sticker')) return [];
+    if (type === 'sticker' && !availableStickerIds.has(stickerId)) return [];
+    return [{ authorMemberId, content, type, stickerId: type === 'sticker' ? stickerId : undefined } satisfies GroupGeneratedMessage];
+  });
+  const characterIds = new Set(input.characterContexts.map((entry) => entry.character.id));
+  const rawPrivateInitiations = Array.isArray(parsed.privateInitiations) ? parsed.privateInitiations : [];
+  const privateInitiations = rawPrivateInitiations.slice(0, 1).flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const record = entry as Record<string, unknown>;
+    const characterId = String(record.characterId ?? '').trim();
+    const reason = String(record.reason ?? '').trim();
+    return characterIds.has(characterId) && reason ? [{ characterId, reason }] : [];
+  });
+  const requestedDecision = String(parsed.membershipDecision ?? '').trim();
+  const membershipDecision = input.membershipStatus === 'pending' && (requestedDecision === 'approve' || requestedDecision === 'reject') ? requestedDecision : null;
+  return { messages, privateInitiations, membershipDecision };
 }

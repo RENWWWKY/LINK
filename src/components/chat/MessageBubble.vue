@@ -3,7 +3,20 @@
     <button v-if="selectionMode" class="selection-dot" type="button" :aria-pressed="selected" @click.stop="emit('toggle-select')">
       <span></span>
     </button>
-    <button v-if="showAvatarButton" class="avatar-button" type="button" :aria-hidden="hideAvatar" :tabindex="hideAvatar ? -1 : 0" @click.stop="handleAvatarClick">
+    <button
+      v-if="showAvatarButton"
+      class="avatar-button"
+      type="button"
+      :aria-hidden="hideAvatar"
+      :tabindex="hideAvatar ? -1 : 0"
+      @click.stop="handleAvatarClick"
+      @contextmenu.prevent.stop="emitAvatarLongPress"
+      @pointercancel="cancelAvatarLongPress"
+      @pointerdown.stop="startAvatarLongPress"
+      @pointerleave="cancelAvatarLongPress"
+      @pointermove.stop="trackAvatarLongPress"
+      @pointerup.stop="cancelAvatarLongPress"
+    >
       <img class="avatar mini" :src="avatarSource" :alt="avatarAlt" />
     </button>
     <div class="bubble-wrap">
@@ -26,6 +39,7 @@
         @pointerup="handlePointerUp"
         @selectstart.prevent.stop="suppressNativeSelection"
       >
+        <span v-if="authorLabel" class="message-author-label">{{ authorLabel }}</span>
         <div class="bubble" :class="{ narration: message.displayStyle === 'narration', sticker: message.sticker, image: message.image, voice: message.voice, location: message.location, transfer: message.transfer, musicListenInvite: message.musicListenInvite, theaterLink: message.theaterLink, offlineInvitation: message.offlineInvitation, call: message.call }" :style="bubbleStyle">
           <template v-if="message.call">
             <section class="call-message-card" :class="[`call-message-card--${message.call.status}`, `call-message-card--${message.call.mode}`, `call-message-card--${message.call.direction}`]" aria-label="通话消息">
@@ -279,6 +293,9 @@ const props = withDefaults(defineProps<{
   selectionMode?: boolean;
   selected?: boolean;
   canQuote?: boolean;
+  authorAvatar?: string;
+  authorName?: string;
+  showAuthorName?: boolean;
 }>(), {
   appearance: () => defaultConversationSettings.appearance,
   canRegenerateImage: false,
@@ -287,12 +304,16 @@ const props = withDefaults(defineProps<{
   profileAlert: false,
   regeneratingImage: false,
   selectionMode: false,
-  selected: false
+  selected: false,
+  authorAvatar: '',
+  authorName: '',
+  showAuthorName: false
 });
 
 const emit = defineEmits<{
   'open-profile': [];
   'open-user-profile': [];
+  'avatar-long-press': [message: ChatMessage];
   'long-press': [message: ChatMessage];
   'toggle-select': [];
   'regenerate-image': [messageId: string, description: string];
@@ -314,6 +335,8 @@ const store = useAppStore();
 
 let longPressTimer: number | undefined;
 let longPressStart: { x: number; y: number } | null = null;
+let avatarLongPressTimer: number | undefined;
+let avatarLongPressStart: { x: number; y: number } | null = null;
 let longPressTriggered = false;
 let suppressingSelection = false;
 let swipeStart: { x: number; y: number; pointerId: number } | null = null;
@@ -442,8 +465,9 @@ const messageVisualSender = computed<ChatMessage['sender']>(() => {
   return props.message.call.direction === 'incoming' ? 'char' : 'user';
 });
 const showAvatarButton = computed(() => messageVisualSender.value === 'char' || (messageVisualSender.value === 'user' && props.appearance.showUserAvatar));
-const avatarSource = computed(() => (messageVisualSender.value === 'user' ? userAvatar.value : props.character.avatar));
-const avatarAlt = computed(() => (messageVisualSender.value === 'user' ? userDisplayName.value : characterDisplayName.value));
+const avatarSource = computed(() => props.authorAvatar || (messageVisualSender.value === 'user' ? userAvatar.value : props.character.avatar));
+const avatarAlt = computed(() => props.authorName || (messageVisualSender.value === 'user' ? userDisplayName.value : characterDisplayName.value));
+const authorLabel = computed(() => props.showAuthorName && messageVisualSender.value === 'char' ? avatarAlt.value : '');
 const showProfileAlert = computed(() => props.profileAlert && messageVisualSender.value === 'char');
 const quoteText = computed(() => props.message.quote?.sticker
   ? props.message.quote.sticker.description
@@ -827,6 +851,37 @@ function handleAvatarClick() {
   else emit('open-profile');
 }
 
+function clearAvatarLongPressTimer() {
+  if (avatarLongPressTimer === undefined) return;
+  window.clearTimeout(avatarLongPressTimer);
+  avatarLongPressTimer = undefined;
+}
+
+function startAvatarLongPress(event: PointerEvent) {
+  if (props.hideAvatar || props.selectionMode || event.button !== 0) return;
+  clearAvatarLongPressTimer();
+  avatarLongPressStart = { x: event.clientX, y: event.clientY };
+  avatarLongPressTimer = window.setTimeout(() => {
+    clearAvatarLongPressTimer();
+    emit('avatar-long-press', props.message);
+  }, 520);
+}
+
+function trackAvatarLongPress(event: PointerEvent) {
+  if (!avatarLongPressStart) return;
+  if (Math.hypot(event.clientX - avatarLongPressStart.x, event.clientY - avatarLongPressStart.y) > 10) cancelAvatarLongPress();
+}
+
+function cancelAvatarLongPress() {
+  clearAvatarLongPressTimer();
+  avatarLongPressStart = null;
+}
+
+function emitAvatarLongPress() {
+  cancelAvatarLongPress();
+  emit('avatar-long-press', props.message);
+}
+
 function emitLongPress(event?: Event) {
   if (props.selectionMode) return;
   event?.preventDefault();
@@ -991,6 +1046,7 @@ watch(() => props.message.id, () => {
 });
 
 onBeforeUnmount(() => {
+  cancelAvatarLongPress();
   stopVoicePlayback();
   stopSuppressingNativeSelection();
 });
@@ -1128,6 +1184,16 @@ onBeforeUnmount(() => {
   user-select: none;
   transform: translate3d(var(--swipe-quote-offset, 0), 0, 0);
   transition: transform 0.18s ease;
+}
+
+.message-author-label {
+  max-width: 100%;
+  overflow: hidden;
+  color: rgba(30, 34, 32, 0.52);
+  font-size: 10px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .bubble-stack *,

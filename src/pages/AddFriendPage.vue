@@ -16,8 +16,15 @@
         :accounts="store.accounts"
         :active-user-id="store.user?.id || ''"
         :local-books="localWorldBooks"
+        :characters="store.charactersForActiveUser"
+        :candidates="groupCandidates"
+        :loading="groupLoading"
+        :error="groupError"
         @scan-import-ready="scanImportReady = $event"
         @add="addFriend"
+        @create-group="createGroup"
+        @discover-groups="discoverGroups"
+        @join-group="joinGroup"
       />
     </main>
 
@@ -43,7 +50,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { LogIn, Plus, ScanLine, UserPlus, UsersRound } from 'lucide-vue-next';
 import AddFriendForm from '@/components/home/AddFriendForm.vue';
 import { useAppStore } from '@/stores/appStore';
-import type { WorldBookEntry } from '@/types/domain';
+import type { GroupDiscoveryCandidate, GroupNpcDraft, WorldBookEntry } from '@/types/domain';
 
 type AddFormTab = 'add' | 'scan' | 'create-group' | 'join-group';
 
@@ -57,8 +64,12 @@ const addTabs = [
 const router = useRouter();
 const route = useRoute();
 const store = useAppStore();
-const activeFormTab = ref<AddFormTab>('add');
+const requestedTab = String(route.query.tab ?? '');
+const activeFormTab = ref<AddFormTab>(requestedTab === 'create-group' || requestedTab === 'join-group' ? requestedTab : 'add');
 const scanImportReady = ref(false);
+const groupCandidates = ref<GroupDiscoveryCandidate[]>([]);
+const groupLoading = ref(false);
+const groupError = ref('');
 
 const localWorldBooks = computed(() => store.worldBooks.filter((book) => book.scope === 'local'));
 const submitFormId = computed(() => {
@@ -103,6 +114,45 @@ async function addFriend(payload: {
     voomFrequency: 'medium'
   });
   goBack();
+}
+
+async function createGroup(payload: { name: string; announcement: string; characterIds: string[]; npcMembers: GroupNpcDraft[] }) {
+  groupError.value = '';
+  groupLoading.value = true;
+  try {
+    const conversation = await store.createGroup(payload.name, payload.characterIds, payload.announcement, payload.npcMembers);
+    if (conversation) await router.push({ name: 'group-chat', params: { id: conversation.id } });
+  } catch (error) {
+    groupError.value = error instanceof Error ? error.message : '创建群聊失败。';
+  } finally {
+    groupLoading.value = false;
+  }
+}
+
+async function discoverGroups(characterIds: string[]) {
+  groupError.value = '';
+  groupLoading.value = true;
+  try {
+    groupCandidates.value = await store.discoverGroups(characterIds);
+    if (!groupCandidates.value.length) groupError.value = 'API 没有生成可加入的群聊，请重试。';
+  } catch (error) {
+    groupError.value = error instanceof Error ? error.message : '查找群聊失败。';
+  } finally {
+    groupLoading.value = false;
+  }
+}
+
+async function joinGroup(candidate: GroupDiscoveryCandidate) {
+  groupError.value = '';
+  groupLoading.value = true;
+  try {
+    const conversation = await store.joinGeneratedGroup(candidate);
+    await router.push({ name: 'group-chat', params: { id: conversation.id } });
+  } catch (error) {
+    groupError.value = error instanceof Error ? error.message : '加入群聊失败。';
+  } finally {
+    groupLoading.value = false;
+  }
 }
 </script>
 

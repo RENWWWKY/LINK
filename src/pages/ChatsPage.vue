@@ -38,14 +38,20 @@
         </button>
       </nav>
 
-      <ConversationListItem
-        v-for="row in visibleRows"
-        :key="row.id"
-        :conversation="row.conversation"
-        :character="row.character"
-        :last-message="row.lastMessage"
-      />
-      <div v-if="!visibleRows.length" class="empty-list">{{ emptyText }}</div>
+      <template v-for="row in visibleCombinedRows" :key="row.id">
+        <ConversationListItem
+          v-if="row.type === 'friend'"
+          :conversation="row.conversation"
+          :character="row.character"
+          :last-message="row.lastMessage"
+        />
+        <GroupConversationListItem
+          v-else
+          :conversation="row.conversation"
+          :last-message="row.lastMessage"
+        />
+      </template>
+      <div v-if="!visibleCombinedRows.length" class="empty-list">{{ emptyText }}</div>
     </div>
 
   </section>
@@ -56,6 +62,7 @@ import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { Images, ListChecks, Plus, ScanLine, Search } from 'lucide-vue-next';
 import ConversationListItem from '@/components/chat/ConversationListItem.vue';
+import GroupConversationListItem from '@/components/chat/GroupConversationListItem.vue';
 import { useAppStore } from '@/stores/appStore';
 import type { CharacterProfile, ChatMessage, Conversation } from '@/types/domain';
 
@@ -66,6 +73,13 @@ interface ChatListRow {
   type: 'friend' | 'group';
   conversation: Conversation;
   character: CharacterProfile;
+  lastMessage?: ChatMessage;
+}
+
+interface GroupListRow {
+  id: string;
+  type: 'group';
+  conversation: Conversation;
   lastMessage?: ChatMessage;
 }
 
@@ -83,7 +97,7 @@ const filterTabs: Array<{ label: string; value: ChatFilter }> = [
 const friendRows = computed<ChatListRow[]>(() =>
   store.charactersForFriendsDisplay
     .flatMap((character) => {
-      const conversation = store.conversations.find((item) => item.charId === character.id && item.userId === character.boundUserId);
+      const conversation = store.conversations.find((item) => item.kind !== 'group' && item.charId === character.id && item.userId === character.boundUserId);
       if (!conversation) return [];
       return [
         {
@@ -100,6 +114,7 @@ const friendRows = computed<ChatListRow[]>(() =>
 
 const chatRows = computed<ChatListRow[]>(() =>
   [...store.conversationsForFriendsDisplay].sort((a, b) => b.updatedAt - a.updatedAt).flatMap((conversation) => {
+    if (conversation.kind === 'group') return [];
     const character = store.characterById(conversation.charId);
     const lastMessage = store.lastMessageForConversation(conversation.id);
     if (!character || !lastMessage) return [];
@@ -107,32 +122,42 @@ const chatRows = computed<ChatListRow[]>(() =>
   })
 );
 
-const groupRows = computed<ChatListRow[]>(() => []);
+const groupRows = computed(() => store.conversationsForFriendsDisplay
+  .filter((conversation) => conversation.kind === 'group')
+  .sort((a, b) => Number(Boolean(b.groupPinned)) - Number(Boolean(a.groupPinned)) || b.updatedAt - a.updatedAt)
+  .map((conversation) => ({ id: `group_${conversation.id}`, type: 'group' as const, conversation, lastMessage: store.lastMessageForConversation(conversation.id) })));
+const groupChatRows = computed(() => groupRows.value.filter((row) => Boolean(row.lastMessage)));
 const allRows = computed<ChatListRow[]>(() => {
   const activeConversationIds = new Set(chatRows.value.map((row) => row.conversation.id));
   return [
     ...chatRows.value,
-    ...friendRows.value.filter((row) => !activeConversationIds.has(row.conversation.id)),
-    ...groupRows.value
+    ...friendRows.value.filter((row) => !activeConversationIds.has(row.conversation.id))
   ];
 });
 
 const visibleRows = computed(() => {
-  if (activeFilter.value === 'group') return groupRows.value;
+  if (activeFilter.value === 'group') return [];
   if (activeFilter.value === 'friends') return friendRows.value;
   if (activeFilter.value === 'all') return allRows.value;
   return chatRows.value;
 });
+const visibleGroupRows = computed<GroupListRow[]>(() => {
+  if (activeFilter.value === 'group' || activeFilter.value === 'all') return groupRows.value;
+  if (activeFilter.value === 'chats') return groupChatRows.value;
+  return [];
+});
+const visibleCombinedRows = computed<Array<ChatListRow | GroupListRow>>(() => [...visibleRows.value, ...visibleGroupRows.value]
+  .sort((left, right) => Number(Boolean(right.conversation.groupPinned)) - Number(Boolean(left.conversation.groupPinned)) || right.conversation.updatedAt - left.conversation.updatedAt));
 
 const emptyText = computed(() => {
-  if (activeFilter.value === 'group') return '群组功能即将加入';
+  if (activeFilter.value === 'group') return '还没有加入群聊';
   if (activeFilter.value === 'chats') return '还没有对话记录';
   if (activeFilter.value === 'friends') return '还没有添加好友';
   return '还没有好友或群组';
 });
 
 function openAddFriendPage() {
-  void router.push({ name: 'add-friend', query: { from: 'chats' } });
+  void router.push({ name: 'add-friend', query: { from: 'chats', tab: activeFilter.value === 'group' ? 'join-group' : undefined } });
 }
 </script>
 

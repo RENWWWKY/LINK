@@ -253,8 +253,6 @@ export interface ChatMemorySettings {
   hideSummarizedMessages: boolean;
   grandSummaryHiddenStartFloor: number;
   grandSummaryVisibleTailFloors: number;
-  atomWriterEnabled: boolean;
-  atomWriterEvery: number;
   autoGrandSummaryEnabled: boolean;
   grandSummaryEvery: number;
   autoMergeEnabled: boolean;
@@ -336,12 +334,6 @@ export type ConversationMemoryEntryType = 'fact' | 'preference' | 'promise' | 'c
 export type ConversationMemoryEntryStatus = 'active' | 'open' | 'resolved' | 'superseded' | 'cancelled';
 export type ConversationMemoryTimeBasis = 'message-time' | 'model-time' | 'memory-created' | 'user-edited';
 
-export interface ConversationMemoryScoreBreakdown {
-  label: string;
-  value: number;
-  reason: string;
-}
-
 export interface ConversationMemoryEntry {
   id: string;
   type: ConversationMemoryEntryType;
@@ -360,39 +352,9 @@ export interface ConversationMemoryEntry {
   timeBasis?: ConversationMemoryTimeBasis;
   importance: number;
   vector?: number[];
-  sourceAtomIds?: string[];
   createdAt: number;
   updatedAt: number;
   expiresAt?: number;
-}
-
-export interface ConversationMemoryAtom extends ConversationMemoryEntry {
-  conversationId: string;
-  mode: ChatMode;
-  sourceMemoryId?: string;
-  sourceMessageIds: string[];
-  confidence: number;
-  pinned?: boolean;
-  archivedAt?: number;
-}
-
-export interface ConversationMemoryDebugTrace {
-  conversationId: string;
-  queryText: string;
-  generatedAt: number;
-  tokenBudget: number;
-  selectedTokenCount: number;
-  selectedAtoms: Array<{
-    id: string;
-    type: ConversationMemoryEntryType;
-    status: ConversationMemoryEntryStatus;
-    subject: string;
-    content: string;
-    score: number;
-    scoreBreakdown: ConversationMemoryScoreBreakdown[];
-    matchedTokens: string[];
-    tokenCount: number;
-  }>;
 }
 
 export interface ConversationMemoryRecord {
@@ -418,6 +380,46 @@ export interface ConversationMemoryRecord {
   compressedAt?: number;
 }
 
+export type GroupMemberIdentityType = 'user' | 'character' | 'npc';
+export type GroupMemberRole = 'owner' | 'admin' | 'member';
+
+export interface GroupMember {
+  id: string;
+  identityType: GroupMemberIdentityType;
+  identityId?: string;
+  trueName: string;
+  nickname: string;
+  avatar?: string;
+  description?: string;
+  role: GroupMemberRole;
+  joinedAt: number;
+  membershipStatus?: 'active' | 'left' | 'pending';
+  exitedAt?: number;
+}
+
+export interface GroupNpcDraft {
+  trueName: string;
+  nickname: string;
+  avatar?: string;
+  description: string;
+}
+
+export interface GroupDiscoveryCandidate {
+  id: string;
+  name: string;
+  avatar?: string;
+  description: string;
+  announcement: string;
+  ownerMemberId: string;
+  members: GroupMember[];
+  recentMessages: Array<{
+    authorMemberId: string;
+    content: string;
+    createdAtOffsetMinutes?: number;
+  }>;
+  discoveryReason: string;
+}
+
 export interface Conversation {
   id: string;
   userId: string;
@@ -427,6 +429,19 @@ export interface Conversation {
   updatedAt: number;
   unreadCount: number;
   summary: string;
+  kind?: 'private' | 'group';
+  groupAvatar?: string;
+  groupAnnouncement?: string;
+  groupJoinPolicy?: 'open' | 'approval' | 'invite-only';
+  groupInvitePermission?: 'members' | 'admins';
+  groupMessagePermission?: 'members' | 'admins';
+  groupHistoryVisibleToNewMembers?: boolean;
+  groupPinned?: boolean;
+  groupMuted?: boolean;
+  groupMembers?: GroupMember[];
+  joinedAt?: number;
+  groupAnonymousId?: string;
+  groupAnonymousName?: string;
 }
 
 export type StickerSourceType = 'url' | 'local-image' | 'text-file' | 'doc-file' | 'json-file' | 'manual';
@@ -576,6 +591,8 @@ export interface ChatMessageQuote {
   messageId: string;
   sender: 'user' | 'char' | 'system';
   authorName: string;
+  authorType?: GroupMemberIdentityType | 'system';
+  authorId?: string;
   content: string;
   sticker?: ChatStickerAttachment;
   image?: ChatImageAttachment;
@@ -592,6 +609,11 @@ export interface ChatMessage {
   id: string;
   conversationId: string;
   sender: 'user' | 'char' | 'system';
+  authorType?: GroupMemberIdentityType | 'system';
+  authorId?: string;
+  authorName?: string;
+  sourceConversationId?: string;
+  sourceMessageIds?: string[];
   mode: ChatMode;
   content: string;
   translation?: string;
@@ -1172,7 +1194,6 @@ export interface AppSnapshot {
   stickers: Sticker[];
   conversationSettings: ConversationSettings[];
   conversationMemories: ConversationMemoryRecord[];
-  conversationMemoryAtoms: ConversationMemoryAtom[];
   generatedImages: GeneratedImageRecord[];
   favorites: FavoriteMessageRecord[];
   settings: AppSettings;

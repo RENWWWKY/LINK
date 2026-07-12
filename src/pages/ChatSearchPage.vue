@@ -33,7 +33,7 @@
       <section v-if="!normalizedQuery" class="search-empty">
         <Search :size="30" />
         <strong>输入关键字搜索</strong>
-        <span>会同时搜索该角色的线上聊天和线下章节。</span>
+        <span>{{ conversation.kind === 'group' ? '会同时搜索当前群的线上消息和群聊线下章节。' : '会同时搜索该角色的线上聊天和线下章节。' }}</span>
       </section>
       <section v-else-if="!searchResults.length" class="search-empty">
         <SearchX :size="30" />
@@ -76,9 +76,13 @@ const query = ref('');
 const searchInputRef = ref<HTMLInputElement | null>(null);
 
 const conversation = computed(() => store.conversationById(props.id));
-const character = computed(() => (conversation.value ? store.characterById(conversation.value.charId) : undefined));
+const character = computed(() => {
+  if (!conversation.value) return undefined;
+  if (conversation.value.kind !== 'group') return store.characterById(conversation.value.charId);
+  return conversation.value.groupMembers?.flatMap((member) => member.identityType === 'character' && member.identityId ? [store.characterById(member.identityId)] : []).find(Boolean);
+});
 const user = computed(() => (conversation.value ? store.userById(conversation.value.userId) : undefined));
-const characterDisplayName = computed(() => (character.value ? getCharacterDisplayName(character.value) : '该角色'));
+const characterDisplayName = computed(() => conversation.value?.kind === 'group' ? conversation.value.title : character.value ? getCharacterDisplayName(character.value) : '该角色');
 const userDisplayName = computed(() => user.value?.nickname || user.value?.name || '我');
 const normalizedQuery = computed(() => query.value.trim().toLocaleLowerCase());
 const searchableMessages = computed(() => store.messagesForConversation(props.id)
@@ -138,13 +142,14 @@ function highlightSegments(text: string, needle: string): HighlightSegment[] {
 }
 
 function senderName(message: ChatMessage) {
+  if (conversation.value?.kind === 'group') return message.authorName || (message.sender === 'system' ? '系统' : '群成员');
   if (message.sender === 'char') return characterDisplayName.value;
   if (message.sender === 'user') return userDisplayName.value;
   return '系统旁白';
 }
 
 function openResult(result: SearchResult) {
-  const routeName = result.message.mode === 'offline' ? 'offline-room' : 'chat-room';
+  const routeName = result.message.mode === 'offline' ? 'offline-room' : conversation.value?.kind === 'group' ? 'group-chat' : 'chat-room';
   void router.push({ name: routeName, params: { id: props.id }, query: { focus: result.message.id } });
 }
 

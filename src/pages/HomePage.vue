@@ -31,16 +31,10 @@
 
       <section>
         <div class="section-heading">
-          <span>Groups</span>
+          <span>Groups {{ groupRows.length }}</span>
           <ChevronUp :size="18" class="muted" />
         </div>
-        <div class="list-row">
-          <div class="round-icon"><UsersRound :size="26" /></div>
-          <div class="row-main">
-            <div class="row-title">Create a group</div>
-            <div class="row-subtitle">Gather your friends in a group chat.</div>
-          </div>
-        </div>
+        <GroupConversationListItem v-for="row in groupRows" :key="row.conversation.id" :conversation="row.conversation" :last-message="row.lastMessage" />
       </section>
 
       <section>
@@ -64,18 +58,23 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { Bell, Bookmark, ChevronUp, ScanLine, Search, Settings, UserPlus, UsersRound } from 'lucide-vue-next';
+import { Bell, Bookmark, ChevronUp, ScanLine, Search, Settings, UserPlus } from 'lucide-vue-next';
 import ServiceGrid from '@/components/home/ServiceGrid.vue';
 import UserProfilePanel from '@/components/home/UserProfilePanel.vue';
+import GroupConversationListItem from '@/components/chat/GroupConversationListItem.vue';
 import { useAppStore } from '@/stores/appStore';
 import { getCharacterDisplayName } from '@/utils/character';
 
 const store = useAppStore();
 const router = useRouter();
+const groupRows = computed(() => store.conversationsForFriendsDisplay
+  .filter((conversation) => conversation.kind === 'group')
+  .sort((left, right) => Number(Boolean(right.groupPinned)) - Number(Boolean(left.groupPinned)) || right.updatedAt - left.updatedAt)
+  .map((conversation) => ({ conversation, lastMessage: store.lastMessageForConversation(conversation.id) })));
 const friendRows = computed(() =>
   store.charactersForFriendsDisplay
     .flatMap((character) => {
-      const conversation = store.conversations.find((item) => item.charId === character.id && item.userId === character.boundUserId);
+      const conversation = store.conversations.find((item) => item.kind !== 'group' && item.charId === character.id && item.userId === character.boundUserId);
       if (!conversation) return [];
       return [{ character, conversation }];
     })
@@ -125,6 +124,7 @@ function openRingtoneSettings() {
 function openAddFriendPage() {
   void router.push({ name: 'add-friend', query: { from: 'home' } });
 }
+
 </script>
 
 <style scoped>
@@ -218,19 +218,23 @@ function openAddFriendPage() {
   font-size: 12px;
 }
 
-.round-icon {
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  background: var(--link-green);
-  color: #ffffff;
+.home-content :deep(.group-conversation-row) {
+  gap: 9px;
+  min-height: 56px;
+  padding: 6px 16px;
 }
 
-.round-icon svg {
-  width: 20px;
-  height: 20px;
+.home-content :deep(.group-conversation-row .conversation-top strong) {
+  font-size: 14px;
+}
+
+.home-content :deep(.group-conversation-row .conversation-top time) {
+  font-size: 11px;
+}
+
+.home-content :deep(.group-conversation-row .conversation-bottom) {
+  margin-top: 2px;
+  font-size: 12px;
 }
 
 .friend-row {

@@ -136,9 +136,69 @@
       </form>
     </section>
 
-    <section v-else class="placeholder-panel">
-      <strong>{{ activeTab === 'create-group' ? '创建群组' : '加入群组' }}</strong>
-      <p>这里先保留占位，后续会接群资料、邀请口令和群聊会话流。</p>
+    <section v-else-if="activeTab === 'create-group'" class="group-panel">
+      <div class="group-intro">
+        <strong>创建群组</strong>
+        <p>选择当前账号绑定的角色，创建后会进入真实群聊消息流。</p>
+      </div>
+      <label class="field">
+        <span>群名称</span>
+        <input v-model="groupName" maxlength="40" placeholder="给群聊起个名字" />
+      </label>
+      <label class="field">
+        <span>群公告</span>
+        <textarea v-model="groupAnnouncement" rows="3" placeholder="选填" />
+      </label>
+      <div class="character-picker">
+        <strong>邀请已有角色</strong>
+        <button v-for="character in characters" :key="character.id" class="character-choice" :class="{ selected: createCharacterIds.includes(character.id) }" type="button" @click="toggleCharacter(createCharacterIds, character.id)">
+          <img :src="character.avatar" :alt="character.name" />
+          <span><b>{{ character.name }}</b><small>{{ character.nickname || '未设置网名' }}</small></span>
+          <i>{{ createCharacterIds.includes(character.id) ? '✓' : '' }}</i>
+        </button>
+      </div>
+      <section class="npc-builder">
+        <header><div><strong>自定义 NPC</strong><span>可创建多个只存在于本群的成员</span></div><button type="button" @click="addNpcDraft">添加 NPC</button></header>
+        <article v-for="(npc, index) in npcDrafts" :key="index" class="npc-card">
+          <div class="npc-card-head"><strong>NPC {{ index + 1 }}</strong><button type="button" @click="removeNpcDraft(index)">删除</button></div>
+          <div class="npc-name-grid">
+            <label class="field"><span>真名</span><input v-model="npc.trueName" maxlength="40" placeholder="群聊中使用的真实姓名" /></label>
+            <label class="field"><span>群昵称</span><input v-model="npc.nickname" maxlength="40" placeholder="选填" /></label>
+          </div>
+          <label class="field"><span>头像 URL</span><input v-model="npc.avatar" placeholder="选填 https://..." /></label>
+          <label class="field"><span>角色设定</span><textarea v-model="npc.description" rows="4" placeholder="性格、身份、关系、说话习惯与群内背景" /></label>
+        </article>
+        <p v-if="!npcDrafts.length">尚未添加自定义 NPC。</p>
+      </section>
+      <button class="group-primary" type="button" :disabled="loading || !groupName.trim() || !createCharacterIds.length || hasInvalidNpc" @click="submitCreateGroup">创建并进入群聊</button>
+    </section>
+
+    <section v-else class="group-panel">
+      <div class="group-intro">
+        <strong>查找目前已有群聊</strong>
+        <p>选择一个或多个角色。API 会结合角色设定、局部世界书、线上/线下楼层与记忆生成可加入的群聊。</p>
+      </div>
+      <div class="character-picker">
+        <button v-for="character in characters" :key="character.id" class="character-choice" :class="{ selected: searchCharacterIds.includes(character.id) }" type="button" @click="toggleCharacter(searchCharacterIds, character.id)">
+          <img :src="character.avatar" :alt="character.name" />
+          <span><b>{{ character.name }}</b><small>{{ character.nickname || '未设置网名' }}</small></span>
+          <i>{{ searchCharacterIds.includes(character.id) ? '✓' : '' }}</i>
+        </button>
+      </div>
+      <button class="group-primary" type="button" :disabled="loading || !searchCharacterIds.length" @click="emit('discover-groups', [...searchCharacterIds])">
+        {{ loading ? '正在读取角色经历并搜索…' : '查找群聊' }}
+      </button>
+      <p v-if="error" class="group-error">{{ error }}</p>
+      <div v-if="candidates.length" class="candidate-list">
+        <article v-for="candidate in candidates" :key="candidate.id" class="candidate-card">
+          <header><div><strong>{{ candidate.name }}</strong><span>{{ candidate.members.length }} 位成员</span></div><button type="button" :disabled="loading" @click="emit('join-group', candidate)">加入</button></header>
+          <p>{{ candidate.description }}</p>
+          <div class="member-stack"><span v-for="member in candidate.members" :key="member.id">{{ member.trueName }}<small v-if="member.role === 'owner'">群主</small></span></div>
+          <div v-if="candidate.announcement" class="announcement"><b>群公告</b>{{ candidate.announcement }}</div>
+          <div class="recent-preview"><div v-for="(message, index) in candidate.recentMessages.slice(-8)" :key="index"><b>{{ candidate.members.find((member) => member.id === message.authorMemberId)?.trueName || '群成员' }}</b><span>{{ message.content }}</span></div></div>
+          <small class="discovery-reason">{{ candidate.discoveryReason }}</small>
+        </article>
+      </div>
     </section>
 
     <AvatarCropperModal v-model="showAvatarEditor" :src="avatarEditorSource" @confirm="applyEditedAvatar" />
@@ -149,7 +209,7 @@
 import { computed, reactive, ref } from 'vue';
 import { ImagePlus } from 'lucide-vue-next';
 import AvatarCropperModal from '@/components/image/AvatarCropperModal.vue';
-import type { UserProfile, WorldBookEntry } from '@/types/domain';
+import type { CharacterProfile, GroupDiscoveryCandidate, GroupNpcDraft, UserProfile, WorldBookEntry } from '@/types/domain';
 import { importSillyTavernCharacterCard, type ImportedCharacterCard } from '@/utils/characterCard';
 import { readImageFileFromInput } from '@/utils/imageFile';
 
@@ -186,15 +246,25 @@ const props = withDefaults(defineProps<{
   activeUserId: string;
   activeTab?: TabId;
   localBooks?: WorldBookEntry[];
+  characters?: CharacterProfile[];
+  candidates?: GroupDiscoveryCandidate[];
+  loading?: boolean;
+  error?: string;
 }>(), {
   activeTab: 'add',
-  localBooks: () => []
+  localBooks: () => [],
+  characters: () => [],
+  candidates: () => [],
+  error: ''
 });
 
 const emit = defineEmits<{
   add: [payload: AddFriendPayload];
   'update:activeTab': [value: TabId];
   'scan-import-ready': [value: boolean];
+  'create-group': [payload: { name: string; announcement: string; characterIds: string[]; npcMembers: GroupNpcDraft[] }];
+  'discover-groups': [characterIds: string[]];
+  'join-group': [candidate: GroupDiscoveryCandidate];
 }>();
 
 const activeTab = computed({
@@ -207,6 +277,14 @@ const avatarEditorSource = ref('');
 const avatarEditTarget = ref<'add' | 'scan'>('add');
 const localBookSelectValue = '__local_world_book_summary__';
 const localBooks = computed(() => props.localBooks.filter((book) => book.scope === 'local'));
+const characters = computed(() => props.characters);
+const candidates = computed(() => props.candidates);
+const groupName = ref('');
+const groupAnnouncement = ref('');
+const createCharacterIds = reactive<string[]>([]);
+const npcDrafts = reactive<GroupNpcDraft[]>([]);
+const searchCharacterIds = reactive<string[]>([]);
+const hasInvalidNpc = computed(() => npcDrafts.some((npc) => !npc.trueName.trim() || !npc.description.trim()));
 
 const draft = reactive({
   nickname: '',
@@ -339,6 +417,29 @@ function submitImportedCharacter() {
   resetScanDraft();
   emit('scan-import-ready', false);
 }
+
+function toggleCharacter(target: string[], characterId: string) {
+  const index = target.indexOf(characterId);
+  if (index >= 0) target.splice(index, 1);
+  else target.push(characterId);
+}
+
+function addNpcDraft() {
+  npcDrafts.push({ trueName: '', nickname: '', avatar: '', description: '' });
+}
+
+function removeNpcDraft(index: number) {
+  npcDrafts.splice(index, 1);
+}
+
+function submitCreateGroup() {
+  emit('create-group', {
+    name: groupName.value.trim(),
+    announcement: groupAnnouncement.value.trim(),
+    characterIds: [...createCharacterIds],
+    npcMembers: npcDrafts.map((npc) => ({ trueName: npc.trueName.trim(), nickname: npc.nickname.trim(), avatar: npc.avatar?.trim(), description: npc.description.trim() }))
+  });
+}
 </script>
 
 <style scoped>
@@ -352,10 +453,48 @@ function submitImportedCharacter() {
 
 .form-grid,
 .scan-panel,
-.placeholder-panel {
+.placeholder-panel,
+.group-panel {
   display: grid;
   gap: 14px;
 }
+
+.group-panel { display: grid; gap: 14px; }
+.group-intro { padding: 16px; border-radius: 22px; background: rgba(255,255,255,.86); box-shadow: 0 12px 30px rgba(21,30,26,.06); }
+.group-intro strong { font-size: 15px; }
+.group-intro p { margin: 6px 0 0; color: #72797c; line-height: 1.6; }
+.character-picker { display: grid; gap: 8px; }
+.character-picker > strong { color: #4c5357; font-size: 11px; }
+.character-choice { display: flex; align-items: center; gap: 10px; min-height: 58px; padding: 8px 11px; border: 1px solid rgba(17,17,17,.06); border-radius: 18px; background: rgba(255,255,255,.88); text-align: left; }
+.character-choice.selected { border-color: rgba(6,199,85,.38); background: #eef9f2; }
+.character-choice img { width: 40px; height: 40px; border-radius: 13px; object-fit: cover; }
+.character-choice span { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.character-choice b,.character-choice small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.character-choice small { color: #8a9093; }
+.character-choice i { width: 24px; color: #06a94c; font-size: 16px; font-style: normal; text-align: center; }
+.group-primary { min-height: 46px; border-radius: 16px; background: #111; color: white; font-weight: 800; }
+.group-primary:disabled { opacity: .4; }
+.npc-builder { display:grid;gap:10px;padding:13px;border:1px solid rgba(17,17,17,.05);border-radius:20px;background:rgba(255,255,255,.72) }
+.npc-builder>header,.npc-card-head { display:flex;align-items:center;justify-content:space-between;gap:10px }
+.npc-builder>header div { display:grid;gap:2px }.npc-builder>header span,.npc-builder>p { color:#858c88;font-size:10px }.npc-builder>header button { padding:7px 11px;border-radius:999px;background:#eaf8ef;color:#07853c;font-weight:850 }
+.npc-builder>p { margin:0;padding:8px;text-align:center }.npc-card { display:grid;gap:10px;padding:12px;border-radius:16px;background:#f6f8f7 }.npc-card-head button { color:#cf3850;font-size:11px;font-weight:800 }.npc-name-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px }
+.group-error { margin: 0; padding: 10px 12px; border-radius: 12px; background: #fff0f2; color: #bf2940; }
+.candidate-list { display: grid; gap: 12px; }
+.candidate-card { display: grid; gap: 10px; padding: 14px; border-radius: 22px; background: rgba(255,255,255,.94); box-shadow: 0 12px 28px rgba(21,30,26,.07); }
+.candidate-card header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.candidate-card header div { display: grid; gap: 2px; }
+.candidate-card header strong { font-size: 15px; }
+.candidate-card header span,.candidate-card > p,.discovery-reason { color: #7c8386; }
+.candidate-card header button { padding: 8px 15px; border-radius: 999px; background: #eaf8ef; color: #07853c; font-weight: 800; }
+.candidate-card > p { margin: 0; line-height: 1.5; }
+.member-stack { display: flex; flex-wrap: wrap; gap: 6px; }
+.member-stack span { padding: 5px 8px; border-radius: 999px; background: #f2f4f3; }
+.member-stack small { margin-left: 4px; color: #0a9a47; }
+.announcement { display: grid; gap: 3px; padding: 9px 10px; border-radius: 12px; background: #f7f8f7; line-height: 1.45; }
+.recent-preview { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid #f0f1f0; }
+.recent-preview div { display: grid; grid-template-columns: minmax(50px, auto) 1fr; gap: 8px; }
+.recent-preview b { color: #59605d; }
+.recent-preview span { min-width: 0; color: #202321; overflow-wrap: anywhere; }
 
 .wide-field {
   min-width: 0;

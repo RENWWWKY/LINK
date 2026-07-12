@@ -242,9 +242,14 @@ const floorEditDraft = ref('');
 const offlineScrollRef = ref<HTMLElement | null>(null);
 const composerRef = ref<HTMLTextAreaElement | null>(null);
 const conversation = computed(() => store.conversationById(props.id));
-const character = computed(() => (conversation.value ? store.characterById(conversation.value.charId) : undefined));
+const isGroup = computed(() => conversation.value?.kind === 'group');
+const character = computed(() => {
+  if (!conversation.value) return undefined;
+  if (conversation.value.kind !== 'group') return store.characterById(conversation.value.charId);
+  return conversation.value.groupMembers?.flatMap((member) => member.identityType === 'character' && member.identityId ? [store.characterById(member.identityId)] : []).find(Boolean);
+});
 const conversationUser = computed(() => (conversation.value ? store.userById(conversation.value.userId) : undefined));
-const characterDisplayName = computed(() => (character.value ? getCharacterDisplayName(character.value) : ''));
+const characterDisplayName = computed(() => isGroup.value ? `${conversation.value?.title ?? '群聊'}（${conversation.value?.groupMembers?.filter((member) => (member.membershipStatus ?? 'active') === 'active').length ?? 0}）` : character.value ? getCharacterDisplayName(character.value) : '');
 const characterTrueName = computed(() => character.value?.name.trim() || characterDisplayName.value || '角色');
 const userTrueName = computed(() => getUserAiName(conversationUser.value));
 const currentConversationReplying = computed(() => store.isConversationReplying(props.id));
@@ -266,6 +271,7 @@ interface ChapterFloor {
   replyBatchId: string;
   replyVariantGroupId: string;
   hidden: boolean;
+  authorNames: string[];
 }
 
 interface ReplyOption {
@@ -346,7 +352,8 @@ function createChapterFloor(messages: ChatMessage[], index: number): ChapterFloo
     content: floorContent(messages),
     replyBatchId: primary?.replyBatchId ?? '',
     replyVariantGroupId: primary?.replyVariantGroupId ?? '',
-    hidden: messages.some((message) => hiddenMessageIds.value.has(message.id))
+    hidden: messages.some((message) => hiddenMessageIds.value.has(message.id)),
+    authorNames: [...new Set(messages.map((message) => message.authorName?.trim()).filter((name): name is string => Boolean(name)))]
   };
 }
 
@@ -469,6 +476,7 @@ function displayContentForFloor(floor: ChapterFloor) {
 }
 
 function floorSenderName(floor: ChapterFloor) {
+  if (isGroup.value && floor.authorNames.length) return floor.authorNames.join('、');
   if (floor.sender === 'user') return userTrueName.value;
   if (floor.sender === 'char') return characterTrueName.value;
   return '事件';
@@ -843,7 +851,12 @@ async function send() {
   const previousCharacterFloorId = latestCharacterFloor()?.id ?? '';
   releaseKeyboardScrollGuard();
   draft.value = '';
-  await store.sendMessage(props.id, content);
+  if (isGroup.value) {
+    await store.appendGroupUserMessage(props.id, content);
+    await store.requestGroupReply(props.id, { instruction: '用户在线下群聊场景中输入了新的行动、对白或场景。请承接已有线下章节，由在场且自然会行动或回应的群成员推进共同剧情。', allowPrivateInitiation: false });
+  } else {
+    await store.sendMessage(props.id, content);
+  }
   await jumpToLatestCharacterFloor(previousCharacterFloorId);
 }
 
@@ -855,16 +868,21 @@ async function continueOfflineChapter() {
   truncateDeleteMode.value = false;
   showJumpDialog.value = false;
   cancelFloorEdit();
-  await store.requestRoleplayReply(props.id, {
-    replyInstruction: '用户点击了线下页面的“继续”按钮，没有输入新的行动或对白。请直接承接最近线下章节、记忆和当前氛围，续写下一章节正文；不要替用户发言或添加用户未表达的新决定。'
-  });
+  if (isGroup.value) {
+    await store.requestGroupReply(props.id, { instruction: '用户点击了群聊线下页面的“继续”按钮，没有输入新的行动或对白。请直接承接最近线下章节、共同记忆和当前氛围，由合适的群成员续写下一章节正文；不要替用户发言或添加用户未表达的新决定。', allowPrivateInitiation: false });
+  } else {
+    await store.requestRoleplayReply(props.id, {
+      replyInstruction: '用户点击了线下页面的“继续”按钮，没有输入新的行动或对白。请直接承接最近线下章节、记忆和当前氛围，续写下一章节正文；不要替用户发言或添加用户未表达的新决定。'
+    });
+  }
   await jumpToLatestCharacterFloor(previousCharacterFloorId);
 }
 
 async function regenerateLatestReply(replyInstruction?: string) {
   if (!canRegenerate.value) return;
   const previousCharacterFloorId = latestCharacterFloor()?.id ?? '';
-  await store.regenerateLatestReply(props.id, { replyInstruction });
+  if (isGroup.value) await store.regenerateLatestGroupReply(props.id, replyInstruction);
+  else await store.regenerateLatestReply(props.id, { replyInstruction });
   await jumpToLatestCharacterFloor(previousCharacterFloorId);
 }
 
@@ -885,7 +903,7 @@ function goBack() {
 
 async function exitOffline() {
   await store.updateConversationMode(props.id, 'online');
-  await router.replace({ name: 'chat-room', params: { id: props.id } });
+  await router.replace({ name: isGroup.value ? 'group-chat' : 'chat-room', params: { id: props.id } });
 }
 </script>
 

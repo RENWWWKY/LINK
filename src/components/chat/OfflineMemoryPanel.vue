@@ -2395,7 +2395,6 @@ function hasHiddenRange(memory: ConversationMemoryRecord) {
 .offline-memory-page .toggle-copy small,
 .offline-memory-page .offline-field > span,
 .offline-memory-page .offline-field small,
-.offline-memory-page .atom-title strong,
 .offline-memory-page .primary-pill,
 .offline-memory-page .soft-pill,
 .offline-memory-page .danger-pill,

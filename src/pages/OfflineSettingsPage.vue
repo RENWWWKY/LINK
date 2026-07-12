@@ -223,8 +223,12 @@ const toggleItems: Array<{ key: keyof Pick<ConversationOfflineSettings, 'enhance
 const store = useAppStore();
 const router = useRouter();
 const conversation = computed(() => store.conversationById(props.id));
-const character = computed(() => (conversation.value ? store.characterById(conversation.value.charId) : undefined));
-const characterDisplayName = computed(() => (character.value ? getCharacterDisplayName(character.value) : ''));
+const character = computed(() => {
+  if (!conversation.value) return undefined;
+  if (conversation.value.kind !== 'group') return store.characterById(conversation.value.charId);
+  return conversation.value.groupMembers?.flatMap((member) => member.identityType === 'character' && member.identityId ? [store.characterById(member.identityId)] : []).find(Boolean);
+});
+const characterDisplayName = computed(() => conversation.value?.kind === 'group' ? conversation.value.title : character.value ? getCharacterDisplayName(character.value) : '');
 const chatSettings = computed(() => store.settingsForConversation(props.id));
 const offlineSettings = computed(() => chatSettings.value.offline);
 const writingStylePresets = computed(() => offlineSettings.value.writingStylePresets);

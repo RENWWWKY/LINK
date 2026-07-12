@@ -55,6 +55,7 @@ const router = useRouter();
 const musicPlayer = useMusicPlayerStore();
 const musicAudioRef = ref<HTMLAudioElement | null>(null);
 let githubAutoBackupTimer: number | undefined;
+let proactiveGroupTimer: number | undefined;
 let globalCallFloatDrag: { pointerId: number; startX: number; startY: number; originX: number; originY: number; moved: boolean } | null = null;
 let suppressGlobalCallFloatClick = false;
 const themeFontStyleId = 'link-theme-fonts';
@@ -353,12 +354,23 @@ watch(routeCharacter, () => {
 }, { immediate: true, deep: true });
 watch(keepAliveSettings, syncKeepAlive, { immediate: true, deep: true });
 
+watch(() => store.ready, (ready) => {
+  if (proactiveGroupTimer !== undefined) window.clearInterval(proactiveGroupTimer);
+  proactiveGroupTimer = undefined;
+  if (!ready) return;
+  void store.runProactiveGroupScheduler();
+  proactiveGroupTimer = window.setInterval(() => {
+    void store.runProactiveGroupScheduler();
+  }, 60_000);
+}, { immediate: true });
+
 onMounted(() => {
   musicPlayer.setAudioElement(musicAudioRef.value);
 });
 
 onBeforeUnmount(() => {
   clearGitHubAutoBackupTimer();
+  if (proactiveGroupTimer !== undefined) window.clearInterval(proactiveGroupTimer);
   setAppFontFamily('');
   document.documentElement.style.removeProperty('--app-display-scale');
   document.documentElement.style.removeProperty('--compact-page-font-size');

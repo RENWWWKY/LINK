@@ -96,8 +96,6 @@ A[角色A]-->|关系变化|B[角色B]
   hideSummarizedMessages: true,
   grandSummaryHiddenStartFloor: 1,
   grandSummaryVisibleTailFloors: 20,
-  atomWriterEnabled: false,
-  atomWriterEvery: 1,
   autoGrandSummaryEnabled: true,
   grandSummaryEvery: 250,
   autoMergeEnabled: true,
@@ -399,8 +397,6 @@ export function normalizeConversationSettings(settings: Partial<ConversationSett
       hideSummarizedMessages: memory.hideSummarizedMessages ?? memoryDefaults.hideSummarizedMessages,
       grandSummaryHiddenStartFloor,
       grandSummaryVisibleTailFloors,
-      atomWriterEnabled: false,
-      atomWriterEvery: 1,
       autoGrandSummaryEnabled: memory.autoGrandSummaryEnabled ?? memory.autoMergeEnabled ?? memoryDefaults.autoGrandSummaryEnabled,
       grandSummaryEvery: Math.min(300, Math.max(20, grandSummaryEvery)),
       autoMergeEnabled: memory.autoMergeEnabled ?? memoryDefaults.autoMergeEnabled,
@@ -651,7 +647,6 @@ function normalizeMemoryEntryMeta(entry: Partial<ConversationMemoryEntry>, type:
     counterparty: normalizeField('counterparty'),
     due: normalizeField('due'),
     resolution: normalizeField('resolution'),
-    sourceAtomIds: Array.isArray(entry.sourceAtomIds) ? [...new Set(entry.sourceAtomIds.map((id) => String(id).trim()).filter(Boolean))] : undefined
   };
 }
 
