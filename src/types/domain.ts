@@ -1,6 +1,6 @@
 export type ChatMode = 'online' | 'offline';
 
-export type AppTab = 'home' | 'chats' | 'voom' | 'music' | 'fanfic';
+export type AppTab = 'home' | 'voom' | 'music' | 'fanfic';
 
 export interface VisualProfileStats {
   posts: number;

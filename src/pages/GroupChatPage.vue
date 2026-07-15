@@ -200,7 +200,7 @@
     />
     <ChatModelSwitchPanel v-model="showModelSwitch" :conversation-id="props.id" />
   </section>
-  <section v-else class="screen no-tabs missing-group"><p>群聊不存在或已被删除</p><button type="button" @click="router.replace({ name: 'chats' })">返回聊天列表</button></section>
+  <section v-else class="screen no-tabs missing-group"><p>群聊不存在或已被删除</p><button type="button" @click="router.replace({ name: 'home' })">返回聊天列表</button></section>
 </template>
 
 <script setup lang="ts">
@@ -369,7 +369,7 @@ async function sendRecordedVoice() { const transcript = voiceTranscriptDraft.val
 async function sendTextVoice() { const transcript = voiceTextDraft.value.trim(); if (!transcript) return; await store.appendUserVoiceMessage(props.id, { source: 'text', transcript, duration: textVoiceDuration.value }, quoteTarget.value); voiceTextDraft.value = ''; quoteTarget.value = null; showVoicePanel.value = false; }
 
 async function confirmRegenerate() { showRegenerate.value = false; await store.regenerateLatestGroupReply(props.id, regenerateInstruction.value); await scrollToBottom(); }
-async function confirmDeleteGroup() { const deleted = await store.deleteGroupConversation(props.id); if (deleted) await router.replace({ name: 'chats' }); }
+async function confirmDeleteGroup() { const deleted = await store.deleteGroupConversation(props.id); if (deleted) await router.replace({ name: 'home' }); }
 async function confirmLeaveGroup() { const left = await store.leaveGroupConversation(props.id); if (left) { showLeaveConfirm.value = false; quoteTarget.value = null; } }
 async function applyToRejoin() { await store.applyToRejoinGroup(props.id); await scrollToBottom(); }
 async function requestObserverReply() { await store.requestGroupReply(props.id, { instruction: '用户当前不在群内，只是在旁观。请让群内成员基于既有话题和各自生活状态自然继续聊天，不要把旁观用户写成已在群内发言。', allowPrivateInitiation: false }); await scrollToBottom(); }

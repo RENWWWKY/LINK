@@ -4,7 +4,7 @@
       <section class="avatar-editor-panel" role="dialog" aria-modal="true" aria-labelledby="avatar-editor-title">
         <header class="avatar-editor-head">
           <div>
-            <span>Avatar editor</span>
+            <span>{{ eyebrow }}</span>
             <strong id="avatar-editor-title">{{ title }}</strong>
           </div>
           <button class="icon-action" type="button" aria-label="关闭头像编辑" @click="closeEditor">
@@ -16,6 +16,7 @@
           ref="cropFrameRef"
           class="crop-frame"
           :class="{ dragging: isDragging, loading: !imageReady }"
+          :style="cropFrameStyle"
           @pointerdown="startDrag"
           @pointermove="dragImage"
           @pointerup="endDrag"
@@ -35,7 +36,7 @@
             <span>重置</span>
           </button>
           <button class="primary-action" type="button" :disabled="!imageReady" @click="confirmCrop">
-            <span>使用头像</span>
+            <span>{{ confirmLabel }}</span>
           </button>
         </div>
       </section>
@@ -51,8 +52,22 @@ const props = withDefaults(defineProps<{
   modelValue: boolean;
   src: string;
   title?: string;
+  eyebrow?: string;
+  confirmLabel?: string;
+  aspectRatio?: number;
+  outputWidth?: number;
+  outputHeight?: number;
+  outputType?: 'image/png' | 'image/jpeg' | 'image/webp';
+  outputQuality?: number;
 }>(), {
-  title: '编辑头像'
+  title: '编辑头像',
+  eyebrow: 'Avatar editor',
+  confirmLabel: '使用头像',
+  aspectRatio: 1,
+  outputWidth: 512,
+  outputHeight: 512,
+  outputType: 'image/png',
+  outputQuality: 0.92
 });
 
 const emit = defineEmits<{
@@ -60,10 +75,10 @@ const emit = defineEmits<{
   confirm: [value: string];
 }>();
 
-const outputSize = 512;
 const cropFrameRef = ref<HTMLElement | null>(null);
 const imageRef = ref<HTMLImageElement | null>(null);
-const cropSize = ref(268);
+const cropWidth = ref(268);
+const cropHeight = ref(268);
 const naturalWidth = ref(0);
 const naturalHeight = ref(0);
 const zoom = ref(1);
@@ -78,8 +93,8 @@ const dragStartOffsetY = ref(0);
 let resizeObserver: ResizeObserver | null = null;
 
 const baseScale = computed(() => {
-  if (!naturalWidth.value || !naturalHeight.value || !cropSize.value) return 1;
-  return Math.max(cropSize.value / naturalWidth.value, cropSize.value / naturalHeight.value);
+  if (!naturalWidth.value || !naturalHeight.value || !cropWidth.value || !cropHeight.value) return 1;
+  return Math.max(cropWidth.value / naturalWidth.value, cropHeight.value / naturalHeight.value);
 });
 
 const displayWidth = computed(() => naturalWidth.value * baseScale.value * zoom.value);
@@ -89,6 +104,10 @@ const imageStyle = computed(() => ({
   width: `${displayWidth.value}px`,
   height: `${displayHeight.value}px`,
   transform: `translate(calc(-50% + ${offsetX.value}px), calc(-50% + ${offsetY.value}px))`
+}));
+const cropFrameStyle = computed(() => ({
+  width: props.aspectRatio > 1 ? 'min(100%, 340px)' : 'min(100%, 268px)',
+  aspectRatio: String(props.aspectRatio)
 }));
 
 watch(
@@ -106,7 +125,7 @@ watch(() => props.src, () => {
   resetCrop();
 });
 
-watch([zoom, cropSize, naturalWidth, naturalHeight], () => clampOffset());
+watch([zoom, cropWidth, cropHeight, naturalWidth, naturalHeight], () => clampOffset());
 
 onMounted(() => {
   resizeObserver = new ResizeObserver(updateCropSize);
@@ -120,8 +139,9 @@ onBeforeUnmount(() => {
 function updateCropSize() {
   const frame = cropFrameRef.value;
   if (!frame) return;
-  const width = frame.getBoundingClientRect().width;
-  if (width > 0) cropSize.value = width;
+  const rect = frame.getBoundingClientRect();
+  if (rect.width > 0) cropWidth.value = rect.width;
+  if (rect.height > 0) cropHeight.value = rect.height;
 }
 
 function handleImageLoad() {
@@ -141,8 +161,8 @@ function resetCrop() {
 }
 
 function clampOffset(nextX = offsetX.value, nextY = offsetY.value) {
-  const maxOffsetX = Math.max(0, (displayWidth.value - cropSize.value) / 2);
-  const maxOffsetY = Math.max(0, (displayHeight.value - cropSize.value) / 2);
+  const maxOffsetX = Math.max(0, (displayWidth.value - cropWidth.value) / 2);
+  const maxOffsetY = Math.max(0, (displayHeight.value - cropHeight.value) / 2);
   offsetX.value = Math.min(maxOffsetX, Math.max(-maxOffsetX, nextX));
   offsetY.value = Math.min(maxOffsetY, Math.max(-maxOffsetY, nextY));
 }
@@ -178,23 +198,24 @@ function confirmCrop() {
   if (!image || !imageReady.value) return;
 
   const canvas = document.createElement('canvas');
-  canvas.width = outputSize;
-  canvas.height = outputSize;
+  canvas.width = props.outputWidth;
+  canvas.height = props.outputHeight;
   const context = canvas.getContext('2d');
   if (!context) return;
 
-  const scale = outputSize / cropSize.value;
+  const scaleX = props.outputWidth / cropWidth.value;
+  const scaleY = props.outputHeight / cropHeight.value;
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
   context.drawImage(
     image,
-    (cropSize.value / 2 - displayWidth.value / 2 + offsetX.value) * scale,
-    (cropSize.value / 2 - displayHeight.value / 2 + offsetY.value) * scale,
-    displayWidth.value * scale,
-    displayHeight.value * scale
+    (cropWidth.value / 2 - displayWidth.value / 2 + offsetX.value) * scaleX,
+    (cropHeight.value / 2 - displayHeight.value / 2 + offsetY.value) * scaleY,
+    displayWidth.value * scaleX,
+    displayHeight.value * scaleY
   );
 
-  emit('confirm', canvas.toDataURL('image/png'));
+  emit('confirm', canvas.toDataURL(props.outputType, props.outputQuality));
   closeEditor();
 }
 
@@ -272,7 +293,6 @@ function closeEditor() {
 .crop-frame {
   position: relative;
   width: min(100%, 268px);
-  aspect-ratio: 1;
   justify-self: center;
   overflow: hidden;
   border-radius: 28px;

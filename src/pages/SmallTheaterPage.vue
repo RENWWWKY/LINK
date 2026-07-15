@@ -253,7 +253,7 @@
     <section class="theater-empty">
       <Clapperboard :size="28" />
       <h2>没有找到这个小剧场入口</h2>
-      <button type="button" @click="router.replace({ name: 'chats' })">回到聊天列表</button>
+      <button type="button" @click="router.replace({ name: 'home' })">回到聊天列表</button>
     </section>
   </section>
 </template>

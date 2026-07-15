@@ -1,7 +1,9 @@
 <template>
-  <section class="screen utility-page">
+  <section class="screen no-tabs utility-page">
     <header class="top-bar">
-      <h1 class="top-title">Fanfic</h1>
+      <button class="subpage-title-button" type="button" aria-label="返回主页" @click="goHome">
+        <h1 class="top-title">Fanfic</h1>
+      </button>
       <button class="icon-button" type="button" aria-label="新建">
         <Plus :size="24" />
       </button>
@@ -15,10 +17,30 @@
 </template>
 
 <script setup lang="ts">
+import { useRouter } from 'vue-router';
 import { BookOpenText, Plus } from 'lucide-vue-next';
+
+const router = useRouter();
+
+function goHome() {
+  void router.push({ name: 'home' });
+}
 </script>
 
 <style scoped>
+.subpage-title-button {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+}
+
+.subpage-title-button .top-title {
+  margin: 0;
+  text-align: left;
+}
+
 .utility-content {
   display: grid;
   place-items: center;

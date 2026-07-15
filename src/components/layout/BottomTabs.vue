@@ -59,36 +59,6 @@ const HomeTabIcon = defineComponent({
   }
 });
 
-const ChatsTabIcon = defineComponent({
-  name: 'ChatsTabIcon',
-  props: iconProps,
-  setup(props) {
-    return () =>
-      props.active
-        ? h('svg', svgAttrs, [
-            h('path', {
-              d: 'M12 4.2c4.97 0 8.5 3.06 8.5 7.48 0 4.48-3.6 7.62-8.5 7.62-.98 0-1.95-.13-2.87-.4l-3.46 1.56 1.05-3.02c-1.53-1.24-2.42-3.24-2.42-5.76 0-4.42 3.52-7.48 8.7-7.48Z',
-              fill: 'currentColor'
-            }),
-            h('circle', { cx: 8.95, cy: 11.65, r: 1.08, fill: '#ffffff' }),
-            h('circle', { cx: 12, cy: 11.65, r: 1.08, fill: '#ffffff' }),
-            h('circle', { cx: 15.05, cy: 11.65, r: 1.08, fill: '#ffffff' })
-          ])
-        : h('svg', svgAttrs, [
-            h('path', {
-              d: 'M12 4c5.02 0 8.65 3.18 8.65 7.78S17.02 19.55 12 19.55c-1.16 0-2.3-.17-3.33-.5l-3.34 1.6 1.03-3.19C5.02 16.12 4 14.08 4 11.78 4 7.18 6.98 4 12 4Z',
-              stroke: 'currentColor',
-              strokeWidth: 2.2,
-              strokeLinecap: 'round',
-              strokeLinejoin: 'round'
-            }),
-            h('circle', { cx: 9, cy: 11.8, r: 1.05, fill: 'currentColor' }),
-            h('circle', { cx: 12, cy: 11.8, r: 1.05, fill: 'currentColor' }),
-            h('circle', { cx: 15, cy: 11.8, r: 1.05, fill: 'currentColor' })
-          ]);
-  }
-});
-
 const VoomTabIcon = defineComponent({
   name: 'VoomTabIcon',
   props: iconProps,
@@ -270,8 +240,7 @@ const voomTabHasUnread = computed(() => {
 });
 
 const tabs = computed(() => [
-  { name: 'home', label: 'Home', to: '/home', icon: HomeTabIcon, hasUnread: false },
-  { name: 'chats', label: 'Chats', to: '/chats', icon: ChatsTabIcon, hasUnread: store.unreadConversationCount > 0 },
+  { name: 'home', label: 'Home', to: '/home', icon: HomeTabIcon, hasUnread: store.unreadConversationCount > 0 },
   { name: 'voom', label: 'VOOM', to: '/voom', icon: VoomTabIcon, hasUnread: voomTabHasUnread.value },
   { name: 'music', label: 'Music', to: '/music', icon: MusicTabIcon, hasUnread: false },
   { name: 'fanfic', label: 'Fanfic', to: '/fanfic', icon: FanficTabIcon, hasUnread: false }
@@ -286,7 +255,7 @@ const tabs = computed(() => [
   left: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   height: calc(var(--tab-height) + var(--safe-bottom));
   padding-bottom: var(--safe-bottom);
   border-top: 1px solid transparent;

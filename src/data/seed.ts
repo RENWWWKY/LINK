@@ -45,6 +45,7 @@ export const defaultSmallTheaters: SmallTheater[] = [];
 export const defaultSettings: AppSettings = {
   activeUserId: '1008600001',
   friendsDisplayScope: 'active-user',
+  homeCardImages: ['', '', ''],
   apiEndpoint: '',
   apiKey: '',
   model: 'gpt-compatible-model',

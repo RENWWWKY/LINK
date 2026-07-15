@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 
 const HomePage = () => import('@/pages/HomePage.vue');
-const ChatsPage = () => import('@/pages/ChatsPage.vue');
 const ChatSettingsPage = () => import('@/pages/ChatSettingsPage.vue');
 const ChatSearchPage = () => import('@/pages/ChatSearchPage.vue');
 const ChatRoomPage = () => import('@/pages/ChatRoomPage.vue');
@@ -29,7 +28,6 @@ const ThemesPage = () => import('@/pages/ThemesPage.vue');
 
 const routePageLoaders = [
   HomePage,
-  ChatsPage,
   ChatSettingsPage,
   ChatSearchPage,
   ChatRoomPage,
@@ -80,7 +78,7 @@ export const router = createRouter({
     { path: '/world-book/:id/delete', redirect: (to) => ({ name: 'world-book-edit', params: { id: String(to.params.id) } }) },
     { path: '/settings', name: 'settings', component: SettingsPage },
     { path: '/settings/image/:module', name: 'image-module-settings', component: ImageModuleSettingsPage },
-    { path: '/chats', name: 'chats', component: ChatsPage },
+    { path: '/chats', redirect: '/home' },
     { path: '/chats/:id/search', name: 'chat-search', component: ChatSearchPage, props: true },
     { path: '/chats/:id/settings', name: 'chat-settings', component: ChatSettingsPage, props: true },
     { path: '/chats/:id/profile-themes', name: 'profile-themes', component: ProfileThemePage, props: true },

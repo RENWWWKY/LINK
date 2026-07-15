@@ -1,7 +1,9 @@
 <template>
-  <section ref="voomPageRef" class="screen voom-page" @scroll.passive="handleVoomPageScroll">
+  <section ref="voomPageRef" class="screen no-tabs voom-page" @scroll.passive="handleVoomPageScroll">
     <header class="top-bar">
-      <h1 class="top-title">LINK VOOM</h1>
+      <button class="subpage-title-button" type="button" aria-label="返回主页" @click="goHome">
+        <h1 class="top-title">LINK VOOM</h1>
+      </button>
       <div class="icon-row">
         <button class="icon-button" type="button" aria-label="切换用户账号" @click="showAccountSwitcher = true">
           <UserCog :size="20" />
@@ -325,6 +327,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { FileText, Globe2, Image as ImageIcon, LoaderCircle, Plus, Shuffle, SlidersHorizontal, SquarePen, Upload, UserCog, UserRound, X } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
 import VoomPostCard from '@/components/voom/VoomPostCard.vue';
@@ -336,6 +339,7 @@ import { readChatImageFile } from '@/utils/imageFile';
 import { getSelectedImageModelOption } from '@/utils/settings';
 
 const store = useAppStore();
+const router = useRouter();
 const showAccountSwitcher = ref(false);
 const showVoomCleanupSettings = ref(false);
 const showVoomPublisher = ref(false);
@@ -370,6 +374,10 @@ const cleanupPresetOptions: Array<{ preset: VoomAutoCleanupPreset; label: string
   { preset: '30', label: '一个月', days: 30 },
   { preset: 'custom', label: '自定义', days: 14 }
 ];
+
+function goHome() {
+  void router.push({ name: 'home' });
+}
 
 const publisherCharacters = computed(() => store.charactersForActiveUser);
 const activeCleanupCharacters = computed(() => store.charactersForActiveUser);
@@ -858,8 +866,21 @@ async function confirmCreateUserVoomPost() {
   --top-icon-button-width: 26px;
   --top-icon-button-height: 30px;
   --top-icon-gap: 1px;
-  padding-bottom: calc(var(--tab-height) + var(--safe-bottom) + 24px);
-  scroll-padding-bottom: calc(var(--tab-height) + var(--safe-bottom) + 24px);
+  padding-bottom: calc(var(--safe-bottom) + 24px);
+  scroll-padding-bottom: calc(var(--safe-bottom) + 24px);
+}
+
+.subpage-title-button {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+}
+
+.subpage-title-button .top-title {
+  margin: 0;
+  text-align: left;
 }
 
 .story-strip {

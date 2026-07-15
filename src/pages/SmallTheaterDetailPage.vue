@@ -13,7 +13,7 @@
       <Clapperboard :size="30" />
       <h2>没有找到这个小剧场</h2>
       <p>它可能已经被删除，或还没有完成生成。</p>
-      <button type="button" @click="router.replace({ name: 'chats' })">回到聊天列表</button>
+      <button type="button" @click="router.replace({ name: 'home' })">回到聊天列表</button>
     </main>
   </section>
 </template>
@@ -39,7 +39,7 @@ onMounted(() => {
 
 function goBack() {
   const conversationId = theater.value?.conversationId;
-  void router.replace(conversationId ? { name: 'small-theater', params: { id: conversationId }, query: { tab: 'cards' } } : { name: 'chats' });
+  void router.replace(conversationId ? { name: 'small-theater', params: { id: conversationId }, query: { tab: 'cards' } } : { name: 'home' });
 }
 
 </script>

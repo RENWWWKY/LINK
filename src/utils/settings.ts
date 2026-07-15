@@ -208,6 +208,7 @@ export function createDefaultThemeSettings(): AppThemeSettings {
 export const defaultAppSettings: AppSettings = {
   activeUserId: '',
   friendsDisplayScope: 'active-user',
+  homeCardImages: ['', '', ''],
   apiEndpoint: '',
   apiKey: '',
   model: 'gpt-compatible-model',
@@ -376,6 +377,11 @@ function normalizeImageProvider(provider: string | null | undefined): ImageProvi
 
 function normalizeFriendsDisplayScope(scope: string | null | undefined) {
   return scope === 'all-users' ? 'all-users' : 'active-user';
+}
+
+function normalizeHomeCardImages(images: unknown) {
+  const entries = Array.isArray(images) ? images : [];
+  return Array.from({ length: 3 }, (_, index) => String(entries[index] ?? '').trim());
 }
 
 function normalizeTtsProvider(provider: string | null | undefined): TtsProviderType | '' {
@@ -1538,6 +1544,7 @@ export function normalizeAppSettings(settings?: Partial<AppSettings> | null): Ap
 
   const normalized = {
     ...merged,
+    homeCardImages: normalizeHomeCardImages(settings?.homeCardImages),
     modelOverrides: normalizeChatModelOverrides(merged.modelOverrides),
     imageModelOverrides: normalizeImageModelOverrides(settings),
     apiVendors: normalizedVendors,

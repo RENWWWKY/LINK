@@ -1,10 +1,10 @@
 # Link
 
-Link 是一个移动端优先的 Vue 3 + Vite + PWA 角色扮演聊天应用原型，界面参考 LINK 的 Home、Chats、VOOM 与聊天房间体验。
+Link 是一个移动端优先的 Vue 3 + Vite + PWA 角色扮演聊天应用原型，界面参考 LINK 的 Home、VOOM 与聊天房间体验。
 
 ## 功能
 
-- 五个底部 Tab：主页、聊天、VOOM、Music、Fanfic。
+- 四个底部 Tab：主页、VOOM、Music、Fanfic；主页内可切换 Chats、Group、Friends 与 All 会话列表。
 - 同一个 conversation 支持线上聊天和线下长文本 RP 两种渲染。
 - 支持邀请当前账号绑定角色与多个自定义 NPC 创建群聊，也可选择一个或多个绑定角色后调用 API 搜索并加入 3–6 个模拟既有群聊。
 - 群聊保存群主、成员、公告和历史消息；每条消息记录明确作者，已有角色与用户在 AI 上下文中始终使用真名。

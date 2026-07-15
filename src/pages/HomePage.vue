@@ -29,65 +29,125 @@
 
       <ServiceGrid :open-stickers="openStickers" :open-world-books="openWorldBookPage" :open-themes="openThemesPage" :open-all="openServicesPage" />
 
-      <section>
-        <div class="section-heading">
-          <span>Groups {{ groupRows.length }}</span>
-          <ChevronUp :size="18" class="muted" />
-        </div>
-        <GroupConversationListItem v-for="row in groupRows" :key="row.conversation.id" :conversation="row.conversation" :last-message="row.lastMessage" />
-      </section>
-
-      <section>
-        <div class="section-heading">
-          <span>Friends {{ friendRows.length }}</span>
-          <ChevronUp :size="18" class="muted" />
-        </div>
-        <button v-for="row in friendRows" :key="row.character.id" class="list-row friend-row" type="button" @click="openCharacterChat(row.conversation.id)">
-          <img class="avatar" :src="row.character.avatar" :alt="getCharacterDisplayName(row.character)" />
-          <div class="row-main">
-            <div class="row-title">{{ getCharacterDisplayName(row.character) }}</div>
-            <div class="row-subtitle">{{ row.character.signature }}</div>
-          </div>
-          <i v-if="row.conversation.unreadCount" class="friend-unread" aria-hidden="true"></i>
+      <nav class="chat-filter" aria-label="聊天分类" role="tablist">
+        <button
+          v-for="tab in filterTabs"
+          :key="tab.value"
+          :class="{ active: activeFilter === tab.value }"
+          :aria-selected="activeFilter === tab.value"
+          role="tab"
+          type="button"
+          @click="activeFilter = tab.value"
+        >
+          {{ tab.label }}
         </button>
-      </section>
+      </nav>
+
+      <template v-for="row in visibleCombinedRows" :key="row.id">
+        <ConversationListItem
+          v-if="row.type === 'friend'"
+          :conversation="row.conversation"
+          :character="row.character"
+          :last-message="row.lastMessage"
+        />
+        <GroupConversationListItem
+          v-else
+          :conversation="row.conversation"
+          :last-message="row.lastMessage"
+        />
+      </template>
+      <div v-if="!visibleCombinedRows.length" class="empty-list">{{ emptyText }}</div>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { Bell, Bookmark, ChevronUp, ScanLine, Search, Settings, UserPlus } from 'lucide-vue-next';
+import { Bell, Bookmark, ScanLine, Search, Settings, UserPlus } from 'lucide-vue-next';
+import ConversationListItem from '@/components/chat/ConversationListItem.vue';
+import GroupConversationListItem from '@/components/chat/GroupConversationListItem.vue';
 import ServiceGrid from '@/components/home/ServiceGrid.vue';
 import UserProfilePanel from '@/components/home/UserProfilePanel.vue';
-import GroupConversationListItem from '@/components/chat/GroupConversationListItem.vue';
 import { useAppStore } from '@/stores/appStore';
-import { getCharacterDisplayName } from '@/utils/character';
+import type { CharacterProfile, ChatMessage, Conversation } from '@/types/domain';
+
+type ChatFilter = 'chats' | 'group' | 'friends' | 'all';
+
+interface ChatListRow {
+  id: string;
+  type: 'friend';
+  conversation: Conversation;
+  character: CharacterProfile;
+  lastMessage?: ChatMessage;
+}
+
+interface GroupListRow {
+  id: string;
+  type: 'group';
+  conversation: Conversation;
+  lastMessage?: ChatMessage;
+}
 
 const store = useAppStore();
 const router = useRouter();
-const groupRows = computed(() => store.conversationsForFriendsDisplay
-  .filter((conversation) => conversation.kind === 'group')
-  .sort((left, right) => Number(Boolean(right.groupPinned)) - Number(Boolean(left.groupPinned)) || right.updatedAt - left.updatedAt)
-  .map((conversation) => ({ conversation, lastMessage: store.lastMessageForConversation(conversation.id) })));
-const friendRows = computed(() =>
+const activeFilter = ref<ChatFilter>('chats');
+
+const filterTabs: Array<{ label: string; value: ChatFilter }> = [
+  { label: 'Chats', value: 'chats' },
+  { label: 'Group', value: 'group' },
+  { label: 'Friends', value: 'friends' },
+  { label: 'All', value: 'all' }
+];
+
+const friendRows = computed<ChatListRow[]>(() =>
   store.charactersForFriendsDisplay
     .flatMap((character) => {
       const conversation = store.conversations.find((item) => item.kind !== 'group' && item.charId === character.id && item.userId === character.boundUserId);
       if (!conversation) return [];
-      return [{ character, conversation }];
+      return [{ id: `friend_${character.id}`, type: 'friend' as const, conversation, character, lastMessage: store.lastMessageForConversation(conversation.id) }];
     })
     .sort((left, right) => right.conversation.updatedAt - left.conversation.updatedAt)
 );
 
-function openCharacterChat(conversationId: string) {
-  const conversation = store.conversationById(conversationId);
-  void router.push({
-    name: conversation?.activeMode === 'offline' ? 'offline-room' : 'chat-room',
-    params: { id: conversationId }
-  });
-}
+const chatRows = computed<ChatListRow[]>(() =>
+  [...store.conversationsForFriendsDisplay].sort((left, right) => right.updatedAt - left.updatedAt).flatMap((conversation) => {
+    if (conversation.kind === 'group') return [];
+    const character = store.characterById(conversation.charId);
+    const lastMessage = store.lastMessageForConversation(conversation.id);
+    if (!character || !lastMessage) return [];
+    return [{ id: `chat_${conversation.id}`, type: 'friend' as const, conversation, character, lastMessage }];
+  })
+);
+
+const groupRows = computed<GroupListRow[]>(() => store.conversationsForFriendsDisplay
+  .filter((conversation) => conversation.kind === 'group')
+  .sort((left, right) => Number(Boolean(right.groupPinned)) - Number(Boolean(left.groupPinned)) || right.updatedAt - left.updatedAt)
+  .map((conversation) => ({ id: `group_${conversation.id}`, type: 'group' as const, conversation, lastMessage: store.lastMessageForConversation(conversation.id) })));
+const groupChatRows = computed(() => groupRows.value.filter((row) => Boolean(row.lastMessage)));
+const allFriendRows = computed(() => {
+  const activeConversationIds = new Set(chatRows.value.map((row) => row.conversation.id));
+  return [...chatRows.value, ...friendRows.value.filter((row) => !activeConversationIds.has(row.conversation.id))];
+});
+const visibleFriendRows = computed(() => {
+  if (activeFilter.value === 'group') return [];
+  if (activeFilter.value === 'friends') return friendRows.value;
+  if (activeFilter.value === 'all') return allFriendRows.value;
+  return chatRows.value;
+});
+const visibleGroupRows = computed(() => {
+  if (activeFilter.value === 'group' || activeFilter.value === 'all') return groupRows.value;
+  if (activeFilter.value === 'chats') return groupChatRows.value;
+  return [];
+});
+const visibleCombinedRows = computed<Array<ChatListRow | GroupListRow>>(() => [...visibleFriendRows.value, ...visibleGroupRows.value]
+  .sort((left, right) => Number(Boolean(right.conversation.groupPinned)) - Number(Boolean(left.conversation.groupPinned)) || right.conversation.updatedAt - left.conversation.updatedAt));
+const emptyText = computed(() => {
+  if (activeFilter.value === 'group') return '还没有加入群聊';
+  if (activeFilter.value === 'chats') return '还没有对话记录';
+  if (activeFilter.value === 'friends') return '还没有添加好友';
+  return '还没有好友或群组';
+});
 
 function openProfilePage() {
   void router.push({ name: 'account' });
@@ -168,16 +228,6 @@ function openAddFriendPage() {
   height: 16px;
 }
 
-.home-content :deep(.section-heading) {
-  padding: 11px 16px 6px;
-  font-size: 13px;
-}
-
-.home-content :deep(.section-heading svg) {
-  width: 16px;
-  height: 16px;
-}
-
 .home-content :deep(.see-all) {
   font-size: 12px;
 }
@@ -198,56 +248,71 @@ function openAddFriendPage() {
   height: 24px;
 }
 
-.home-content :deep(.list-row) {
-  gap: 9px;
-  min-height: 56px;
-  padding: 6px 16px;
+.chat-filter {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  align-items: start;
+  height: 50px;
+  padding: 6px 22px;
 }
 
-.home-content :deep(.avatar) {
+.chat-filter button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 30px;
+  padding: 0;
+  color: #939599;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.chat-filter button.active {
+  color: #111111;
+}
+
+.chat-filter button.active::after {
+  content: '';
+  position: absolute;
+  right: 18px;
+  bottom: 0;
+  left: 18px;
+  height: 3px;
+  border-radius: 3px;
+  background: #222222;
+}
+
+.home-content :deep(.conversation-row) {
+  gap: 11px;
+  min-height: 66px;
+  padding: 6px 22px;
+}
+
+.home-content :deep(.conversation-row .avatar) {
   width: 40px;
   height: 40px;
 }
 
-.home-content :deep(.row-title) {
-  font-size: 14px;
+.home-content :deep(.conversation-top strong) {
+  font-size: 15px;
 }
 
-.home-content :deep(.row-subtitle) {
-  margin-top: 2px;
-  font-size: 12px;
-}
-
-.home-content :deep(.group-conversation-row) {
-  gap: 9px;
-  min-height: 56px;
-  padding: 6px 16px;
-}
-
-.home-content :deep(.group-conversation-row .conversation-top strong) {
-  font-size: 14px;
-}
-
-.home-content :deep(.group-conversation-row .conversation-top time) {
+.home-content :deep(.conversation-top time) {
   font-size: 11px;
 }
 
-.home-content :deep(.group-conversation-row .conversation-bottom) {
+.home-content :deep(.conversation-bottom) {
   margin-top: 2px;
   font-size: 12px;
 }
 
-.friend-row {
-  width: 100%;
-  text-align: left;
-}
-
-.friend-unread {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  margin-left: auto;
-  border-radius: 50%;
-  background: #ff405a;
+.empty-list {
+  padding: 28px 22px;
+  color: #939599;
+  font-size: 12px;
+  text-align: center;
 }
 </style>

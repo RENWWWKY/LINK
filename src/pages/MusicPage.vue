@@ -1,7 +1,9 @@
 <template>
-  <section ref="screenRef" :class="['screen', 'music-page', 'mode-' + pageMode]">
+  <section ref="screenRef" :class="['screen', 'no-tabs', 'music-page', 'mode-' + pageMode]">
     <header v-if="pageMode !== 'player'" class="top-bar music-top-bar">
-      <h1 class="top-title">Music</h1>
+      <button class="subpage-title-button" type="button" aria-label="返回主页" @click="goHome">
+        <h1 class="top-title">Music</h1>
+      </button>
       <div class="icon-row music-actions">
         <button class="icon-button" type="button" aria-label="播放页" @click="setMode('player')">
           <Disc3 :size="21" />
@@ -18,6 +20,9 @@
     <main class="music-content" :class="{ 'player-content': pageMode === 'player' }">
       <section v-if="pageMode === 'player'" class="player-panel">
         <div class="player-stage" @pointercancel="handlePlayerPointerCancel" @pointerdown="handlePlayerPointerDown" @pointermove="handlePlayerPointerMove" @pointerup="handlePlayerPointerUp">
+          <button class="player-home-button" type="button" aria-label="返回主页" @click.stop="goHome">
+            <ArrowLeft :size="22" />
+          </button>
           <div class="listen-pages" :style="playerSlideStyle">
             <section class="listen-page listen-cover-page" aria-label="一起听唱片页">
               <div class="listen-topline">
@@ -252,7 +257,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
-import { Disc3, Hash, Heart, ListMusic, ListOrdered, LoaderCircle, MessageCircle, MessageSquareText, Pause, Play, Repeat, Repeat1, Search, Send, Shuffle, SkipBack, SkipForward, Smile, ThumbsUp, X } from 'lucide-vue-next';
+import { useRouter } from 'vue-router';
+import { ArrowLeft, Disc3, Hash, Heart, ListMusic, ListOrdered, LoaderCircle, MessageCircle, MessageSquareText, Pause, Play, Repeat, Repeat1, Search, Send, Shuffle, SkipBack, SkipForward, Smile, ThumbsUp, X } from 'lucide-vue-next';
 import { deleteEntity, getDb, putEntity } from '@/data/db';
 import { generateMusicCommentThread, hasTextGenerationConfig } from '@/services/ai';
 import { fetchMusicCoverUrl, fetchMusicLyricText, mergeMusicTrack, refreshPlayableMusicTrack, searchMusicTracks } from '@/services/music';
@@ -277,6 +283,7 @@ const playbackModeOrder: PlaybackMode[] = ['sequence', 'repeat-all', 'shuffle', 
 const commentRegions = ['河北', '湖南', '广西', '广东', '江苏', '浙江', '四川', '福建', '北京', '湖北', '云南', '重庆'];
 
 const store = useAppStore();
+const router = useRouter();
 const musicPlayer = useMusicPlayerStore();
 const searchCandidatePageSize = 60;
 const pageMode = ref<MusicPageMode>('player');
@@ -310,6 +317,10 @@ const lyricTextByTrackId = ref<Record<string, string>>({});
 let playerPointerStart: { x: number; y: number; pointerId: number } | null = null;
 let playerSwipeTracking = false;
 let playRequestSerial = 0;
+
+function goHome() {
+  void router.push({ name: 'home' });
+}
 
 const activeTrackId = computed({
   get: () => musicPlayer.activeTrackId,
@@ -962,6 +973,19 @@ function playNeighbor(direction: -1 | 1) {
   backdrop-filter: none;
 }
 
+.subpage-title-button {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+}
+
+.subpage-title-button .top-title {
+  margin: 0;
+  text-align: left;
+}
+
 .music-actions {
   gap: 2px;
 }
@@ -972,7 +996,7 @@ function playNeighbor(direction: -1 | 1) {
 }
 
 .music-content.player-content {
-  height: calc(100dvh - var(--tab-height) - var(--safe-bottom));
+  height: 100%;
   padding: 0;
   overflow: hidden;
 }
@@ -983,7 +1007,7 @@ function playNeighbor(direction: -1 | 1) {
 
 .player-panel {
   display: grid;
-  height: calc(100dvh - var(--tab-height) - var(--safe-bottom));
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -1000,6 +1024,22 @@ function playNeighbor(direction: -1 | 1) {
   box-shadow: none;
   color: #ffffff;
   touch-action: pan-y;
+}
+
+.player-home-button {
+  position: absolute;
+  top: calc(10px + var(--safe-top));
+  left: 12px;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.28);
+  color: #ffffff;
+  backdrop-filter: blur(10px);
 }
 
 .player-stage::before {

@@ -3419,7 +3419,7 @@ async function confirmDeleteFriend() {
     await store.deleteCharacterProfile(currentCharacter.id);
     showDeleteFriendConfirm.value = false;
     store.showConfigAlert('已删除好友。', '删除完成');
-    await router.replace({ name: 'chats' });
+    await router.replace({ name: 'home' });
   } finally {
     deletingFriend.value = false;
   }
