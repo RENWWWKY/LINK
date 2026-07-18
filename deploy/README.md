@@ -131,6 +131,15 @@ cd android
 ./gradlew :app:assembleRelease
 ```
 
+也可以在仓库 Actions 中手动运行 `Build signed Android APK`。首次使用前，把同一份 keystore 和配置写入以下 Actions Secrets：
+
+- `BABYLINK_ANDROID_KEYSTORE_BASE64`
+- `BABYLINK_ANDROID_STORE_PASSWORD`
+- `BABYLINK_ANDROID_KEY_ALIAS`
+- `BABYLINK_ANDROID_KEY_PASSWORD`
+
+工作流会使用 JDK 21 构建 release，强制验证 APK v2 签名，并将签名证书 SHA-256 与 `android/release-certificate.sha256` 比对后才上传 artifact。
+
 每次发布必须递增 `android/app/build.gradle` 中的 `versionCode`，并同步修改 `versionName`。随后从仓库根目录上传：
 
 ```bash
@@ -153,6 +162,8 @@ npx cap sync ios
 ```bash
 ADMIN_TOKEN='<admin-token>' node scripts/publish-release.mjs ios path/to/BabyLink.ipa 2 1.1.0 1 '更新说明'
 ```
+
+仓库 Actions 中的 `Build unsigned iOS IPA` 可在 macOS runner 生成未签名 IPA 和相对路径 SHA-256 清单，不需要向 GitHub 提交 Apple 证书或描述文件。
 
 用户下载后自行使用 Apple ID、AltStore、SideStore、Sideloadly 或其他合法方式签名。非 App Store 分发无法提供可靠的静默原生更新；免费 Apple ID 的签名有效期也由 Apple 决定。
 
