@@ -98,7 +98,7 @@ systemctl daemon-reload
 systemctl enable --now babylink-napcat-watchdog.timer
 ```
 
-watchdog 每分钟读取公开 Bot 在线状态；离线后只尝试重启一次，让快速登录凭据接管。恢复在线会自动清除恢复锁；若腾讯要求验证码、设备解锁或冻结账号，watchdog 不会循环重试，不能通过增加重试频率绕过风控。云服务器仍频繁触发风控时，应把 NapCat 迁移到固定住宅网络设备，并继续使用现有 `wss://babylink.top/api/napcat/onebot` 反向连接。
+watchdog 每分钟读取公开 Bot 在线状态；服务器完成过真实状态检测并连续离线至少 2 分钟后才尝试重启一次，让快速登录凭据接管。恢复在线会自动清除恢复锁；若腾讯要求验证码、设备解锁或冻结账号，watchdog 不会循环重试，不能通过增加重试频率绕过风控。云服务器仍频繁触发风控时，应把 NapCat 迁移到固定住宅网络设备，并继续使用现有 `wss://babylink.top/api/napcat/onebot` 反向连接。
 
 手动触发同步：
 
