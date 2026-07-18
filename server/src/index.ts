@@ -32,7 +32,7 @@ app.addContentTypeParser('application/vnd.babylink.encrypted-backup+json', { par
 app.addContentTypeParser('application/xml', { parseAs: 'buffer', bodyLimit: config.proxyBodyLimitBytes }, (_request, body, done) => done(null, body));
 app.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: config.webdavBodyLimitBytes }, (_request, body, done) => done(null, body));
 
-const publicExactPaths = new Set(['/access', '/health', '/api/auth/config', '/api/auth/challenges']);
+const publicExactPaths = new Set(['/access', '/health', '/link-icon.png', '/api/auth/config', '/api/auth/challenges']);
 
 app.addHook('onRequest', async (request, reply) => {
   const pathname = request.url.split('?')[0] || '/';
