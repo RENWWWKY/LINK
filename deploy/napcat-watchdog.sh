@@ -9,7 +9,13 @@ if ! grep -Eq '^NAPCAT_QUICK_PASSWORD=.+|^NAPCAT_QUICK_PASSWORD_MD5=.+' .env; th
 fi
 
 status=$(curl -fsS --connect-timeout 10 --max-time 20 https://babylink.top/api/auth/config) || exit 0
+recovery_file="$deploy_dir/private/napcat-watchdog-recovery-pending"
 if printf '%s' "$status" | grep -q '"botOnline":true'; then
+  rm -f "$recovery_file"
+  exit 0
+fi
+
+if test -e "$recovery_file"; then
   exit 0
 fi
 
@@ -29,4 +35,5 @@ fi
 
 umask 077
 printf '%s\n' "$now" > "$state_file"
+: > "$recovery_file"
 docker compose restart napcat

@@ -7,8 +7,10 @@ import { installRingtoneAudioUnlock } from './services/ringtone';
 import { ensureAccessOnStartup } from './services/access';
 import { useAppStore } from './stores/appStore';
 import { requestPersistentStorage, setupPwaInstallPrompt } from './utils/storageProtection';
+import { installNativeSystemBars } from './services/systemBars';
 import './styles/main.css';
 
+installNativeSystemBars();
 syncAppViewportHeight();
 installRingtoneAudioUnlock();
 setupPwaInstallPrompt();

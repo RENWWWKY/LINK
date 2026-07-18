@@ -28,15 +28,11 @@
   --top-icon-button-width: 28px;
   --top-icon-button-height: 32px;
   --top-icon-gap: 2px;
-  --safe-top: 0px;
-  --safe-top: env(safe-area-inset-top);
-  --safe-right: 0px;
-  --safe-right: env(safe-area-inset-right);
-  --safe-bottom: 0px;
-  --safe-bottom: env(safe-area-inset-bottom);
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--safe-area-inset-right, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px));
   --keyboard-inset: 0px;
-  --safe-left: 0px;
-  --safe-left: env(safe-area-inset-left);
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--safe-area-inset-left, 0px));
   --tab-height: 54px;
 }
 
