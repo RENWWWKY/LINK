@@ -1730,13 +1730,13 @@ export const useAppStore = defineStore('app', () => {
     const displayName = character ? getCharacterVoomDisplayName(character) : conversation.title || '角色';
     const latestMessage = charMessages[charMessages.length - 1];
     const body = notificationPreview(
-      charMessages.map((message) => messageReadableContent(message)).join('\n'),
+      latestMessage ? messageReadableContent(latestMessage) : '',
       '发来了新消息'
     );
     void playRingtone(settings.value, 'message', conversation.charId);
     void showLinkNotification(settings.value?.keepAlive, {
       kind: 'message',
-      title: `${displayName} 发来消息`,
+      title: displayName,
       body,
       tag: `link-message-${conversation.id}`,
       icon: character?.avatar,

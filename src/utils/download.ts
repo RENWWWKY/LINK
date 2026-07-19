@@ -1,3 +1,5 @@
+import { isNativeImageSaveAvailable, saveNativeImage } from '@/services/nativeMedia';
+
 function extensionFromMimeType(mimeType: string) {
   if (mimeType.includes('png')) return 'png';
   if (mimeType.includes('webp')) return 'webp';
@@ -33,29 +35,53 @@ function clickDownload(url: string, filename: string) {
   anchor.remove();
 }
 
+async function fetchImage(source: string) {
+  try {
+    const response = await fetch(source, { mode: 'cors' });
+    if (response.ok) return response;
+  } catch {
+    // Retry remote images through the authenticated same-origin proxy.
+  }
+  if (/^https?:\/\//i.test(source)) {
+    const response = await fetch(`/__image-download?url=${encodeURIComponent(source)}`);
+    if (response.ok) return response;
+    throw new Error(`HTTP ${response.status}`);
+  }
+  throw new Error('图片读取失败。');
+}
+
 export async function downloadImageUrl(source: string, filenameBase: string) {
   const imageUrl = source.trim();
   if (!imageUrl) throw new Error('没有可下载的图片。');
   const baseName = safeDownloadName(filenameBase);
+  const nativeSave = isNativeImageSaveAvailable();
 
   if (imageUrl.startsWith('data:')) {
-    const mimeType = imageUrl.match(/^data:([^;,]+)/)?.[1] ?? 'image/jpeg';
-    clickDownload(imageUrl, `${baseName}.${extensionFromMimeType(mimeType) || 'jpg'}`);
+    const response = await fetch(imageUrl);
+    const blob = await response.blob();
+    const fileName = `${baseName}.${extensionFromMimeType(blob.type) || 'jpg'}`;
+    if (nativeSave) await saveNativeImage(blob, fileName);
+    else clickDownload(imageUrl, fileName);
     return;
   }
 
   try {
-    const response = await fetch(imageUrl, { mode: 'cors' });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const response = await fetchImage(imageUrl);
     const blob = await response.blob();
     const extension = extensionFromMimeType(blob.type || '') || extensionFromUrl(imageUrl) || 'jpg';
+    const fileName = `${baseName}.${extension}`;
+    if (nativeSave) {
+      await saveNativeImage(blob, fileName);
+      return;
+    }
     const objectUrl = URL.createObjectURL(blob);
     try {
-      clickDownload(objectUrl, `${baseName}.${extension}`);
+      clickDownload(objectUrl, fileName);
     } finally {
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     }
-  } catch {
+  } catch (error) {
+    if (nativeSave) throw error;
     clickDownload(imageUrl, `${baseName}.${extensionFromUrl(imageUrl) || 'jpg'}`);
   }
 }

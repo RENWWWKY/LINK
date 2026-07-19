@@ -32,7 +32,19 @@ app.addContentTypeParser('application/vnd.babylink.encrypted-backup+json', { par
 app.addContentTypeParser('application/xml', { parseAs: 'buffer', bodyLimit: config.proxyBodyLimitBytes }, (_request, body, done) => done(null, body));
 app.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: config.webdavBodyLimitBytes }, (_request, body, done) => done(null, body));
 
-const publicExactPaths = new Set(['/access', '/health', '/link-icon.png', '/api/auth/config', '/api/auth/challenges']);
+const publicExactPaths = new Set([
+  '/access',
+  '/health',
+  '/link-icon.png',
+  '/link-icon-192.png',
+  '/link-icon-maskable.png',
+  '/link-sw-events.js',
+  '/manifest.webmanifest',
+  '/registerSW.js',
+  '/sw.js',
+  '/api/auth/config',
+  '/api/auth/challenges'
+]);
 
 app.addHook('onRequest', async (request, reply) => {
   const pathname = request.url.split('?')[0] || '/';
@@ -43,6 +55,7 @@ app.addHook('onRequest', async (request, reply) => {
     return;
   }
   if (publicExactPaths.has(pathname)
+    || /^\/workbox-[^/]+\.js$/.test(pathname)
     || pathname.startsWith('/api/auth/challenges/')
     || pathname === '/api/napcat/onebot'
     || /^\/api\/releases\/[^/]+\/download$/.test(pathname)) return;

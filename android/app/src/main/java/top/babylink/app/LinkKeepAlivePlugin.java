@@ -94,7 +94,9 @@ public class LinkKeepAlivePlugin extends Plugin {
         String title = call.getString("title", "BabyLink");
         String body = call.getString("body", "");
         String tag = call.getString("tag", "babylink-message");
-        LinkKeepAliveService.showMessageNotification(getContext(), title, body, tag);
+        String icon = call.getString("icon", "");
+        String url = call.getString("url", "");
+        LinkKeepAliveService.showMessageNotification(getContext(), title, body, tag, icon, url);
         JSObject result = new JSObject();
         result.put("sent", true);
         call.resolve(result);

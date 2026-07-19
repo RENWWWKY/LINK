@@ -7,11 +7,17 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.util.Base64;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
+import androidx.core.app.Person;
+import androidx.core.graphics.drawable.IconCompat;
 
 public class LinkKeepAliveService extends Service {
     public static final String ACTION_START = "top.babylink.app.action.START_KEEP_ALIVE";
@@ -87,11 +93,12 @@ public class LinkKeepAliveService extends Service {
         manager.createNotificationChannel(messageChannel);
     }
 
-    public static void showMessageNotification(Context context, String title, String body, String tag) {
+    public static void showMessageNotification(Context context, String title, String body, String tag, String icon, String url) {
         createNotificationChannels(context);
         Intent launchIntent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
         if (launchIntent == null) launchIntent = new Intent(context, MainActivity.class);
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        if (url != null && !url.trim().isEmpty()) launchIntent.setData(Uri.parse(url));
         int requestCode = tag == null ? 0 : tag.hashCode();
         PendingIntent pendingIntent = PendingIntent.getActivity(
             context,
@@ -99,18 +106,47 @@ public class LinkKeepAliveService extends Service {
             launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
-        Notification notification = new NotificationCompat.Builder(context, MESSAGE_CHANNEL_ID)
+        Bitmap avatar = decodeNotificationAvatar(icon);
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, MESSAGE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_keep_alive_notification)
             .setContentTitle(title)
             .setContentText(body)
-            .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .build();
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE);
+        if (avatar != null) {
+            Person sender = new Person.Builder()
+                .setName(title)
+                .setIcon(IconCompat.createWithBitmap(avatar))
+                .build();
+            Person localUser = new Person.Builder()
+                .setName(context.getString(R.string.app_name))
+                .build();
+            builder
+                .setLargeIcon(avatar)
+                .setStyle(new NotificationCompat.MessagingStyle(localUser)
+                    .setGroupConversation(false)
+                    .addMessage(body, System.currentTimeMillis(), sender));
+        } else {
+            builder.setStyle(new NotificationCompat.BigTextStyle().bigText(body));
+        }
+        Notification notification = builder.build();
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager != null) manager.notify(tag, requestCode, notification);
+    }
+
+    private static Bitmap decodeNotificationAvatar(String source) {
+        if (source == null || source.trim().isEmpty() || !source.startsWith("data:image/")) return null;
+        int commaIndex = source.indexOf(',');
+        if (commaIndex < 0 || commaIndex >= source.length() - 1) return null;
+        try {
+            byte[] bytes = Base64.decode(source.substring(commaIndex + 1), Base64.DEFAULT);
+            return BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+        } catch (IllegalArgumentException error) {
+            return null;
+        }
     }
 
     private static Notification buildKeepAliveNotification(Context context) {

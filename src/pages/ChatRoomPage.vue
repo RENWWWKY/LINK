@@ -96,6 +96,14 @@
       @send="sendBubble"
       @send-sticker="sendStickerSuggestion"
     />
+    <StickerLibraryModal
+      v-model="showStickers"
+      :conversation-id="props.id"
+      :disabled="chatActionLocked"
+      :recommendation-query="composerText"
+      :recommended-stickers="stickerModalRecommendations"
+      @panel-height-change="handleStickerPanelHeightChange"
+    />
 
     <section v-if="activeCall && !callMinimized" class="call-screen" :class="[`call-screen--${activeCall.mode}`, `call-screen--${activeCall.status}`]" aria-live="polite">
       <img v-if="callScreenBackgroundUrl" class="call-screen-background" :src="callScreenBackgroundUrl" alt="" aria-hidden="true" draggable="false" />
@@ -645,14 +653,6 @@
         @clear-history="clearCharacterProfileHistory"
       />
     </AppModal>
-    <StickerLibraryModal
-      v-model="showStickers"
-      :conversation-id="props.id"
-      :disabled="chatActionLocked"
-      :recommendation-query="composerText"
-      :recommended-stickers="stickerModalRecommendations"
-      @panel-height-change="handleStickerPanelHeightChange"
-    />
     <ChatModelSwitchPanel v-model="showModelSwitch" :conversation-id="props.id" />
 
   </section>
@@ -1062,8 +1062,7 @@ function getMessageVisualSender(message: ChatMessage): ChatMessage['sender'] {
 
 const chatSurfaceStyle = computed(() => ({
   backgroundColor: chatSettings.value.appearance.backgroundColor,
-  backgroundImage: chatSettings.value.appearance.backgroundImage ? `url(${chatSettings.value.appearance.backgroundImage})` : 'none',
-  '--sticker-panel-offset': showStickers.value ? 'var(--sticker-panel-height)' : '0px'
+  backgroundImage: chatSettings.value.appearance.backgroundImage ? `url(${chatSettings.value.appearance.backgroundImage})` : 'none'
 }));
 const messageListStyle = computed(() => ({
   backgroundColor: 'transparent',
@@ -3599,10 +3598,10 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 8px 10px calc(8px + var(--keyboard-inset) + var(--sticker-panel-offset, 0px));
+  padding: 8px 10px calc(8px + var(--keyboard-inset));
   -webkit-overflow-scrolling: touch;
   overflow-anchor: none;
-  scroll-padding-bottom: calc(8px + var(--keyboard-inset) + var(--sticker-panel-offset, 0px));
+  scroll-padding-bottom: calc(8px + var(--keyboard-inset));
 }
 
 .call-screen {
@@ -4258,7 +4257,7 @@ onBeforeUnmount(() => {
 }
 
 .chat-room :deep(.composer) {
-  transform: translate3d(0, calc(0px - var(--keyboard-inset) - var(--sticker-panel-offset, 0px)), 0);
+  transform: translate3d(0, calc(0px - var(--keyboard-inset)), 0);
 }
 
 .message-list :deep(.message-focus-pulse .bubble) {
@@ -5559,7 +5558,7 @@ onBeforeUnmount(() => {
   border-top: 1px solid rgba(20, 20, 20, 0.08);
   background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(12px);
-  transform: translate3d(0, calc(0px - var(--keyboard-inset) - var(--sticker-panel-offset, 0px)), 0);
+  transform: translate3d(0, calc(0px - var(--keyboard-inset)), 0);
   will-change: transform;
 }
 

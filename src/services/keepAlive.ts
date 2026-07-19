@@ -1,6 +1,7 @@
 import type { AppKeepAliveSettings } from '@/types/domain';
 import { normalizeKeepAliveSettings } from '@/utils/settings';
 import { getNativeKeepAliveStatus, isNativeKeepAliveAvailable, openNativeBatterySettings, requestNativeNotificationPermission, showNativeLinkNotification, startNativeKeepAlive, stopNativeKeepAlive, type NativeKeepAliveStatus } from '@/services/nativeKeepAlive';
+import { compressInlineImageDataUrl } from '@/utils/imageFile';
 
 type NotificationPermissionState = NotificationPermission | 'unsupported';
 export type KeepAlivePlatform = 'ios' | 'android' | 'desktop';
@@ -466,13 +467,49 @@ async function getServiceWorkerRegistration() {
   return await navigator.serviceWorker.getRegistration().catch(() => undefined) ?? null;
 }
 
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => resolve(String(reader.result ?? '')));
+    reader.addEventListener('error', () => reject(reader.error ?? new Error('角色头像读取失败。')));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function getNativeNotificationIcon(source = '') {
+  const imageUrl = source.trim();
+  if (!imageUrl) return '';
+  try {
+    const response = await fetch(imageUrl);
+    if (!response.ok) return '';
+    const blob = await response.blob();
+    if (!blob.type.startsWith('image/')) return '';
+    const dataUrl = await blobToDataUrl(blob);
+    return await compressInlineImageDataUrl(dataUrl, {
+      maxDimension: 192,
+      quality: 0.82,
+      mimeType: 'image/jpeg',
+      minBytes: 0,
+      force: true
+    });
+  } catch {
+    return /^data:image\/(?:png|jpe?g|webp)/i.test(imageUrl) ? imageUrl : '';
+  }
+}
+
 export async function showLinkNotification(settings: Partial<AppKeepAliveSettings> | null | undefined, payload: LinkNotificationPayload) {
   const keepAliveSettings = normalizeKeepAliveSettings(settings);
   if (!keepAliveSettings.enabled || !keepAliveSettings.notifications) return false;
   if (isNativeKeepAliveAvailable()) {
     if (status.notificationPermission !== 'granted') await refreshNativeStatus().catch(() => undefined);
     if (status.notificationPermission !== 'granted') return false;
-    return await showNativeLinkNotification({ title: payload.title, body: payload.body, tag: payload.tag });
+    return await showNativeLinkNotification({
+      title: payload.title,
+      body: payload.body,
+      tag: payload.tag,
+      icon: await getNativeNotificationIcon(payload.icon),
+      url: getNotificationUrl(payload.url || '')
+    });
   }
   if (getNotificationPermission() !== 'granted') return false;
 

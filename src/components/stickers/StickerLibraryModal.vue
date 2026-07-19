@@ -1,24 +1,21 @@
 <template>
-  <Teleport to="body">
-    <div v-if="modelValue" class="sticker-keyboard-layer">
-      <button class="sticker-keyboard-dismiss" type="button" aria-label="关闭 Stickers" @click="close"></button>
-      <section ref="panelRef" class="sticker-keyboard-panel" role="dialog" aria-label="Stickers">
-        <StickerLibraryPanel
-          :conversation-id="conversationId"
-          :disabled="disabled"
-          :recommendation-query="recommendationQuery"
-          :recommended-stickers="recommendedStickers"
-          :quote="quote"
-          :show-toolbar-actions="false"
-          show-manage-action
-          presentation="modal"
-          @close="close"
-          @manage="openStickersPage"
-          @sent="emit('sent')"
-        />
-      </section>
-    </div>
-  </Teleport>
+  <div v-if="modelValue" class="sticker-keyboard-layer">
+    <section ref="panelRef" class="sticker-keyboard-panel" role="region" aria-label="Stickers">
+      <StickerLibraryPanel
+        :conversation-id="conversationId"
+        :disabled="disabled"
+        :recommendation-query="recommendationQuery"
+        :recommended-stickers="recommendedStickers"
+        :quote="quote"
+        :show-toolbar-actions="false"
+        show-manage-action
+        presentation="modal"
+        @close="close"
+        @manage="openStickersPage"
+        @sent="emit('sent')"
+      />
+    </section>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -89,36 +86,28 @@ onBeforeUnmount(stopPanelObserver);
 <style scoped>
 .sticker-keyboard-layer {
   --sticker-keyboard-panel-height: var(--sticker-panel-height);
-  position: fixed;
-  inset: var(--visual-viewport-offset-top) 0 auto;
+  position: relative;
   z-index: 11;
+  flex: 0 0 var(--sticker-keyboard-panel-height);
   display: flex;
+  width: 100%;
+  min-height: 0;
+  height: var(--sticker-keyboard-panel-height);
   align-items: flex-end;
   justify-content: center;
-  height: var(--visual-viewport-height);
-  pointer-events: none;
-}
-
-.sticker-keyboard-dismiss {
-  position: absolute;
-  inset: 0;
-  border: 0;
-  background: transparent;
-  pointer-events: auto;
+  overflow: hidden;
 }
 
 .sticker-keyboard-panel {
   position: relative;
-  z-index: 1;
-  width: min(100%, 414px);
-  height: var(--sticker-keyboard-panel-height);
-  padding: 9px calc(8px + var(--safe-right)) calc(9px + var(--safe-bottom)) calc(8px + var(--safe-left));
+  width: 100%;
+  height: 100%;
+  padding: 9px calc(8px + var(--safe-right)) 9px calc(8px + var(--safe-left));
   overflow: hidden;
   border-top: 1px solid rgba(20, 20, 20, 0.08);
   background:
     linear-gradient(180deg, rgba(255, 252, 253, 0.98), rgba(247, 249, 252, 0.98));
   box-shadow: 0 -10px 36px rgba(39, 35, 43, 0.12);
-  pointer-events: auto;
   animation: sticker-keyboard-enter 180ms ease-out;
 }
 
@@ -136,9 +125,4 @@ onBeforeUnmount(stopPanelObserver);
   }
 }
 
-@media (min-width: 640px) {
-  .sticker-keyboard-panel {
-    border-radius: 18px 18px 0 0;
-  }
-}
 </style>

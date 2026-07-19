@@ -75,6 +75,14 @@
       @send="sendOnly"
       @reply="sendAndReply"
     />
+    <StickerLibraryModal
+      v-model="showStickers"
+      :conversation-id="props.id"
+      :disabled="replying"
+      :quote="quoteTarget"
+      @panel-height-change="handleStickerPanelHeightChange"
+      @sent="quoteTarget = null"
+    />
 
     <AppModal v-model="showActionMenu" title="群聊操作" :show-header="false" variant="ins">
       <section class="action-menu">
@@ -193,14 +201,6 @@
       </div>
     </Teleport>
 
-    <StickerLibraryModal
-      v-model="showStickers"
-      :conversation-id="props.id"
-      :disabled="replying"
-      :quote="quoteTarget"
-      @panel-height-change="handleStickerPanelHeightChange"
-      @sent="quoteTarget = null"
-    />
     <ChatModelSwitchPanel v-model="showModelSwitch" :conversation-id="props.id" />
   </section>
   <section v-else class="screen no-tabs missing-group"><p>群聊不存在或已被删除</p><button type="button" @click="router.replace({ name: 'home' })">返回聊天列表</button></section>
@@ -298,8 +298,7 @@ const activeMemberCount = computed(() => conversation.value?.groupMembers?.filte
 const groupHeaderTitle = computed(() => `${conversation.value?.title ?? '群聊'}（${activeMemberCount.value}）`);
 const chatSurfaceStyle = computed(() => ({
   backgroundColor: chatSettings.value.appearance.backgroundColor,
-  backgroundImage: chatSettings.value.appearance.backgroundImage ? `url(${chatSettings.value.appearance.backgroundImage})` : 'none',
-  '--sticker-panel-offset': showStickers.value ? 'var(--sticker-panel-height)' : '0px'
+  backgroundImage: chatSettings.value.appearance.backgroundImage ? `url(${chatSettings.value.appearance.backgroundImage})` : 'none'
 }));
 const messageEntries = computed(() => visibleMessages.value.map((message, messageIndex) => {
   const previousMessage = allVisibleMessages.value[visibleMessageStartIndex.value + messageIndex - 1];
@@ -402,8 +401,8 @@ onBeforeUnmount(() => { cleanupRecording(); store.setActiveConversation(null); }
 <style scoped>
 .group-chat-page :deep(.chat-header),
 .group-chat-page :deep(.composer) { background:transparent;backdrop-filter:none }
-.message-list { flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:8px 10px calc(8px + var(--keyboard-inset) + var(--sticker-panel-offset, 0px));-webkit-overflow-scrolling:touch;overflow-anchor:none;scroll-padding-bottom:calc(8px + var(--keyboard-inset) + var(--sticker-panel-offset, 0px)) }
-.group-chat-page :deep(.composer) { transform:translate3d(0,calc(0px - var(--keyboard-inset) - var(--sticker-panel-offset, 0px)),0) }
+.message-list { flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:8px 10px calc(8px + var(--keyboard-inset));-webkit-overflow-scrolling:touch;overflow-anchor:none;scroll-padding-bottom:calc(8px + var(--keyboard-inset)) }
+.group-chat-page :deep(.composer) { transform:translate3d(0,calc(0px - var(--keyboard-inset)),0) }
 .message-time-divider { display:flex;justify-content:center;margin:12px 0 8px;pointer-events:none }
 .message-time-divider time { max-width:calc(100% - 32px);padding:3px 8px;border-radius:999px;background:rgba(245,246,248,.82);color:#7b828a;font-size:11px;font-weight:680;line-height:1.2;box-shadow:0 1px 6px rgba(17,20,24,.06);backdrop-filter:blur(12px) }
 .typing-indicator { display:inline-flex;align-items:center;gap:3px;margin:7px 0 7px 38px;padding:8px 11px;border-radius:15px;background:#fff }
@@ -478,7 +477,7 @@ onBeforeUnmount(() => { cleanupRecording(); store.setActiveConversation(null); }
   border-top: 1px solid rgba(20, 20, 20, 0.08);
   background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(12px);
-  transform: translate3d(0, calc(0px - var(--keyboard-inset) - var(--sticker-panel-offset, 0px)), 0);
+  transform: translate3d(0, calc(0px - var(--keyboard-inset)), 0);
 }
 
 .selection-toolbar strong { overflow:hidden;color:#2b3036;font-size:13px;text-align:center;text-overflow:ellipsis;white-space:nowrap }
