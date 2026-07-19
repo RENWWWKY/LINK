@@ -71,7 +71,7 @@ public class LinkMediaPlugin extends Plugin {
             return;
         }
 
-        getBridge().executeOnThreadPool(() -> {
+        getBridge().execute(() -> {
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) saveWithMediaStore(bytes, fileName, mimeType);
                 else saveLegacy(bytes, fileName, mimeType);
