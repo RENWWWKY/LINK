@@ -1,4 +1,5 @@
 import { isNativeImageSaveAvailable, saveNativeImage } from '@/services/nativeMedia';
+import { dataUrlToBlob, isLocalMediaCacheUrl, resolveLocalMediaBlob } from '@/utils/mediaStorage';
 
 function extensionFromMimeType(mimeType: string) {
   if (mimeType.includes('png')) return 'png';
@@ -36,10 +37,8 @@ function clickDownload(url: string, filename: string) {
 }
 
 export async function downloadDataUrl(dataUrl: string, fileName: string) {
-  const response = await fetch(dataUrl);
-  if (!response.ok) throw new Error('导出图片读取失败。');
-  const blob = await response.blob();
-  if (isNativeImageSaveAvailable()) {
+  const blob = dataUrlToBlob(dataUrl);
+  if (blob.type.startsWith('image/') && isNativeImageSaveAvailable()) {
     await saveNativeImage(blob, fileName);
     return;
   }
@@ -54,45 +53,59 @@ async function fetchImage(source: string) {
     // Retry remote images through the authenticated same-origin proxy.
   }
   if (/^https?:\/\//i.test(source)) {
-    const response = await fetch(`/__image-download?url=${encodeURIComponent(source)}`);
-    if (response.ok) return response;
-    throw new Error(`HTTP ${response.status}`);
+    try {
+      const response = await fetch(`/__image-download?url=${encodeURIComponent(source)}`);
+      if (response.ok) return response;
+      throw new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      const detail = error instanceof Error && !/failed to fetch/i.test(error.message) ? `（${error.message}）` : '';
+      throw new Error(`图片下载请求失败，请检查网络后重试${detail}。`);
+    }
   }
   throw new Error('图片读取失败。');
+}
+
+function imageBlobWithFallbackType(blob: Blob, source: string) {
+  if (blob.type.startsWith('image/')) return blob;
+  const extension = extensionFromUrl(source);
+  const mimeType = extension === 'png' ? 'image/png'
+    : extension === 'webp' ? 'image/webp'
+      : extension === 'gif' ? 'image/gif'
+        : extension === 'svg' ? 'image/svg+xml'
+          : ['jpg', 'jpeg'].includes(extension) ? 'image/jpeg' : '';
+  if (!mimeType) throw new Error('读取到的文件不是有效图片。');
+  return new Blob([blob], { type: mimeType });
+}
+
+async function saveOrDownloadImage(blob: Blob, source: string, baseName: string) {
+  const imageBlob = imageBlobWithFallbackType(blob, source);
+  const extension = extensionFromMimeType(imageBlob.type) || extensionFromUrl(source) || 'jpg';
+  const fileName = `${baseName}.${extension}`;
+  if (isNativeImageSaveAvailable()) {
+    await saveNativeImage(imageBlob, fileName);
+    return;
+  }
+
+  const objectUrl = URL.createObjectURL(imageBlob);
+  try {
+    clickDownload(objectUrl, fileName);
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  }
 }
 
 export async function downloadImageUrl(source: string, filenameBase: string) {
   const imageUrl = source.trim();
   if (!imageUrl) throw new Error('没有可下载的图片。');
   const baseName = safeDownloadName(filenameBase);
-  const nativeSave = isNativeImageSaveAvailable();
 
-  if (imageUrl.startsWith('data:')) {
-    const response = await fetch(imageUrl);
-    const blob = await response.blob();
-    const fileName = `${baseName}.${extensionFromMimeType(blob.type) || 'jpg'}`;
-    if (nativeSave) await saveNativeImage(blob, fileName);
-    else clickDownload(imageUrl, fileName);
+  const localBlob = await resolveLocalMediaBlob(imageUrl);
+  if (localBlob) {
+    await saveOrDownloadImage(localBlob, imageUrl, baseName);
     return;
   }
+  if (isLocalMediaCacheUrl(imageUrl)) throw new Error('本地图片文件已丢失，无法下载。');
 
-  try {
-    const response = await fetchImage(imageUrl);
-    const blob = await response.blob();
-    const extension = extensionFromMimeType(blob.type || '') || extensionFromUrl(imageUrl) || 'jpg';
-    const fileName = `${baseName}.${extension}`;
-    if (nativeSave) {
-      await saveNativeImage(blob, fileName);
-      return;
-    }
-    const objectUrl = URL.createObjectURL(blob);
-    try {
-      clickDownload(objectUrl, fileName);
-    } finally {
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-    }
-  } catch (error) {
-    if (nativeSave) throw error;
-    clickDownload(imageUrl, `${baseName}.${extensionFromUrl(imageUrl) || 'jpg'}`);
-  }
+  const response = await fetchImage(imageUrl);
+  await saveOrDownloadImage(await response.blob(), imageUrl, baseName);
 }

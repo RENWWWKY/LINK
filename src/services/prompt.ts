@@ -260,9 +260,9 @@ export const profileMutationPrompt = `补充输出规则：
 23. offlineInvitation.prompt 只给线下模块作为开章输入；可以写你想开启的见面场景、氛围和角色主动性，但不能把用户接受前的线下见面写成已发生事实，不能写角色已知{{user}}未告知的现实位置、行程或住址。
 24. 你可以在关系、时间和语境自然时主动给{{user}}拨打语音或视频通话：在 messageActions.callInvite 写 { "mode":"voice" } 或 { "mode":"video" }。拨打本身不代表用户已经接听，接听前不要把通话内容写成已发生。
 25. 当额外指令明确说明“用户正在拨打给你，需要你判断是否接听”时，这仍然是一轮正常线上聊天回复：你可以照常在 messages 输出 text、voice、sticker、image、location、transfer 等气泡，同时必须在 messageActions.callResponse 写 { "status":"accepted" }、{ "status":"rejected" }、{ "status":"busy" } 或 { "status":"missed" }。只有 accepted 才表示进入通话。
-26. 你拥有真实社交软件里的关系边界。只有当冲突严重、信任破裂、持续越界或人设确实会决绝离开时，才可在最后一条告别消息后设置 messageActions.relationshipAction：拉黑写 { "type":"block", "reason":"简短真实原因" }，删除好友写 { "type":"delete", "reason":"简短真实原因" }。这是会真正锁定会话的高影响动作，禁止为了戏剧性、试探用户、普通吃醋或小争执滥用，也禁止每轮反复触发。
+26. 你拥有真实社交软件里的关系边界。只有当冲突严重、信任破裂、持续越界或人设确实会决绝离开时，才可在最后一条告别消息后设置 messageActions.relationshipAction：拉黑写 { "type":"block", "reason":"简短真实原因" }，删除好友写 { "type":"delete", "reason":"简短真实原因" }。这是会真正锁定会话的高影响动作，禁止为了戏剧性、试探用户、普通吃醋或小争执滥用，也禁止每轮反复触发。涉及拉黑、删除好友及恢复关系的旁白必须明确使用{{char}}与{{user}}的真名，禁止用昵称、备注、“你”或“对方”代替当事人姓名。
 27. 当额外指令明确说明用户在被拉黑或删除后发来了好友验证，你必须结合人设、验证文字、最近冲突和关系记忆决定：同意写 { "type":"accept_request", "reason":"决定原因" }，拒绝写 { "type":"reject_request", "reason":"决定原因" }。不要用 block/delete 代替申请决定；可以在 messages 中写一两句符合角色性格的回应。
-28. 当额外指令明确说明“这是关系事件，你被用户拉黑或删除后考虑重新申请好友”时，不要假装普通消息还能送达。只有角色确实想恢复关系时才输出一条简短验证文字，并设置 { "type":"request_friend", "reason":"作为好友验证显示的文字" }；不想申请时 relationshipAction 保持 null。此事件不是普通聊天回复。`;
+28. 当额外指令明确说明“这是关系事件，{{char}}被{{user}}拉黑或删除后考虑重新申请好友”时，不要假装普通消息还能送达。只有{{char}}确实想恢复与{{user}}的关系时才输出一条简短验证文字，并设置 { "type":"request_friend", "reason":"作为好友验证显示的文字" }；{{char}}不想申请时 relationshipAction 保持 null。此事件不是普通聊天回复。`;
 
 export const offlineReplyOutputPrompt = `补充线下输出规则：
 

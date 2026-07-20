@@ -169,12 +169,12 @@
         </section>
 
         <section v-else class="composer-section">
-          <label class="file-drop-card">
+          <button class="file-drop-card" type="button" @click="choosePngFile">
             <Upload :size="18" />
             <strong>选择 PNG 主题图片</strong>
             <span>{{ selectedPngFile ? selectedPngFile.name : '导入别人分享的主页主题' }}</span>
-            <input type="file" accept="image/png" @change="selectPngFile" />
-          </label>
+          </button>
+          <input ref="pngInput" class="native-fallback-file-input" type="file" accept="image/png,.png" @change="selectPngFile" />
         </section>
 
         <p v-if="importError" class="sync-feedback error">{{ importError }}</p>
@@ -300,6 +300,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router';
 import { ListChecks, PanelsTopLeft, Plus, Share2, SlidersHorizontal, Sparkles, Upload, X } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
+import { pickNativePngFile, shareNativeDataUrl } from '@/services/nativeFile';
 import { useAppStore } from '@/stores/appStore';
 import type { CharacterProfileHomepageAutoCleanupSettings, ProfileHomepageAutoCleanupPreset, ProfileHomepageRecord, ProfileTheme } from '@/types/domain';
 import { downloadDataUrl } from '@/utils/download';
@@ -323,6 +324,7 @@ const creatorTab = ref<'theme' | 'png'>('theme');
 const editingThemeId = ref('');
 const selectedHomepageId = ref('');
 const selectedPngFile = ref<File | null>(null);
+const pngInput = ref<HTMLInputElement | null>(null);
 const importError = ref('');
 const exportError = ref('');
 const importing = ref(false);
@@ -713,6 +715,20 @@ function selectPngFile(event: Event) {
   importError.value = '';
 }
 
+async function choosePngFile() {
+  importError.value = '';
+  try {
+    const file = await pickNativePngFile();
+    if (file === undefined) {
+      pngInput.value?.click();
+      return;
+    }
+    if (file) selectedPngFile.value = file;
+  } catch (error) {
+    importError.value = error instanceof Error ? error.message : '无法打开系统 PNG 文件选择器。';
+  }
+}
+
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -774,7 +790,8 @@ async function exportSelectedThemes() {
   exporting.value = true;
   try {
     const dataUrl = await encodeProfileThemesToPng(selectedThemes);
-    await downloadDataUrl(dataUrl, getExportFileName(selectedThemes));
+    const fileName = getExportFileName(selectedThemes);
+    if (!await shareNativeDataUrl(dataUrl, fileName)) await downloadDataUrl(dataUrl, fileName);
     showExporter.value = false;
   } catch (error) {
     exportError.value = error instanceof Error ? error.message : '主页主题导出失败。';
@@ -785,6 +802,7 @@ async function exportSelectedThemes() {
 </script>
 
 <style scoped>
+.native-fallback-file-input { display: none; }
 .profile-theme-page {
   display: flex;
   flex-direction: column;

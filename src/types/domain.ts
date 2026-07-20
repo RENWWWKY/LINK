@@ -158,11 +158,18 @@ export interface CharacterPhotoRecord {
 
 export type CoupleDeviceScreenStatus = 'using' | 'locked' | 'idle';
 
+export type CoupleActivityCategory = 'sleep' | 'home' | 'travel' | 'work' | 'meal' | 'social' | 'errand' | 'leisure';
+
 export interface CoupleRouteStop {
   name: string;
   time: string;
+  endTime: string;
   kind: 'start' | 'pass' | 'stay' | 'arrival';
+  category: CoupleActivityCategory;
   detail: string;
+  companion: string;
+  trace: string;
+  privateThought: string;
 }
 
 export interface CoupleNetworkRecord {
@@ -173,9 +180,74 @@ export interface CoupleNetworkRecord {
 
 export interface CoupleMomentRecord {
   time: string;
+  category: string;
   title: string;
   detail: string;
   emoji: string;
+  unspoken: string;
+}
+
+export interface CoupleAppUsageRecord {
+  app: string;
+  minutes: number;
+  lastUsedAt: string;
+  detail: string;
+}
+
+export interface CoupleNotificationRecord {
+  app: string;
+  time: string;
+  title: string;
+  preview: string;
+  unread: boolean;
+}
+
+export interface CouplePhoneChatMessage {
+  sender: 'character' | 'contact';
+  time: string;
+  text: string;
+}
+
+export interface CouplePhoneChatRecord {
+  contact: string;
+  relation: string;
+  avatarEmoji: string;
+  updatedAt: string;
+  unread: number;
+  summary: string;
+  messages: CouplePhoneChatMessage[];
+}
+
+export interface CoupleFootprintRecord {
+  kind: 'search' | 'browser' | 'map' | 'shopping';
+  time: string;
+  title: string;
+  detail: string;
+  reason: string;
+}
+
+export interface CoupleGalleryRecord {
+  time: string;
+  title: string;
+  detail: string;
+  emoji: string;
+  palette: [string, string];
+}
+
+export interface CoupleNoteRecord {
+  folder: string;
+  title: string;
+  content: string;
+  updatedAt: string;
+  pinned: boolean;
+}
+
+export interface CoupleLifeRecord {
+  kind: 'alarm' | 'calendar' | 'order' | 'music' | 'draft';
+  time: string;
+  title: string;
+  detail: string;
+  status: string;
 }
 
 export interface CoupleSpaceSnapshot {
@@ -201,6 +273,13 @@ export interface CoupleSpaceSnapshot {
     activeApp: string;
     network: string;
     networkHistory: CoupleNetworkRecord[];
+    appUsage: CoupleAppUsageRecord[];
+    notifications: CoupleNotificationRecord[];
+    chats: CouplePhoneChatRecord[];
+    footprints: CoupleFootprintRecord[];
+    gallery: CoupleGalleryRecord[];
+    notes: CoupleNoteRecord[];
+    lifeRecords: CoupleLifeRecord[];
   };
   bond: {
     mood: string;
@@ -209,6 +288,9 @@ export interface CoupleSpaceSnapshot {
     syncScore: number;
     nextPlan: string;
     whisper: string;
+    daySummary: string;
+    hiddenThought: string;
+    keywords: string[];
   };
   moments: CoupleMomentRecord[];
 }

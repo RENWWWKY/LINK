@@ -177,7 +177,6 @@ public class LinkKeepAliveService extends Service {
                 .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                 .setStyle(style)
                 .addPerson(sender);
-            if (avatar != null) builder.setLargeIcon(avatar);
             manager.notify(notificationTag, notificationId, builder.build());
         }
     }

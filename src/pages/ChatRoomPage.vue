@@ -78,7 +78,7 @@
         <span>{{ relationshipStateDescription }}</span>
       </div>
       <button v-if="relationshipStatus === 'blocked-by-user'" type="button" @click="restoreBlockedFriend">移出黑名单</button>
-      <button v-else-if="canSendFriendRequest" type="button" @click="openFriendRequest">重新添加好友</button>
+      <button v-else-if="canSendFriendRequest" type="button" @click="openFriendRequest">重新添加 {{ relationshipCharacterName }}</button>
       <button v-else-if="relationshipStatus === 'pending-user-request'" type="button" disabled>等待验证</button>
       <span v-else-if="relationshipStatus === 'pending-character-request'" class="relationship-request-actions">
         <button type="button" class="secondary" @click="respondToCharacterRequest('rejected')">拒绝</button>
@@ -639,8 +639,8 @@
 
     <AppModal v-model="showDeleteFriendConfirm" title="确认删除" :show-header="false" variant="ins">
       <section class="delete-confirm-sheet">
-        <h3>删除好友？</h3>
-        <p>删除后无法继续聊天，但会保留聊天记录、角色资料、记忆和世界书。以后可以重新发送好友验证，对方会按人设决定是否通过。</p>
+        <h3>{{ relationshipUserName }} 删除 {{ relationshipCharacterName }}？</h3>
+        <p>删除后 {{ relationshipUserName }} 与 {{ relationshipCharacterName }} 无法继续聊天，但会保留聊天记录、{{ relationshipCharacterName }} 的资料、记忆和世界书。以后 {{ relationshipUserName }} 可以重新发送好友验证，由 {{ relationshipCharacterName }} 按人设决定是否通过。</p>
         <div class="delete-confirm-actions">
           <button class="secondary-action" type="button" :disabled="deletingFriend" @click="showDeleteFriendConfirm = false">取消</button>
           <button class="danger-action" type="button" :disabled="deletingFriend || chatActionLocked" @click="confirmDeleteFriend">{{ deletingFriend ? '删除中' : '删除好友' }}</button>
@@ -650,8 +650,8 @@
 
     <AppModal v-model="showBlockFriendConfirm" title="确认拉黑" :show-header="false" variant="ins">
       <section class="delete-confirm-sheet">
-        <h3>将 {{ characterDisplayName }} 加入黑名单？</h3>
-        <p>拉黑后双方无法互发消息，角色也不会主动联系你；聊天记录会保留，之后可随时移出黑名单。</p>
+        <h3>{{ relationshipUserName }} 将 {{ relationshipCharacterName }} 加入黑名单？</h3>
+        <p>拉黑后 {{ relationshipUserName }} 与 {{ relationshipCharacterName }} 无法互发消息，{{ relationshipCharacterName }} 也不会主动联系 {{ relationshipUserName }}；聊天记录会保留，之后 {{ relationshipUserName }} 可随时将 {{ relationshipCharacterName }} 移出黑名单。</p>
         <div class="delete-confirm-actions">
           <button class="secondary-action" type="button" @click="showBlockFriendConfirm = false">取消</button>
           <button class="danger-action" type="button" :disabled="deletingFriend || currentConversationReplying" @click="confirmBlockFriend">加入黑名单</button>
@@ -661,8 +661,8 @@
 
     <AppModal v-model="showFriendRequest" title="好友验证" :show-header="false" variant="ins">
       <form class="friend-request-sheet" @submit.prevent="submitFriendRequest">
-        <h3>重新添加 {{ characterDisplayName }}</h3>
-        <p>验证消息会交给角色阅读。对方会结合人设、最近冲突和关系记忆决定通过或拒绝。</p>
+        <h3>{{ relationshipUserName }} 重新添加 {{ relationshipCharacterName }}</h3>
+        <p>验证消息会交给 {{ relationshipCharacterName }} 阅读。{{ relationshipCharacterName }} 会结合人设、最近冲突和关系记忆决定通过或拒绝 {{ relationshipUserName }} 的申请。</p>
         <textarea v-model="friendRequestDraft" maxlength="120" rows="4" placeholder="填写好友验证"></textarea>
         <div class="delete-confirm-actions">
           <button class="secondary-action" type="button" @click="showFriendRequest = false">取消</button>
@@ -1041,25 +1041,27 @@ const relationshipStatus = computed(() => relationship.value.status);
 const isFriendRelationship = computed(() => relationshipStatus.value === 'friend');
 const canSendFriendRequest = computed(() => ['blocked-by-character', 'deleted-by-character', 'deleted-by-user'].includes(relationshipStatus.value));
 const relationshipStateTitle = computed(() => ({
-  friend: '好友',
-  'blocked-by-user': '已加入黑名单',
-  'blocked-by-character': '消息已被对方拒收',
-  'pending-user-request': '好友验证已发送',
-  'pending-character-request': `${characterDisplayName.value}请求添加好友`,
-  'deleted-by-user': '你已删除该好友',
-  'deleted-by-character': '对方已删除好友关系'
+  friend: `${relationshipUserName.value}与${relationshipCharacterName.value}是好友`,
+  'blocked-by-user': `${relationshipUserName.value}已将${relationshipCharacterName.value}加入黑名单`,
+  'blocked-by-character': `${relationshipCharacterName.value}已拒收${relationshipUserName.value}的消息`,
+  'pending-user-request': `${relationshipUserName.value}已向${relationshipCharacterName.value}发送好友验证`,
+  'pending-character-request': `${relationshipCharacterName.value}请求添加${relationshipUserName.value}为好友`,
+  'deleted-by-user': `${relationshipUserName.value}已删除${relationshipCharacterName.value}`,
+  'deleted-by-character': `${relationshipCharacterName.value}已删除与${relationshipUserName.value}的好友关系`
 }[relationshipStatus.value] ?? '暂时无法聊天'));
 const relationshipStateDescription = computed(() => {
-  if (relationshipStatus.value === 'blocked-by-user') return '移出黑名单后即可恢复好友关系。';
-  if (relationshipStatus.value === 'pending-user-request') return '正在等待对方决定是否重新成为好友。';
-  if (relationshipStatus.value === 'pending-character-request') return relationship.value.requestMessage || '对方想重新成为好友。';
-  return relationship.value.reason || '可以发送一条好友验证，尝试重新建立联系。';
+  if (relationshipStatus.value === 'blocked-by-user') return `${relationshipUserName.value}将${relationshipCharacterName.value}移出黑名单后即可恢复好友关系。`;
+  if (relationshipStatus.value === 'pending-user-request') return `正在等待${relationshipCharacterName.value}决定是否重新与${relationshipUserName.value}成为好友。`;
+  if (relationshipStatus.value === 'pending-character-request') return relationship.value.requestMessage || `${relationshipCharacterName.value}想重新与${relationshipUserName.value}成为好友。`;
+  return relationship.value.reason || `${relationshipUserName.value}可以向${relationshipCharacterName.value}发送好友验证，尝试重新建立联系。`;
 });
 const characterDisplayName = computed(() => character.value ? getCharacterDisplayName(character.value) : '该好友');
 const boundUser = computed(() => {
   const userId = conversation.value?.userId || character.value?.boundUserId || '';
   return userId ? store.userById(userId) ?? null : null;
 });
+const relationshipCharacterName = computed(() => character.value ? getCharacterAiName(character.value) : '好友');
+const relationshipUserName = computed(() => getUserAiName(boundUser.value));
 const conversationUser = computed(() => {
   const user = boundUser.value;
   if (!user) return null;
@@ -1858,8 +1860,8 @@ async function sendAndReply(content: string) {
   const blockedInteraction = !isFriendRelationship.value;
   const relationshipInstruction = blockedInteraction
     ? relationshipStatus.value === 'blocked-by-user' || relationshipStatus.value === 'deleted-by-user'
-      ? '黑名单互动：用户已拉黑或删除你，普通消息会发送失败并显示感叹号，但用户点击了“回复”让你继续行动。你可以按人设尝试发送消息，也可以在确实想恢复关系时用 relationshipAction.request_friend 重新申请好友；不要假装消息已正常送达。'
-      : '黑名单互动：你已拉黑或删除用户，但用户点击了“回复”让关系继续发展。请按人设决定保持边界、说出反应，或等待用户通过正式好友验证恢复关系；不要把当前状态假装成正常好友聊天。'
+      ? `黑名单互动：${relationshipUserName.value}已拉黑或删除${relationshipCharacterName.value}，${relationshipCharacterName.value}的普通消息会发送失败并显示感叹号，但${relationshipUserName.value}点击了“回复”让${relationshipCharacterName.value}继续行动。${relationshipCharacterName.value}可以按人设尝试发送消息，也可以在确实想恢复关系时用 relationshipAction.request_friend 重新申请${relationshipUserName.value}为好友；不要假装消息已正常送达。所有旁白只能使用${relationshipCharacterName.value}与${relationshipUserName.value}的真名。`
+      : `黑名单互动：${relationshipCharacterName.value}已拉黑或删除${relationshipUserName.value}，但${relationshipUserName.value}点击了“回复”让关系继续发展。请按${relationshipCharacterName.value}的人设决定保持边界、说出反应，或等待${relationshipUserName.value}通过正式好友验证恢复关系；不要把当前状态假装成正常好友聊天。所有旁白只能使用${relationshipCharacterName.value}与${relationshipUserName.value}的真名。`
     : undefined;
   await store.requestRoleplayReply(props.id, {
     blockedInteraction,
@@ -3554,7 +3556,7 @@ async function confirmBlockFriend() {
   try {
     await store.blockCharacter(currentCharacter.id);
     showBlockFriendConfirm.value = false;
-    store.showConfigAlert('已加入黑名单，聊天记录仍会保留。', '已拉黑');
+    store.showConfigAlert(`${relationshipUserName.value}已将${relationshipCharacterName.value}加入黑名单，聊天记录仍会保留。`, '已拉黑');
   } finally {
     deletingFriend.value = false;
   }
@@ -3564,18 +3566,20 @@ async function restoreBlockedFriend() {
   const currentCharacter = character.value;
   if (!currentCharacter) return;
   await store.unblockCharacter(currentCharacter.id);
-  store.showConfigAlert('已恢复好友关系。', '已移出黑名单');
+  store.showConfigAlert(`${relationshipUserName.value}已将${relationshipCharacterName.value}移出黑名单，双方已恢复好友关系。`, '已移出黑名单');
 }
 
 async function respondToCharacterRequest(decision: 'accepted' | 'rejected') {
   const currentCharacter = character.value;
   if (!currentCharacter) return;
   await store.respondCharacterFriendRequest(currentCharacter.id, decision);
-  store.showConfigAlert(decision === 'accepted' ? '已恢复好友关系。' : '已拒绝好友申请。', decision === 'accepted' ? '已通过' : '已拒绝');
+  store.showConfigAlert(decision === 'accepted'
+    ? `${relationshipUserName.value}已通过${relationshipCharacterName.value}的好友申请，双方已恢复好友关系。`
+    : `${relationshipUserName.value}已拒绝${relationshipCharacterName.value}的好友申请。`, decision === 'accepted' ? '已通过' : '已拒绝');
 }
 
 function openFriendRequest() {
-  friendRequestDraft.value = '我是我，想重新加你为好友。';
+  friendRequestDraft.value = `${relationshipUserName.value}想重新添加${relationshipCharacterName.value}为好友。`;
   showFriendRequest.value = true;
 }
 
@@ -3604,7 +3608,7 @@ async function confirmDeleteFriend() {
   try {
     await store.removeCharacterFriend(currentCharacter.id);
     showDeleteFriendConfirm.value = false;
-    store.showConfigAlert('已删除好友，聊天记录和角色资料已保留。', '删除完成');
+    store.showConfigAlert(`${relationshipUserName.value}已删除${relationshipCharacterName.value}，聊天记录和${relationshipCharacterName.value}的资料已保留。`, '删除完成');
   } finally {
     deletingFriend.value = false;
   }

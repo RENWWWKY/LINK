@@ -58,7 +58,8 @@ app.addHook('onRequest', async (request, reply) => {
     || /^\/workbox-[^/]+\.js$/.test(pathname)
     || pathname.startsWith('/api/auth/challenges/')
     || pathname === '/api/napcat/onebot'
-    || /^\/api\/releases\/[^/]+\/download$/.test(pathname)) return;
+    || pathname === '/api/releases/altstore/source.json'
+    || /^\/api\/releases\/[^/]+\/(?:download|altstore-download)$/.test(pathname)) return;
 
   const session = await getSessionIdentity(request);
   if (session) return;
@@ -113,6 +114,7 @@ const cleanupTimer = setInterval(() => {
   void Promise.all([
     query("DELETE FROM login_challenges WHERE created_at < NOW() - INTERVAL '2 days'"),
     query("DELETE FROM sessions WHERE (expires_at < NOW() - INTERVAL '30 days') OR (revoked_at IS NOT NULL AND revoked_at < NOW() - INTERVAL '30 days')"),
+    query("DELETE FROM release_source_tokens WHERE (expires_at < NOW() - INTERVAL '30 days') OR (revoked_at IS NOT NULL AND revoked_at < NOW() - INTERVAL '30 days')"),
     query("DELETE FROM audit_logs WHERE created_at < NOW() - ($1::int * INTERVAL '1 day')", [config.auditRetentionDays])
   ]).catch((error) => app.log.warn({ error }, 'Periodic database cleanup failed'));
 }, 6 * 60 * 60 * 1000);

@@ -338,7 +338,9 @@ async function exportBackup() {
       setLocalFeedback(`${label} ${Math.round(percent)}%`);
     });
     await downloadLinkBackupArchive(backup, createBackupArchiveFilename(props.userId));
-    setLocalFeedback('压缩备份已导出。');
+    setLocalFeedback(backup.omittedLocalMedia
+      ? `压缩备份已导出，已跳过 ${backup.omittedLocalMedia} 个此前丢失的本地媒体文件。`
+      : '压缩备份已导出。');
   } catch (error) {
     setLocalFeedback(error instanceof Error ? error.message : '导出失败。', 'error');
   } finally {

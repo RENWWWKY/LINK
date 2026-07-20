@@ -1,4 +1,5 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { App } from '@capacitor/app';
 
 export type NativeReleasePlatform = 'android' | 'ios';
 export type NativeReleasePhase = 'idle' | 'checking' | 'latest' | 'available' | 'opening' | 'unsupported' | 'error';
@@ -34,7 +35,17 @@ export interface NativeReleaseStatus {
 interface LinkUpdaterPlugin {
   getVersion(): Promise<{ versionCode: number; versionName: string }>;
   openDownload(options: { url: string }): Promise<void>;
+  installUpdate(options: { url: string; sha256: string; versionCode: number }): Promise<{ status: 'permission-required' | 'install-requested' }>;
 }
+
+export interface IosUpdateSourceLink {
+  url: string;
+  altstoreUrl: string;
+  sidestoreUrl: string;
+  expiresAt: number;
+}
+
+export type NativeReleaseActionResult = 'install-requested' | 'permission-required' | 'browser-download';
 
 const LinkUpdater = registerPlugin<LinkUpdaterPlugin>('LinkUpdater');
 
@@ -76,6 +87,14 @@ async function resolveInstalledVersion(platform: NativeReleasePlatform) {
       return configuredVersion(platform);
     }
   }
+  if (Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('App')) {
+    try {
+      const info = await App.getInfo();
+      return { versionCode: Math.max(0, Number(info.build) || 0), versionName: String(info.version ?? '') };
+    } catch {
+      return configuredVersion(platform);
+    }
+  }
   return configuredVersion(platform);
 }
 
@@ -110,14 +129,17 @@ export async function checkNativeRelease(): Promise<NativeReleaseStatus> {
   }
 }
 
-export async function openNativeReleaseDownload(release: NativeRelease) {
-  const absoluteUrl = new URL(release.downloadUrl, window.location.origin).toString();
-  if (release.platform === 'android' && Capacitor.isNativePlatform()) {
-    try {
-      await LinkUpdater.openDownload({ url: absoluteUrl });
-      return;
-    } catch {}
-  }
+async function refreshDownloadTicket(release: NativeRelease) {
+  if (release.downloadExpiresAt > Date.now() + 15_000) return release;
+  const params = new URLSearchParams({ platform: release.platform, versionCode: '0' });
+  const response = await fetch(`/api/releases/latest?${params.toString()}`, { cache: 'no-store', credentials: 'same-origin' });
+  if (!response.ok) throw new Error(await responseError(response));
+  const latestRelease = await response.json() as NativeRelease | { release: null };
+  if ('release' in latestRelease) throw new Error('管理员尚未发布该平台安装包。');
+  return latestRelease;
+}
+
+function triggerBrowserDownload(release: NativeRelease, absoluteUrl: string) {
   const downloadLink = document.createElement('a');
   downloadLink.href = absoluteUrl;
   downloadLink.download = `BabyLink-${release.versionName}.${release.platform === 'android' ? 'apk' : 'ipa'}`;
@@ -126,4 +148,40 @@ export async function openNativeReleaseDownload(release: NativeRelease) {
   document.body.append(downloadLink);
   downloadLink.click();
   downloadLink.remove();
+}
+
+export async function installNativeRelease(inputRelease: NativeRelease): Promise<NativeReleaseActionResult> {
+  const release = await refreshDownloadTicket(inputRelease);
+  const absoluteUrl = new URL(release.downloadUrl, window.location.origin).toString();
+  if (release.platform === 'android' && Capacitor.isNativePlatform()) {
+    try {
+      const result = await LinkUpdater.installUpdate({ url: absoluteUrl, sha256: release.sha256, versionCode: release.versionCode });
+      return result.status;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error ?? '');
+      if (!/(not implemented|not available|does not exist|unimplemented)/i.test(message)) throw error;
+      await LinkUpdater.openDownload({ url: absoluteUrl });
+      return 'browser-download';
+    }
+  }
+  triggerBrowserDownload(release, absoluteUrl);
+  return 'browser-download';
+}
+
+export async function fetchIosUpdateSourceLink() {
+  const response = await fetch('/api/releases/altstore/source-link', { cache: 'no-store', credentials: 'same-origin' });
+  if (!response.ok) throw new Error(await responseError(response));
+  return await response.json() as IosUpdateSourceLink;
+}
+
+export async function openNativeReleaseDownload(release: NativeRelease) {
+  const refreshedRelease = await refreshDownloadTicket(release);
+  const absoluteUrl = new URL(refreshedRelease.downloadUrl, window.location.origin).toString();
+  if (release.platform === 'android' && Capacitor.isNativePlatform()) {
+    try {
+      await LinkUpdater.openDownload({ url: absoluteUrl });
+      return;
+    } catch {}
+  }
+  triggerBrowserDownload(refreshedRelease, absoluteUrl);
 }

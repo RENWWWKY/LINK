@@ -7,7 +7,7 @@
       <div class="top-title-copy">
         <strong>恋人守护</strong>
       </div>
-      <button class="top-action" type="button" :disabled="syncing || !state?.consentGrantedAt" aria-label="同步角色状态" @click="syncNow">
+      <button class="top-action" type="button" :disabled="syncing || !state?.consentGrantedAt" :aria-label="`同步${characterName}状态`" @click="syncNow">
         <LoaderCircle v-if="syncing" class="spin" :size="19" />
         <RefreshCw v-else :size="19" />
       </button>
@@ -16,7 +16,7 @@
     <main class="couple-main">
       <section class="bond-hero">
         <div class="avatar-pair" aria-label="情侣头像">
-          <img :src="currentUser?.avatar || '/avatar.svg'" :alt="currentUser?.nickname || '我'" />
+          <img :src="currentUserAvatar" :alt="currentUserName" />
           <span><Heart :size="15" fill="currentColor" /></span>
           <img :src="character.avatar" :alt="characterName" />
         </div>
@@ -34,15 +34,15 @@
         <span class="consent-icon"><ShieldCheck :size="30" /></span>
         <p class="section-kicker">Mutual Sharing</p>
         <h1>把关心变成彼此允许的事</h1>
-        <p>开启后，API 会依据角色设定、聊天记忆与当前时间生成共享位置、手机报告和生活轨迹。它不会读取真实 GPS、解锁记录或后台应用。</p>
+        <p>开启后，API 会依据 {{ characterName }} 的设定、聊天记忆与当前时间生成共享位置、手机报告和生活轨迹。它不会读取真实 GPS、解锁记录或后台应用。</p>
         <ul>
-          <li><MapPinned :size="17" /><span>角色生活路线、停留和预计到达</span></li>
-          <li><Smartphone :size="17" /><span>角色主动分享的电量与使用状态</span></li>
+          <li><MapPinned :size="17" /><span>{{ characterName }} 的生活路线、停留和预计到达</span></li>
+          <li><Smartphone :size="17" /><span>{{ characterName }} 主动分享的电量与使用状态</span></li>
           <li><Heart :size="17" /><span>只服务于这段关系的陪伴与惊喜</span></li>
         </ul>
         <label class="consent-check">
           <input v-model="consentChecked" type="checkbox" />
-          <span>我理解这是角色互动模拟，并确认双方自愿共享</span>
+          <span>{{ currentUserName }} 理解这是 {{ currentUserName }} 与 {{ characterName }} 的互动模拟，并确认 {{ currentUserName }} 与 {{ characterName }} 自愿共享</span>
         </label>
         <button class="primary-button" type="button" :disabled="!consentChecked" @click="enableCoupleSpace">一起开启</button>
       </section>
@@ -51,11 +51,11 @@
         <section v-if="!displaySnapshot" class="first-sync-card">
           <span><Radio :size="31" /></span>
           <h2>连接已经建立</h2>
-          <p>第一次同步会让角色根据最近生活与关系进度，分享此刻的位置、手机状态和今天的小片段。</p>
+          <p>第一次同步会让 {{ characterName }} 根据最近生活与关系进度，分享此刻的位置、手机状态和今天的小片段。</p>
           <button class="primary-button" type="button" :disabled="syncing" @click="syncNow">
             <LoaderCircle v-if="syncing" class="spin" :size="18" />
             <Sparkles v-else :size="18" />
-            {{ syncing ? '正在靠近角色的世界…' : '同步此刻状态' }}
+            {{ syncing ? `正在靠近${characterName}的世界…` : '同步此刻状态' }}
           </button>
         </section>
 
@@ -70,7 +70,7 @@
                 <span class="map-pin"><MapPin :size="19" fill="currentColor" /></span>
               </span>
               <span class="mini-map-copy">
-                <small>NOW · {{ displaySnapshot.location.transport }}</small>
+                <small>24H · {{ displaySnapshot.location.route.length }} 段生活轨迹</small>
                 <strong>{{ displaySnapshot.location.place }}</strong>
                 <span>{{ displaySnapshot.location.status }}</span>
                 <em><Navigation :size="13" /> {{ displaySnapshot.location.distance }}</em>
@@ -86,13 +86,13 @@
               </article>
               <article class="metric-card violet">
                 <span class="metric-ring" :style="{ '--score': `${displaySnapshot.bond.missLevel * 3.6}deg` }"><i>{{ displaySnapshot.bond.missLevel }}</i></span>
-                <small>想你浓度</small>
+                <small>想念 {{ currentUserName }}</small>
                 <strong>{{ missLevelLabel }}</strong>
               </article>
               <article class="metric-card mint">
                 <BatteryCharging v-if="displaySnapshot.device.charging" :size="22" />
                 <BatteryMedium v-else :size="22" />
-                <small>角色电量</small>
+                <small>{{ characterName }} 电量</small>
                 <strong>{{ displaySnapshot.device.battery }}%</strong>
               </article>
               <article class="metric-card peach">
@@ -113,21 +113,30 @@
             <section class="plan-card">
               <span><CalendarHeart :size="21" /></span>
               <div>
-                <small>下一件想一起做的事</small>
+                <small>{{ characterName }} 想和 {{ currentUserName }} 一起做的事</small>
                 <strong>{{ displaySnapshot.bond.nextPlan }}</strong>
               </div>
               <span class="sync-score">{{ displaySnapshot.bond.syncScore }}% 默契</span>
+            </section>
+
+            <section class="day-recap-card">
+              <header><span>聊天之外的 24 小时</span><small>PRIVATE DAY FILE</small></header>
+              <p>{{ displaySnapshot.bond.daySummary }}</p>
+              <blockquote>“{{ displaySnapshot.bond.hiddenThought }}”</blockquote>
+              <div v-if="displaySnapshot.bond.keywords.length" class="keyword-row">
+                <span v-for="keyword in displaySnapshot.bond.keywords" :key="keyword"># {{ keyword }}</span>
+              </div>
             </section>
           </section>
 
           <section v-else-if="activeTab === 'map'" class="tab-content map-tab">
             <section class="location-hero-card">
-              <div class="live-pill"><span></span>角色实时共享</div>
+              <div class="live-pill"><span></span>{{ characterName }} 实时共享</div>
               <span class="location-orbit" aria-hidden="true"><i></i><b><MapPin :size="24" fill="currentColor" /></b></span>
               <h2>{{ displaySnapshot.location.place }}</h2>
               <p>{{ displaySnapshot.location.address }}</p>
               <div class="location-summary">
-                <span><Navigation :size="15" /><strong>{{ displaySnapshot.location.distance }}</strong><small>与你的距离</small></span>
+                <span><Navigation :size="15" /><strong>{{ displaySnapshot.location.distance }}</strong><small>与 {{ currentUserName }} 的距离</small></span>
                 <span><BusFront :size="15" /><strong>{{ displaySnapshot.location.transport }}</strong><small>移动方式</small></span>
                 <span><Clock3 :size="15" /><strong>{{ displaySnapshot.location.eta }}</strong><small>预计到达</small></span>
               </div>
@@ -135,27 +144,37 @@
 
             <section class="section-card route-card">
               <header class="card-head">
-                <div><small>Today Route</small><h2>今天的移动途径</h2></div>
-                <span>{{ formatStay(displaySnapshot.location.stayMinutes) }}</span>
+                <div><small>24 HOUR TIMELINE</small><h2>过去 24 小时完整行程</h2></div>
+                <span>{{ displaySnapshot.location.route.length }} 段</span>
               </header>
+              <div class="route-overview">
+                <span><b>{{ routePlaceCount }}</b><small>到过地点</small></span>
+                <span><b>{{ routeCompanionCount }}</b><small>同行人物</small></span>
+                <span><b>{{ formatStay(displaySnapshot.location.stayMinutes) }}</b><small>此处停留</small></span>
+              </div>
               <div v-if="displaySnapshot.location.route.length" class="route-list">
                 <article v-for="(stop, index) in displaySnapshot.location.route" :key="`${stop.time}-${index}`" :class="`route-${stop.kind}`">
+                  <span class="route-time"><b>{{ stop.time }}</b><small>{{ stop.endTime }}</small></span>
                   <span class="route-dot"><Footprints v-if="stop.kind === 'pass'" :size="13" /><MapPin v-else :size="13" /></span>
-                  <div><strong>{{ stop.name }}</strong><p>{{ stop.detail }}</p></div>
-                  <time>{{ stop.time }}</time>
+                  <div class="route-copy">
+                    <div><strong>{{ stop.name }}</strong><em>{{ activityCategoryLabel(stop.category) }}</em></div>
+                    <p>{{ stop.detail }}</p>
+                    <span class="route-evidence"><i>同行</i>{{ stop.companion }}<i>痕迹</i>{{ stop.trace }}</span>
+                    <blockquote v-if="stop.privateThought">“{{ stop.privateThought }}”</blockquote>
+                  </div>
                 </article>
               </div>
-              <p v-else class="empty-copy">角色今天还没有分享移动路线。</p>
+              <p v-else class="empty-copy">重新同步后会生成覆盖过去 24 小时的完整生活行程。</p>
             </section>
 
             <section class="map-actions">
               <button type="button" :class="{ active: state.arrivalReminderEnabled }" @click="toggleArrivalReminder">
                 <BellRing :size="18" />
-                <span><strong>{{ state.arrivalReminderEnabled ? '到达提醒已开启' : '到达时提醒我' }}</strong><small>仅在下一次角色状态同步时提示</small></span>
+                <span><strong>{{ state.arrivalReminderEnabled ? '到达提醒已开启' : '到达时提醒我' }}</strong><small>仅在下一次 {{ characterName }} 状态同步时提示</small></span>
               </button>
               <button type="button" :disabled="syncing" @click="syncNow">
                 <Radio :size="18" />
-                <span><strong>请求共享现在的位置</strong><small>调用 API 更新角色生活轨迹</small></span>
+                <span><strong>请求共享现在的位置</strong><small>调用 API 更新 {{ characterName }} 的生活轨迹</small></span>
               </button>
             </section>
           </section>
@@ -181,44 +200,142 @@
               </div>
             </section>
 
-            <section class="section-card network-card">
+            <nav class="phone-section-tabs" :aria-label="`${characterName}手机内容分类`">
+              <button type="button" :class="{ active: phoneSection === 'overview' }" @click="phoneSection = 'overview'"><AppWindow :size="16" /><span>总览</span></button>
+              <button type="button" :class="{ active: phoneSection === 'messages' }" @click="phoneSection = 'messages'"><MessageCircle :size="16" /><span>消息</span><i>{{ displaySnapshot.device.chats.length }}</i></button>
+              <button type="button" :class="{ active: phoneSection === 'footprints' }" @click="phoneSection = 'footprints'"><Search :size="16" /><span>足迹</span></button>
+              <button type="button" :class="{ active: phoneSection === 'vault' }" @click="phoneSection = 'vault'"><Images :size="16" /><span>收藏</span></button>
+            </nav>
+
+            <template v-if="phoneSection === 'overview'">
+              <section class="section-card app-usage-card">
+                <header class="card-head">
+                  <div><small>SCREEN TIME</small><h2>应用使用记录</h2></div>
+                  <span>{{ formatUsage(displaySnapshot.device.usageMinutes) }}</span>
+                </header>
+                <div class="app-usage-list">
+                  <article v-for="item in displaySnapshot.device.appUsage" :key="`${item.app}-${item.lastUsedAt}`">
+                    <span class="app-tile">{{ item.app.slice(0, 1) }}</span>
+                    <div><strong>{{ item.app }}</strong><small>{{ item.detail }}</small><i><b :style="{ width: appUsageWidth(item.minutes) }"></b></i></div>
+                    <time>{{ formatUsage(item.minutes) }}<small>{{ item.lastUsedAt }}</small></time>
+                  </article>
+                  <p v-if="!displaySnapshot.device.appUsage.length" class="empty-copy">重新同步后会出现 {{ characterName }} 今天打开过的应用。</p>
+                </div>
+              </section>
+
+              <section class="section-card notification-card">
+                <header class="card-head">
+                  <div><small>NOTIFICATION CENTER</small><h2>通知中心</h2></div>
+                  <Bell :size="20" />
+                </header>
+                <div class="notification-list">
+                  <article v-for="(notice, index) in displaySnapshot.device.notifications" :key="`${notice.time}-${index}`" :class="{ unread: notice.unread }">
+                    <span>{{ notice.app.slice(0, 1) }}</span>
+                    <div><small>{{ notice.app }} · {{ notice.time }}</small><strong>{{ notice.title }}</strong><p>{{ notice.preview }}</p></div>
+                  </article>
+                  <p v-if="!displaySnapshot.device.notifications.length" class="empty-copy">通知中心很安静，下一次同步再来看看。</p>
+                </div>
+              </section>
+
+              <section class="section-card network-card">
+                <header class="card-head">
+                  <div><small>CONNECTION</small><h2>连入网络</h2></div>
+                  <Wifi :size="20" />
+                </header>
+                <div class="current-network">
+                  <span><Wifi :size="18" /></span>
+                  <div><small>当前网络</small><strong>{{ displaySnapshot.device.network }}</strong></div>
+                </div>
+                <div class="network-list">
+                  <article v-for="(network, index) in displaySnapshot.device.networkHistory" :key="`${network.time}-${index}`">
+                    <span :class="`network-${network.kind}`"><WifiOff v-if="network.kind === 'offline'" :size="15" /><Signal v-else :size="15" /></span>
+                    <strong>{{ network.name }}</strong>
+                    <small>{{ network.time }}</small>
+                  </article>
+                </div>
+              </section>
+            </template>
+
+            <section v-else-if="phoneSection === 'messages'" class="phone-chat-list">
+              <header class="phone-section-heading"><div><small>OFF-SCREEN CHATS</small><h2>没出现在 {{ currentUserName }} 与 {{ characterName }} 聊天里的消息</h2></div><MessageCircle :size="20" /></header>
+              <article v-for="chat in displaySnapshot.device.chats" :key="`${chat.contact}-${chat.updatedAt}`" class="phone-chat-card">
+                <header>
+                  <span>{{ chat.avatarEmoji }}</span>
+                  <div><strong>{{ chat.contact }}</strong><small>{{ chat.relation }} · {{ chat.updatedAt }}</small></div>
+                  <i v-if="chat.unread">{{ chat.unread }}</i>
+                </header>
+                <p>{{ chat.summary }}</p>
+                <div class="phone-chat-messages">
+                  <span v-for="(message, index) in chat.messages" :key="`${message.time}-${index}`" :class="message.sender">
+                    <small>{{ message.time }}</small>{{ message.text }}
+                  </span>
+                </div>
+              </article>
+              <p v-if="!displaySnapshot.device.chats.length" class="empty-copy">{{ characterName }} 还没有分享聊天之外的联系人记录。</p>
+            </section>
+
+            <section v-else-if="phoneSection === 'footprints'" class="section-card footprint-card">
               <header class="card-head">
-                <div><small>CONNECTION</small><h2>连入网络</h2></div>
-                <Wifi :size="20" />
+                <div><small>DIGITAL FOOTPRINTS</small><h2>搜索与浏览足迹</h2></div>
+                <Search :size="20" />
               </header>
-              <div class="current-network">
-                <span><Wifi :size="18" /></span>
-                <div><small>当前网络</small><strong>{{ displaySnapshot.device.network }}</strong></div>
-              </div>
-              <div class="network-list">
-                <article v-for="(network, index) in displaySnapshot.device.networkHistory" :key="`${network.time}-${index}`">
-                  <span :class="`network-${network.kind}`"><WifiOff v-if="network.kind === 'offline'" :size="15" /><Signal v-else :size="15" /></span>
-                  <strong>{{ network.name }}</strong>
-                  <small>{{ network.time }}</small>
+              <div class="footprint-list">
+                <article v-for="(item, index) in displaySnapshot.device.footprints" :key="`${item.time}-${index}`">
+                  <span>{{ footprintKindEmoji(item.kind) }}</span>
+                  <div><small>{{ footprintKindLabel(item.kind) }} · {{ item.time }}</small><strong>{{ item.title }}</strong><p>{{ item.detail }}</p><em>为什么点开：{{ item.reason }}</em></div>
                 </article>
+                <p v-if="!displaySnapshot.device.footprints.length" class="empty-copy">浏览痕迹尚未生成，重新同步后再来翻翻。</p>
               </div>
             </section>
 
-            <p class="privacy-note"><ShieldCheck :size="15" />以上是角色主动分享的剧情化报告，并非真实系统权限数据。</p>
+            <template v-else>
+              <section class="section-card gallery-card">
+                <header class="card-head"><div><small>RECENT GALLERY</small><h2>最近相册</h2></div><Images :size="20" /></header>
+                <div class="gallery-grid">
+                  <article v-for="(photo, index) in displaySnapshot.device.gallery" :key="`${photo.time}-${index}`" :style="galleryStyle(photo.palette)">
+                    <span>{{ photo.emoji }}</span><time>{{ photo.time }}</time><div><strong>{{ photo.title }}</strong><p>{{ photo.detail }}</p></div>
+                  </article>
+                </div>
+                <p v-if="!displaySnapshot.device.gallery.length" class="empty-copy">相册里暂时没有可分享的生活切片。</p>
+              </section>
+
+              <section class="section-card notes-card">
+                <header class="card-head"><div><small>NOTES & DRAFTS</small><h2>备忘录与没说出口的话</h2></div><NotebookPen :size="20" /></header>
+                <article v-for="(note, index) in displaySnapshot.device.notes" :key="`${note.title}-${index}`">
+                  <span>{{ note.pinned ? '📌' : '📝' }}</span><div><small>{{ note.folder }} · {{ note.updatedAt }}</small><strong>{{ note.title }}</strong><p>{{ note.content }}</p></div>
+                </article>
+                <p v-if="!displaySnapshot.device.notes.length" class="empty-copy">备忘录还是空白的。</p>
+              </section>
+
+              <section class="section-card life-record-card">
+                <header class="card-head"><div><small>PHONE LIFE</small><h2>闹钟、日程、订单与草稿</h2></div><ListChecks :size="20" /></header>
+                <article v-for="(record, index) in displaySnapshot.device.lifeRecords" :key="`${record.time}-${index}`">
+                  <span>{{ lifeRecordEmoji(record.kind) }}</span><div><small>{{ lifeRecordLabel(record.kind) }} · {{ record.time }}</small><strong>{{ record.title }}</strong><p>{{ record.detail }}</p></div><em>{{ record.status }}</em>
+                </article>
+                <p v-if="!displaySnapshot.device.lifeRecords.length" class="empty-copy">暂时没有更多手机生活记录。</p>
+              </section>
+            </template>
+
+            <p class="privacy-note"><ShieldCheck :size="15" />以上均为 {{ characterName }} 自愿分享的剧情化生活档案，不读取真实设备或真实联系人。</p>
           </section>
 
           <section v-else class="tab-content moments-tab">
             <section class="section-card moments-card">
               <header class="card-head">
-                <div><small>LITTLE MOMENTS</small><h2>今天想让你知道的事</h2></div>
+                <div><small>UNSEEN MOMENTS</small><h2>{{ characterName }} 在聊天之外发生的事</h2></div>
                 <Sparkles :size="20" />
               </header>
               <article v-for="(moment, index) in displaySnapshot.moments" :key="`${moment.time}-${index}`" class="moment-row">
                 <span>{{ moment.emoji }}</span>
-                <div><strong>{{ moment.title }}</strong><p>{{ moment.detail }}</p></div>
+                <div><small>{{ moment.category }}</small><strong>{{ moment.title }}</strong><p>{{ moment.detail }}</p><blockquote v-if="moment.unspoken">没发给 {{ currentUserName }}：“{{ moment.unspoken }}”</blockquote></div>
                 <time>{{ moment.time }}</time>
               </article>
-              <p v-if="!displaySnapshot.moments.length" class="empty-copy">今天的小片段还藏在角色的口袋里。</p>
+              <p v-if="!displaySnapshot.moments.length" class="empty-copy">今天的小片段还藏在 {{ characterName }} 的口袋里。</p>
             </section>
 
             <section class="section-card wishes-card">
               <header class="card-head">
-                <div><small>WISH CAPSULE</small><h2>我们的心愿便利贴</h2></div>
+                <div><small>WISH CAPSULE</small><h2>{{ currentUserName }} × {{ characterName }} 心愿便利贴</h2></div>
                 <Heart :size="20" />
               </header>
               <form class="wish-form" @submit.prevent="addWish">
@@ -230,7 +347,7 @@
                   <span>♡</span><p>{{ wish.content }}</p>
                   <button type="button" aria-label="删除心愿" @click="deleteWish(wish.id)"><X :size="14" /></button>
                 </article>
-                <p v-if="!state.wishes.length" class="empty-copy">写下一件想和对方完成的小事吧。</p>
+                <p v-if="!state.wishes.length" class="empty-copy">写下一件 {{ currentUserName }} 想和 {{ characterName }} 完成的小事吧。</p>
               </div>
             </section>
 
@@ -247,7 +364,7 @@
     </main>
 
     <nav v-if="state?.consentGrantedAt" class="couple-tabs" aria-label="情侣空间页面切换">
-      <button type="button" :class="{ active: activeTab === 'home' }" @click="activeTab = 'home'"><Heart :size="20" /><span>我们</span></button>
+      <button type="button" :class="{ active: activeTab === 'home' }" @click="activeTab = 'home'"><Heart :size="20" /><span>守护</span></button>
       <button type="button" :class="{ active: activeTab === 'map' }" @click="activeTab = 'map'"><MapPinned :size="20" /><span>位置</span></button>
       <button type="button" :class="{ active: activeTab === 'device' }" @click="activeTab = 'device'"><Smartphone :size="20" /><span>手机</span></button>
       <button type="button" :class="{ active: activeTab === 'moments' }" @click="activeTab = 'moments'"><Sparkles :size="20" /><span>印记</span></button>
@@ -257,7 +374,7 @@
       <form class="couple-settings" @submit.prevent="saveSettings">
         <label><span>关系称呼</span><input v-model="relationshipLabelDraft" maxlength="20" placeholder="恋人、搭档、命定之人…" /></label>
         <label><span>在一起的日期</span><input v-model="startedAtDraft" type="date" /></label>
-        <p><ShieldCheck :size="15" />共享内容仅保存在本机角色数据与用户主动创建的备份中。</p>
+        <p><ShieldCheck :size="15" />共享内容仅保存在本机 {{ characterName }} 数据与 {{ currentUserName }} 主动创建的备份中。</p>
         <div class="settings-actions">
           <button class="danger-button" type="button" @click="disableCoupleSpace">关闭并清空</button>
           <button class="primary-button" type="submit">保存设置</button>
@@ -275,21 +392,23 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { ArrowLeft, BatteryCharging, BatteryMedium, BellRing, BusFront, CalendarHeart, ChevronRight, Clock3, Footprints, Heart, LoaderCircle, LockKeyhole, MapPin, MapPinned, Navigation, Plus, Radio, RefreshCw, Settings2, ShieldCheck, Signal, Smartphone, Sparkles, UnlockKeyhole, Wifi, WifiOff, X } from 'lucide-vue-next';
+import { AppWindow, ArrowLeft, BatteryCharging, BatteryMedium, Bell, BellRing, BusFront, CalendarHeart, ChevronRight, Clock3, Footprints, Heart, Images, ListChecks, LoaderCircle, LockKeyhole, MapPin, MapPinned, MessageCircle, Navigation, NotebookPen, Plus, Radio, RefreshCw, Search, Settings2, ShieldCheck, Signal, Smartphone, Sparkles, UnlockKeyhole, Wifi, WifiOff, X } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
 import { useAppStore } from '@/stores/appStore';
 import type { CoupleSpaceSnapshot } from '@/types/domain';
-import { createCoupleSpaceState } from '@/utils/coupleSpace';
+import { createCoupleSpaceState, normalizeCoupleSpaceIdentityReferences } from '@/utils/coupleSpace';
 import { createId } from '@/utils/id';
-import { getCharacterDisplayName } from '@/utils/character';
-import { getUserDisplayName } from '@/utils/profile';
+import { getCharacterAiName } from '@/utils/character';
+import { getUserAiName, normalizeVisualProfile } from '@/utils/profile';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
 const store = useAppStore();
 type CoupleTab = 'home' | 'map' | 'device' | 'moments';
+type PhoneSection = 'overview' | 'messages' | 'footprints' | 'vault';
 
 const activeTab = ref<CoupleTab>('home');
+const phoneSection = ref<PhoneSection>('overview');
 const syncing = ref(false);
 const consentChecked = ref(false);
 const showSettings = ref(false);
@@ -300,16 +419,28 @@ const selectedSnapshotId = ref('');
 
 const conversation = computed(() => store.conversationById(props.id));
 const character = computed(() => conversation.value ? store.characterById(conversation.value.charId) : null);
-const currentUser = computed(() => character.value ? store.userById(character.value.boundUserId) ?? store.user : store.user);
+const currentUser = computed(() => {
+  const userId = conversation.value?.userId || character.value?.boundUserId;
+  return userId ? store.userById(userId) ?? store.user : store.user;
+});
 const state = computed(() => character.value?.coupleSpace);
 const snapshot = computed(() => state.value?.snapshot);
 const snapshotHistory = computed(() => state.value?.history ?? []);
 const displaySnapshot = computed<CoupleSpaceSnapshot | undefined>(() => {
-  if (!selectedSnapshotId.value) return snapshot.value;
-  return snapshotHistory.value.find((item) => item.id === selectedSnapshotId.value) ?? snapshot.value;
+  const selectedSnapshot = selectedSnapshotId.value
+    ? snapshotHistory.value.find((item) => item.id === selectedSnapshotId.value) ?? snapshot.value
+    : snapshot.value;
+  return selectedSnapshot
+    ? normalizeCoupleSpaceIdentityReferences(selectedSnapshot, characterName.value, currentUserName.value)
+    : undefined;
 });
-const characterName = computed(() => character.value ? getCharacterDisplayName(character.value) : 'TA');
-const currentUserName = computed(() => currentUser.value ? getUserDisplayName(currentUser.value) : '我');
+const characterName = computed(() => character.value ? getCharacterAiName(character.value) : '角色');
+const currentUserName = computed(() => currentUser.value ? getUserAiName(currentUser.value) : '用户');
+const currentUserAvatar = computed(() => {
+  const user = currentUser.value;
+  if (!user) return '/avatar.svg';
+  return normalizeVisualProfile(character.value?.boundUserProfile, user).avatar || user.avatar || '/avatar.svg';
+});
 const relationshipDaysText = computed(() => {
   const startedAt = state.value?.startedAt;
   if (!startedAt) return 'OUR PRIVATE LINK';
@@ -328,8 +459,11 @@ const batteryHint = computed(() => {
 });
 const missLevelLabel = computed(() => {
   const level = displaySnapshot.value?.bond.missLevel ?? 0;
-  return level >= 85 ? '忍不住想见你' : level >= 60 ? '总会想起你' : level >= 35 ? '悄悄惦记' : '各自好好生活';
+  return level >= 85 ? `忍不住想见${currentUserName.value}` : level >= 60 ? `总会想起${currentUserName.value}` : level >= 35 ? `悄悄惦记${currentUserName.value}` : '各自好好生活';
 });
+const routePlaceCount = computed(() => new Set(displaySnapshot.value?.location.route.map((stop) => stop.name) ?? []).size);
+const routeCompanionCount = computed(() => new Set((displaySnapshot.value?.location.route ?? []).map((stop) => stop.companion).filter((value) => value && value !== '独自一人')).size);
+const maxAppUsageMinutes = computed(() => Math.max(1, ...(displaySnapshot.value?.device.appUsage.map((item) => item.minutes) ?? [1])));
 
 onMounted(() => store.hydrate());
 
@@ -426,6 +560,34 @@ function formatStay(minutes: number) {
 function formatUsage(minutes: number) {
   if (minutes < 60) return `${minutes} 分钟`;
   return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
+}
+
+function activityCategoryLabel(category: CoupleSpaceSnapshot['location']['route'][number]['category']) {
+  return ({ sleep: '睡眠', home: '居家', travel: '移动', work: '工作/学习', meal: '吃饭', social: '社交', errand: '办事', leisure: '休闲' })[category];
+}
+
+function appUsageWidth(minutes: number) {
+  return `${Math.max(6, Math.round(minutes / maxAppUsageMinutes.value * 100))}%`;
+}
+
+function footprintKindLabel(kind: CoupleSpaceSnapshot['device']['footprints'][number]['kind']) {
+  return ({ search: '搜索', browser: '浏览器', map: '地图', shopping: '购物' })[kind];
+}
+
+function footprintKindEmoji(kind: CoupleSpaceSnapshot['device']['footprints'][number]['kind']) {
+  return ({ search: '🔎', browser: '🌐', map: '🧭', shopping: '🛍️' })[kind];
+}
+
+function galleryStyle(palette: [string, string]) {
+  return { background: `linear-gradient(145deg, ${palette[0]}, ${palette[1]})` };
+}
+
+function lifeRecordLabel(kind: CoupleSpaceSnapshot['device']['lifeRecords'][number]['kind']) {
+  return ({ alarm: '闹钟', calendar: '日程', order: '订单', music: '音乐', draft: '未发送草稿' })[kind];
+}
+
+function lifeRecordEmoji(kind: CoupleSpaceSnapshot['device']['lifeRecords'][number]['kind']) {
+  return ({ alarm: '⏰', calendar: '📅', order: '📦', music: '🎧', draft: '💭' })[kind];
 }
 </script>
 
@@ -571,6 +733,13 @@ function formatUsage(minutes: number) {
 .plan-card > span:first-child { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 15px; color: #e15f85; background: #ffe1ea; }
 .plan-card strong { display: block; margin-top: 3px; font-size: 11px; line-height: 1.5; }
 .sync-score { color: #9d6faa; font-size: 9px; font-weight: 900; }
+.day-recap-card { padding: 17px; overflow: hidden; border: 1px solid rgba(255,255,255,.88); border-radius: 24px; background: linear-gradient(145deg, rgba(255,238,245,.92), rgba(242,236,255,.92)); box-shadow: 0 12px 28px rgba(102,70,91,.07); }
+.day-recap-card header { display: flex; align-items: center; justify-content: space-between; color: #8e6579; font-size: 11px; font-weight: 900; }
+.day-recap-card header small { color: #bf91a7; font-size: 8px; letter-spacing: .12em; }
+.day-recap-card p { margin: 10px 0; color: #5e4853; font-size: 11px; line-height: 1.75; }
+.day-recap-card blockquote { margin: 0; padding: 10px 12px; border-left: 3px solid #e68baa; border-radius: 0 13px 13px 0; color: #7a5b69; font-family: Georgia, 'Songti SC', serif; font-size: 10px; line-height: 1.65; background: rgba(255,255,255,.58); }
+.keyword-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
+.keyword-row span { padding: 5px 8px; border-radius: 99px; color: #9c6480; font-size: 8px; background: rgba(255,255,255,.72); }
 
 .location-hero-card { position: relative; overflow: hidden; padding: 18px; border-radius: 28px; color: #fff; text-align: center; background: radial-gradient(circle at 15% 10%, rgba(255,255,255,.27), transparent 25%), linear-gradient(145deg, #6c81b5, #8c6cb2 48%, #d47c9e); box-shadow: 0 16px 34px rgba(91, 77, 129, 0.22); }
 .live-pill { position: absolute; top: 13px; left: 13px; display: flex; align-items: center; gap: 5px; padding: 5px 8px; border-radius: 99px; font-size: 8px; font-weight: 800; background: rgba(20,18,40,.22); }
@@ -605,14 +774,27 @@ function formatUsage(minutes: number) {
 .card-head h2 { margin: 2px 0 0; font-size: 14px; }
 .card-head > span { padding: 5px 8px; border-radius: 99px; color: #9a7487; font-size: 8px; background: #f8edf2; }
 .card-head > svg { color: #de7394; }
-.route-list article { position: relative; display: grid; grid-template-columns: 30px 1fr auto; gap: 8px; min-height: 59px; }
-.route-list article:not(:last-child)::after { position: absolute; top: 23px; bottom: -4px; left: 11px; width: 2px; background: linear-gradient(#e8aac0, #d9d7e7); content: ''; }
+.route-overview { display: grid; grid-template-columns: repeat(3, 1fr); margin: -2px 0 17px; padding: 10px 0; border-radius: 17px; background: linear-gradient(135deg, #fff2f6, #f5effd); }
+.route-overview span { display: flex; min-width: 0; flex-direction: column; align-items: center; padding: 0 6px; border-right: 1px solid rgba(152,113,133,.12); }
+.route-overview span:last-child { border: 0; }
+.route-overview b { max-width: 100%; overflow: hidden; color: #6d5060; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.route-overview small { margin-top: 2px; color: #ae8c9c; font-size: 8px; }
+.route-list article { position: relative; display: grid; grid-template-columns: 42px 24px minmax(0, 1fr); gap: 8px; min-height: 104px; padding-bottom: 15px; }
+.route-list article:not(:last-child)::after { position: absolute; top: 28px; bottom: -1px; left: 53px; width: 2px; background: linear-gradient(#e8aac0, #d9d7e7); content: ''; }
+.route-time { display: flex; flex-direction: column; padding-top: 2px; color: #886f7b; text-align: right; }
+.route-time b { font-size: 9px; }
+.route-time small { margin-top: 2px; color: #b7a1ab; font-size: 8px; }
 .route-dot { z-index: 1; display: grid; place-items: center; width: 24px; height: 24px; border: 4px solid #fff; border-radius: 50%; color: #fff; background: #d98ba7; box-shadow: 0 0 0 1px #edd3dc; }
 .route-arrival .route-dot { background: #8b7bc5; }
 .route-pass .route-dot { background: #aab3bb; }
-.route-list strong { display: block; margin-top: 2px; font-size: 11px; }
-.route-list p { margin: 3px 0 0; color: #98818c; font-size: 9px; line-height: 1.45; }
-.route-list time { color: #a58c97; font-size: 9px; }
+.route-copy { min-width: 0; padding: 0 0 1px; }
+.route-copy > div { display: flex; align-items: center; gap: 7px; }
+.route-copy strong { min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.route-copy em { flex: 0 0 auto; padding: 3px 6px; border-radius: 99px; color: #a16a83; font-size: 7px; font-style: normal; background: #fff0f5; }
+.route-copy p { margin: 5px 0 7px; color: #806b75; font-size: 9px; line-height: 1.62; }
+.route-evidence { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; color: #9e8993; font-size: 8px; line-height: 1.5; }
+.route-evidence i { padding: 2px 5px; border-radius: 5px; color: #9a7487; font-style: normal; background: #f3edf0; }
+.route-copy blockquote { margin: 7px 0 0; padding: 7px 9px; border-radius: 9px; color: #806375; font-family: Georgia, 'Songti SC', serif; font-size: 8px; line-height: 1.55; background: #faf3f7; }
 .map-actions { display: grid; gap: 9px; }
 .map-actions button { display: flex; align-items: center; gap: 11px; min-height: 62px; padding: 11px 14px; border-radius: 20px; text-align: left; background: rgba(255,255,255,.75); }
 .map-actions button.active { color: #b84f74; background: #ffe2eb; }
@@ -642,6 +824,68 @@ function formatUsage(minutes: number) {
 .unlock-grid svg { grid-row: 1 / 3; color: #c0a8cf; }
 .unlock-grid small { color: #9992a0; font-size: 8px; }
 .unlock-grid strong { font-size: 11px; }
+.phone-section-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; padding: 5px; border: 1px solid rgba(255,255,255,.9); border-radius: 20px; background: rgba(255,255,255,.75); box-shadow: 0 10px 24px rgba(76,59,70,.07); }
+.phone-section-tabs button { position: relative; display: flex; min-width: 0; min-height: 48px; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 15px; color: #9b8992; font-size: 8px; }
+.phone-section-tabs button.active { color: #ca577d; background: linear-gradient(145deg, #fff0f5, #f5edff); }
+.phone-section-tabs i { position: absolute; top: 4px; right: 8px; display: grid; place-items: center; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 99px; color: #fff; font-size: 7px; font-style: normal; background: #e6638b; }
+.app-usage-list { display: grid; gap: 12px; }
+.app-usage-list article { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.app-tile { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 13px; color: #fff; font-size: 16px; font-weight: 900; background: linear-gradient(145deg, #e880a0, #9b83d0); box-shadow: 0 7px 14px rgba(132,91,125,.14); }
+.app-usage-list article > div { display: grid; min-width: 0; }
+.app-usage-list strong { font-size: 10px; }
+.app-usage-list small { overflow: hidden; color: #9d8993; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.app-usage-list i { height: 4px; margin-top: 5px; overflow: hidden; border-radius: 99px; background: #f1e8ed; }
+.app-usage-list i b { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #e97b9c, #aa89d7); }
+.app-usage-list time { display: flex; flex-direction: column; color: #806b76; font-size: 9px; text-align: right; }
+.app-usage-list time small { margin-top: 2px; }
+.notification-list { display: grid; gap: 8px; }
+.notification-list article { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 9px; padding: 10px; border: 1px solid transparent; border-radius: 16px; background: #f8f5f7; }
+.notification-list article.unread { border-color: #f4d4df; background: #fff3f7; }
+.notification-list article > span { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 12px; color: #fff; font-size: 14px; font-weight: 900; background: #b692c8; }
+.notification-list article > div { display: grid; min-width: 0; }
+.notification-list small { color: #ad8d9d; font-size: 8px; }
+.notification-list strong { margin-top: 2px; font-size: 10px; }
+.notification-list p { margin: 2px 0 0; color: #8d7782; font-size: 8px; line-height: 1.5; }
+.phone-section-heading { display: flex; align-items: center; justify-content: space-between; padding: 4px 3px; }
+.phone-section-heading small { color: #bc819b; font-size: 8px; font-weight: 900; letter-spacing: .12em; }
+.phone-section-heading h2 { margin: 3px 0 0; font-size: 13px; line-height: 1.4; }
+.phone-section-heading svg { color: #dc7092; }
+.phone-chat-list { display: grid; gap: 11px; }
+.phone-chat-card { padding: 14px; border: 1px solid rgba(255,255,255,.92); border-radius: 23px; background: rgba(255,255,255,.78); box-shadow: 0 12px 26px rgba(82,61,73,.06); }
+.phone-chat-card header { display: grid; grid-template-columns: 39px minmax(0, 1fr) auto; align-items: center; gap: 9px; }
+.phone-chat-card header > span { display: grid; place-items: center; width: 39px; height: 39px; border-radius: 14px; font-size: 20px; background: linear-gradient(145deg, #f7e7ed, #e8e1f7); }
+.phone-chat-card header div { display: flex; min-width: 0; flex-direction: column; }
+.phone-chat-card header strong { font-size: 11px; }
+.phone-chat-card header small { color: #a48c98; font-size: 8px; }
+.phone-chat-card header i { display: grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 99px; color: #fff; font-size: 8px; font-style: normal; background: #df6488; }
+.phone-chat-card > p { margin: 10px 0; color: #7f6974; font-size: 9px; line-height: 1.58; }
+.phone-chat-messages { display: flex; flex-direction: column; gap: 6px; }
+.phone-chat-messages span { align-self: flex-start; max-width: 84%; padding: 7px 9px; border-radius: 4px 12px 12px 12px; color: #654f5a; font-size: 9px; line-height: 1.5; background: #f1edf0; }
+.phone-chat-messages span.character { align-self: flex-end; border-radius: 12px 4px 12px 12px; background: #ffe2ec; }
+.phone-chat-messages small { margin-right: 5px; color: #b298a4; font-size: 7px; }
+.footprint-list { display: grid; gap: 12px; }
+.footprint-list article { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 10px; }
+.footprint-list article > span { display: grid; place-items: center; align-self: start; width: 36px; height: 36px; border-radius: 13px; font-size: 18px; background: #f5eef8; }
+.footprint-list article > div { min-width: 0; }
+.footprint-list small { color: #b18097; font-size: 8px; }
+.footprint-list strong { display: block; margin-top: 2px; font-size: 10px; }
+.footprint-list p { margin: 3px 0; color: #88727d; font-size: 9px; line-height: 1.5; }
+.footprint-list em { color: #a78d99; font-size: 8px; font-style: normal; }
+.gallery-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.gallery-grid article { position: relative; display: flex; min-height: 154px; flex-direction: column; justify-content: flex-end; overflow: hidden; padding: 11px; border-radius: 18px; color: #fff; box-shadow: inset 0 -70px 50px rgba(45,31,42,.28); }
+.gallery-grid article > span { position: absolute; top: 14px; left: 14px; font-size: 27px; filter: drop-shadow(0 4px 7px rgba(52,38,47,.12)); }
+.gallery-grid time { position: absolute; top: 10px; right: 10px; padding: 3px 6px; border-radius: 99px; font-size: 7px; background: rgba(52,37,48,.18); }
+.gallery-grid strong { display: block; font-size: 10px; text-shadow: 0 1px 5px rgba(39,26,35,.2); }
+.gallery-grid p { margin: 3px 0 0; font-size: 8px; line-height: 1.45; }
+.notes-card > article, .life-record-card > article { display: grid; grid-template-columns: 35px minmax(0, 1fr); gap: 9px; padding: 10px 0; border-bottom: 1px solid #f0e9ed; }
+.notes-card > article:last-of-type, .life-record-card > article:last-of-type { border-bottom: 0; }
+.notes-card > article > span, .life-record-card > article > span { display: grid; place-items: center; align-self: start; width: 35px; height: 35px; border-radius: 12px; font-size: 17px; background: #fff1d6; }
+.notes-card article small, .life-record-card article small { color: #aa8798; font-size: 8px; }
+.notes-card article strong, .life-record-card article strong { display: block; margin-top: 2px; font-size: 10px; }
+.notes-card article p, .life-record-card article p { margin: 3px 0 0; color: #89737e; font-size: 9px; line-height: 1.55; }
+.life-record-card > article { grid-template-columns: 35px minmax(0, 1fr) auto; }
+.life-record-card > article > span { background: #eee9fa; }
+.life-record-card article em { align-self: center; padding: 4px 6px; border-radius: 8px; color: #9a7186; font-size: 7px; font-style: normal; background: #f6edf1; }
 .current-network { display: flex; align-items: center; gap: 11px; padding: 12px; border-radius: 18px; background: #f3edf8; }
 .current-network > span { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 13px; color: #8568a0; background: #fff; }
 .current-network div { display: flex; flex-direction: column; }
@@ -658,7 +902,9 @@ function formatUsage(minutes: number) {
 .moment-row { display: grid; grid-template-columns: 38px 1fr auto; gap: 9px; min-height: 64px; }
 .moment-row > span { display: grid; place-items: center; align-self: start; width: 35px; height: 35px; border-radius: 14px; font-size: 18px; background: #fff0f5; }
 .moment-row strong { font-size: 11px; }
+.moment-row div > small { display: block; margin-bottom: 2px; color: #bf7f9d; font-size: 8px; }
 .moment-row p { margin: 3px 0 0; color: #917a86; font-size: 9px; line-height: 1.55; }
+.moment-row blockquote { margin: 6px 0 0; padding: 6px 8px; border-radius: 9px; color: #89697a; font-size: 8px; line-height: 1.5; background: #faf1f5; }
 .moment-row time { color: #b79aa8; font-size: 8px; }
 .wish-form { display: grid; grid-template-columns: 1fr 42px; gap: 7px; }
 .wish-form input { min-width: 0; min-height: 42px; padding: 0 13px; border: 1px solid #f0dce5; border-radius: 14px; font: inherit; font-size: 11px; background: #fffafb; }

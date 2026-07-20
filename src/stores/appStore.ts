@@ -26,7 +26,7 @@ import { markRestoredGlobalNoticesSeen } from '@/utils/globalNotices';
 import { getVoomFrequencyChance, stripVoomCommentReplyPrefix } from '@/utils/voom';
 import { compressInlineImageDataUrl } from '@/utils/imageFile';
 import { hydrateStoredMediaRefs, isLocalMediaCacheUrl, materializeStoredMediaRefs } from '@/utils/mediaStorage';
-import { normalizeCoupleSpaceState } from '@/utils/coupleSpace';
+import { normalizeCoupleSpaceIdentityReferences, normalizeCoupleSpaceState } from '@/utils/coupleSpace';
 
 interface CreateUserVoomPostPayload {
   userId: string;
@@ -1012,7 +1012,7 @@ export const useAppStore = defineStore('app', () => {
     if (!conversation) return null;
     const character = characterById(conversation.charId);
     if (!character) return null;
-    const boundUser = userById(character.boundUserId) ?? user.value;
+    const boundUser = userById(conversation.userId || character.boundUserId) ?? user.value;
     if (!boundUser) return null;
 
     const conversationMessages = messagesForConversation(conversationId).filter((message) => message.replyVariantState !== 'inactive');
@@ -1086,7 +1086,7 @@ export const useAppStore = defineStore('app', () => {
     if (!conversation) return 0;
     const character = characterById(conversation.charId);
     if (!character) return 0;
-    const boundUser = userById(character.boundUserId) ?? user.value;
+    const boundUser = userById(conversation.userId || character.boundUserId) ?? user.value;
     if (!boundUser) return 0;
     const chatSettings = settingsForConversation(id);
     const availableCharacterStickers = stickersForGroups(chatSettings.characterStickerGroupIds);
@@ -1370,6 +1370,38 @@ export const useAppStore = defineStore('app', () => {
     }, text), content);
   }
 
+  function normalizeRelationshipNarrationTextForConversation(content: string, conversationId: string, force = false) {
+    const canonicalContent = canonicalizeKnownIdentityTextForConversation(content, conversationId);
+    if (!force && !/(黑名单|好友|通讯录|验证|申请|拒收|删除|拉黑|移出|恢复关系|感叹号|头像)/.test(canonicalContent)) return canonicalContent;
+    const conversation = conversationById(conversationId);
+    const character = conversation ? characterById(conversation.charId) : null;
+    const boundUser = conversation ? userById(conversation.userId) ?? user.value : user.value;
+    if (!character || !boundUser) return canonicalContent;
+    const characterName = getCharacterAiName(character);
+    const userName = getUserAiName(boundUser);
+    const userVerificationEvent = canonicalContent.includes(`${userName}已向${characterName}发送好友验证`)
+      || canonicalContent.startsWith('好友验证已发送');
+    const firstPersonName = userVerificationEvent ? userName : characterName;
+    const normalizedContent = canonicalContent
+      .replace(/好友验证已发送\s*[：:]\s*/g, `${userName}已向${characterName}发送好友验证：`)
+      .replace(/那个(?:灰色|熟悉|沉默)的头像/g, `${userName}的头像`)
+      .replace(/我们/g, `${characterName}和${userName}`)
+      .replace(/你们/g, `${userName}和${characterName}`)
+      .replace(/对方/g, userName)
+      .replace(/用户/g, userName)
+      .replace(/角色/g, characterName)
+      .replace(/你/g, userName)
+      .replace(/我/g, firstPersonName)
+      .replace(/TA/gi, characterName)
+      .replace(/^他/g, characterName)
+      .replace(/([^其])他/g, `$1${characterName}`)
+      .replace(/^她/g, characterName)
+      .replace(/她/g, characterName);
+    if (!userVerificationEvent) return normalizedContent;
+    const duplicatedUserDraft = new RegExp(`${escapeRegExp(userName)}是${escapeRegExp(userName)}，?想重新加(?:${escapeRegExp(characterName)}|${escapeRegExp(userName)})为好友[。.]?`, 'g');
+    return normalizedContent.replace(duplicatedUserDraft, `${userName}想重新添加${characterName}为好友。`);
+  }
+
   function normalizeStoredMessageIdentityReferences(message: ChatMessage) {
     const quoteAuthorName = message.quote?.sender === 'user'
       ? voomAiNameForIdentity(message.quote.authorName, conversationById(message.conversationId)?.userId)
@@ -1380,7 +1412,7 @@ export const useAppStore = defineStore('app', () => {
       ? { ...message.quote, authorName: quoteAuthorName }
       : message.quote;
     const nextContent = message.sender === 'system'
-      ? canonicalizeKnownIdentityTextForConversation(message.content, message.conversationId)
+      ? normalizeRelationshipNarrationTextForConversation(message.content, message.conversationId)
       : message.content;
     return nextQuote !== message.quote || nextContent !== message.content
       ? { ...message, content: nextContent, quote: nextQuote }
@@ -3683,21 +3715,32 @@ export const useAppStore = defineStore('app', () => {
     return true;
   }
 
+  function characterRelationshipNames(character: CharacterProfile) {
+    const conversation = conversations.value.find((entry) => entry.kind !== 'group' && entry.charId === character.id);
+    const boundUser = userById(conversation?.userId || character.boundUserId) ?? user.value;
+    return {
+      characterName: getCharacterAiName(character),
+      userName: getUserAiName(boundUser)
+    };
+  }
+
   async function blockCharacter(characterId: string) {
     const character = characterById(characterId);
     if (!character || !isCharacterFriend(character)) return false;
     const conversation = conversations.value.find((entry) => entry.kind !== 'group' && entry.charId === characterId);
     if (conversation) cancelConversationReply(conversation.id);
+    const { characterName, userName } = characterRelationshipNames(character);
     return setCharacterRelationship(characterId, 'blocked-by-user', {
-      notice: `你已将${getCharacterVoomDisplayName(character)}加入黑名单。`
+      notice: `${userName}已将${characterName}加入黑名单。`
     });
   }
 
   async function unblockCharacter(characterId: string) {
     const character = characterById(characterId);
     if (!character || getFriendRelationship(character).status !== 'blocked-by-user') return false;
+    const { characterName, userName } = characterRelationshipNames(character);
     return setCharacterRelationship(characterId, 'friend', {
-      notice: `你已将${getCharacterVoomDisplayName(character)}移出黑名单，可以继续聊天。`
+      notice: `${userName}已将${characterName}移出黑名单，可以继续聊天。`
     });
   }
 
@@ -3706,8 +3749,9 @@ export const useAppStore = defineStore('app', () => {
     if (!character || !isCharacterFriend(character)) return false;
     const conversation = conversations.value.find((entry) => entry.kind !== 'group' && entry.charId === characterId);
     if (conversation) cancelConversationReply(conversation.id);
+    const { characterName, userName } = characterRelationshipNames(character);
     return setCharacterRelationship(characterId, 'deleted-by-user', {
-      notice: `你已删除${getCharacterVoomDisplayName(character)}。聊天记录和角色资料已保留，可重新发送好友申请。`
+      notice: `${userName}已删除${characterName}，可重新发送好友申请。`
     });
   }
 
@@ -3716,16 +3760,17 @@ export const useAppStore = defineStore('app', () => {
     if (!character) return false;
     const relationship = getFriendRelationship(character);
     if (!['blocked-by-character', 'deleted-by-character', 'deleted-by-user'].includes(relationship.status)) return false;
-    const verification = message.trim().slice(0, 120) || '我是我，想重新加你为好友。';
+    const { characterName, userName } = characterRelationshipNames(character);
+    const verification = message.trim().slice(0, 120) || `${userName}想重新添加${characterName}为好友。`;
     const changed = await setCharacterRelationship(characterId, 'pending-user-request', {
       requestMessage: verification,
       requestedAt: Date.now(),
-      notice: `好友验证已发送：${verification}`
+      notice: `${userName}已向${characterName}发送好友验证：${verification}`
     });
     const conversation = conversations.value.find((entry) => entry.kind !== 'group' && entry.charId === characterId);
     if (changed && conversation) {
       await requestRoleplayReply(conversation.id, {
-        replyInstruction: `关系事件：用户在你拉黑或删除好友后重新发来好友验证：“${verification}”。你必须结合人设、最近冲突和关系记忆，在 messageActions.relationshipAction 明确输出 accept_request 或 reject_request。`
+        replyInstruction: `关系事件：${userName}在${characterName}拉黑或删除${userName}后，重新向${characterName}发来好友验证：“${verification}”。${characterName}必须结合${characterName}的人设、最近冲突和关系记忆，在 messageActions.relationshipAction 明确输出 accept_request 或 reject_request。所有旁白只允许用${characterName}与${userName}的真名指代双方。`
       });
     }
     return changed;
@@ -3736,38 +3781,41 @@ export const useAppStore = defineStore('app', () => {
     const character = characterById(characterId);
     if (!character) return false;
     const relationship = getFriendRelationship(character);
-    const reason = String(action.reason ?? '').trim();
+    const { characterName, userName } = characterRelationshipNames(character);
+    const conversation = conversations.value.find((entry) => entry.kind !== 'group' && entry.charId === characterId);
+    const rawReason = String(action.reason ?? '').trim();
+    const reason = conversation ? normalizeRelationshipNarrationTextForConversation(rawReason, conversation.id, true) : rawReason;
     if (action.type === 'block' && relationship.status === 'friend') {
       return setCharacterRelationship(characterId, 'blocked-by-character', {
         reason,
-        notice: `${getCharacterVoomDisplayName(character)}已将你加入黑名单。${reason ? ` 原因：${reason}` : ''}`
+        notice: `${characterName}已将${userName}加入黑名单。${reason ? ` 原因：${reason}` : ''}`
       });
     }
     if (action.type === 'delete' && relationship.status === 'friend') {
       return setCharacterRelationship(characterId, 'deleted-by-character', {
         reason,
-        notice: `${getCharacterVoomDisplayName(character)}已删除好友关系。${reason ? ` 原因：${reason}` : ''}`
+        notice: `${characterName}已删除与${userName}的好友关系。${reason ? ` 原因：${reason}` : ''}`
       });
     }
     if (action.type === 'request_friend' && ['blocked-by-user', 'deleted-by-user'].includes(relationship.status)) {
-      const requestMessage = reason || '我想重新加你为好友。';
+      const requestMessage = reason || `${characterName}想重新添加${userName}为好友。`;
       return setCharacterRelationship(characterId, 'pending-character-request', {
         reason,
         requestMessage,
         requestedAt: Date.now(),
-        notice: `${getCharacterVoomDisplayName(character)}请求添加你为好友：${requestMessage}`
+        notice: `${characterName}请求添加${userName}为好友：${requestMessage}`
       });
     }
     if (action.type === 'accept_request' && relationship.status === 'pending-user-request') {
       return setCharacterRelationship(characterId, 'friend', {
         reason,
-        notice: `${getCharacterVoomDisplayName(character)}已通过你的好友申请。`
+        notice: `${characterName}已通过${userName}的好友申请。`
       });
     }
     if (action.type === 'reject_request' && relationship.status === 'pending-user-request') {
       return setCharacterRelationship(characterId, 'blocked-by-character', {
         reason,
-        notice: `${getCharacterVoomDisplayName(character)}拒绝了你的好友申请。${reason ? ` 原因：${reason}` : ''}`
+        notice: `${characterName}拒绝了${userName}的好友申请。${reason ? ` 原因：${reason}` : ''}`
       });
     }
     return false;
@@ -3776,13 +3824,14 @@ export const useAppStore = defineStore('app', () => {
   async function respondCharacterFriendRequest(characterId: string, decision: 'accepted' | 'rejected') {
     const character = characterById(characterId);
     if (!character || getFriendRelationship(character).status !== 'pending-character-request') return false;
+    const { characterName, userName } = characterRelationshipNames(character);
     if (decision === 'accepted') {
       return setCharacterRelationship(characterId, 'friend', {
-        notice: `你已通过${getCharacterVoomDisplayName(character)}的好友申请，可以继续聊天。`
+        notice: `${userName}已通过${characterName}的好友申请，可以继续聊天。`
       });
     }
     return setCharacterRelationship(characterId, 'blocked-by-user', {
-      notice: `你已拒绝${getCharacterVoomDisplayName(character)}的好友申请。`
+      notice: `${userName}已拒绝${characterName}的好友申请。`
     });
   }
 
@@ -4730,7 +4779,10 @@ export const useAppStore = defineStore('app', () => {
     if (sticker.sourceType !== 'local-image') return sticker;
     const localImage = sticker.cachedImageUrl?.trim()
       || (sticker.imageUrl !== stickerBackupPlaceholder ? sticker.imageUrl.trim() : '');
-    if (!localImage) throw new Error(`本地贴纸“${sticker.description}”的图片文件已丢失，无法创建完整备份。`);
+    if (!localImage) {
+      const { cachedImageUrl: _cachedImageUrl, cachedImageUpdatedAt: _cachedImageUpdatedAt, ...restSticker } = sticker;
+      return { ...restSticker, imageUrl: stickerBackupPlaceholder };
+    }
     return {
       ...sticker,
       imageUrl: stickerBackupPlaceholder,
@@ -4777,7 +4829,11 @@ export const useAppStore = defineStore('app', () => {
   async function createBackupFile(onProgress?: BackupProgressCallback) {
     if (!ready.value) await hydrate();
     await onProgress?.('正在读取本地数据', 20);
-    const snapshot = await materializeStoredMediaRefs(await loadSnapshot());
+    const missingMedia = new Set<string>();
+    const snapshot = await materializeStoredMediaRefs(await loadSnapshot(), {
+      missing: 'empty',
+      onMissing: (source) => missingMedia.add(source)
+    });
     await onProgress?.('正在整理备份内容', 65);
     const backupSnapshot = await compactSnapshotMediaForBackup({
       ...snapshot,
@@ -4787,7 +4843,7 @@ export const useAppStore = defineStore('app', () => {
       musicCommentThreads: normalizeStoredMusicCommentThreads(snapshot.musicCommentThreads ?? []),
       favorites: normalizeFavorites(snapshot.favorites ?? [])
     });
-    return createLinkBackupFile(backupSnapshot);
+    return createLinkBackupFile(backupSnapshot, missingMedia.size);
   }
 
   async function importBackupSnapshot(snapshot: AppSnapshot, options: ImportBackupOptions = {}): Promise<ImportBackupResult> {
@@ -6620,7 +6676,7 @@ export const useAppStore = defineStore('app', () => {
       && ['blocked-by-user', 'deleted-by-user'].includes(relationshipStatus);
     const isBlockedInteraction = Boolean(options?.blockedInteraction && relationshipStatus !== 'friend');
     if (relationshipStatus !== 'friend' && relationshipStatus !== 'pending-user-request' && !isCharacterReapplyEvent && !isBlockedInteraction) return;
-    const boundUser = userById(character.boundUserId) ?? user.value;
+    const boundUser = userById(conversation.userId || character.boundUserId) ?? user.value;
     if (!boundUser) return;
 
     const chatSettings = settingsForConversation(conversationId);
@@ -7079,6 +7135,15 @@ export const useAppStore = defineStore('app', () => {
       }
       appendStickerMessages(replyStickers);
       const charMessages: ChatMessage[] = orderedSegments.length ? orderedCharMessages : [...charNarrationMessages, ...charMessagesAfterNarration];
+      const shouldNormalizeRelationshipNarration = relationshipStatus !== 'friend'
+        || Boolean(relationshipAction || options?.relationshipEvent || options?.blockedInteraction);
+      if (shouldNormalizeRelationshipNarration) {
+        charMessages.forEach((message) => {
+          if (message.sender === 'system' && message.displayStyle === 'narration') {
+            message.content = normalizeRelationshipNarrationTextForConversation(message.content, conversationId, true);
+          }
+        });
+      }
       if (isCharacterReapplyEvent || (isBlockedInteraction && ['blocked-by-user', 'deleted-by-user'].includes(relationshipStatus))) {
         charMessages.forEach((message) => {
           if (message.sender === 'char') {
@@ -7351,11 +7416,13 @@ export const useAppStore = defineStore('app', () => {
     await touchProactiveReplyAttempt(chatSettings, now);
     if (Math.random() >= getVoomFrequencyChance(chatSettings.proactiveReply.frequency)) return false;
 
+    const { characterName, userName } = character ? characterRelationshipNames(character) : { characterName: '角色', userName: '用户' };
+
     await requestRoleplayReply(conversationId, canConsiderReapply
       ? {
         proactive: true,
         relationshipEvent: 'character-reapply',
-        replyInstruction: '这是独立关系事件：你被用户拉黑或删除后，正在考虑是否重新申请好友。普通聊天消息无法送达。只有你按人设和关系记忆确实想恢复联系时，才在 relationshipAction 输出 request_friend，并把 reason 写成简短好友验证；否则保持 null。'
+        replyInstruction: `这是独立关系事件：${characterName}被${userName}拉黑或删除后，正在考虑是否重新申请${userName}为好友。普通聊天消息无法送达。只有${characterName}按人设和关系记忆确实想恢复联系时，才在 relationshipAction 输出 request_friend，并把 reason 写成简短好友验证；否则保持 null。所有旁白只允许使用${characterName}与${userName}的真名指代双方。`
       }
       : { proactive: true });
     return true;
@@ -7993,8 +8060,19 @@ export const useAppStore = defineStore('app', () => {
 
   async function saveCoupleSpaceState(characterId: string, nextState: CoupleSpaceState) {
     const character = characterById(characterId);
-    const coupleSpace = normalizeCoupleSpaceState(nextState);
+    let coupleSpace = normalizeCoupleSpaceState(nextState);
     if (!character || !coupleSpace) return null;
+    const conversation = conversations.value.find((entry) => entry.kind !== 'group' && entry.charId === characterId);
+    const boundUser = userById(conversation?.userId || character.boundUserId) ?? user.value;
+    if (boundUser) {
+      const characterName = getCharacterAiName(character);
+      const userName = getUserAiName(boundUser);
+      coupleSpace = {
+        ...coupleSpace,
+        snapshot: coupleSpace.snapshot ? normalizeCoupleSpaceIdentityReferences(coupleSpace.snapshot, characterName, userName) : undefined,
+        history: coupleSpace.history.map((snapshot) => normalizeCoupleSpaceIdentityReferences(snapshot, characterName, userName))
+      };
+    }
     await saveCharacterSnapshot({ ...character, coupleSpace });
     return coupleSpace;
   }
@@ -8007,7 +8085,7 @@ export const useAppStore = defineStore('app', () => {
       showConfigAlert('请先确认双方自愿共享，再同步情侣空间。', '需要共享授权');
       return null;
     }
-    const boundUser = userById(character.boundUserId) ?? user.value;
+    const boundUser = userById(conversation.userId || character.boundUserId) ?? user.value;
     if (!boundUser) return null;
     const chatSettings = settingsForConversation(conversationId);
     const modelOverride = getConversationTextModelOverride(chatSettings, 'online');

@@ -275,12 +275,12 @@
         </section>
 
         <section v-else class="composer-section form-grid">
-          <label class="file-drop-card">
+          <button class="file-drop-card" type="button" @click="chooseStylePngFile">
             <Upload :size="18" />
             <strong>选择 PNG 样式图片</strong>
             <span>{{ selectedStylePngFile ? selectedStylePngFile.name : `导入别人分享的${activeStyleLabel}样式` }}</span>
-            <input type="file" accept="image/png" @change="selectStylePngFile" />
-          </label>
+          </button>
+          <input ref="stylePngInput" class="native-fallback-file-input" type="file" accept="image/png,.png" @change="selectStylePngFile" />
         </section>
 
         <p v-if="styleImportError" class="sync-feedback error">{{ styleImportError }}</p>
@@ -381,6 +381,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { FileCode2, Globe2, LoaderCircle, Maximize2, Minus, Moon, Plus, Share2, Type, Upload, Wifi } from 'lucide-vue-next';
 import AppModal from '@/components/common/AppModal.vue';
 import { useAppStore } from '@/stores/appStore';
+import { pickNativePngFile, shareNativeDataUrl } from '@/services/nativeFile';
 import { getLastNativeDisplayState } from '@/services/nativeDisplay';
 import { setFullscreenEnabled } from '@/services/systemBars';
 import type { AppSettings, AppThemeSettings, ThemeFontEntry, ThemeFontSource, ThemeStylePreset, ThemeStyleScopeSettings } from '@/types/domain';
@@ -449,6 +450,7 @@ const linkUrls = ref('');
 const fileName = ref('');
 const selectedFontFiles = ref<File[]>([]);
 const selectedStylePngFile = ref<File | null>(null);
+const stylePngInput = ref<HTMLInputElement | null>(null);
 const importError = ref('');
 const styleImportError = ref('');
 const styleExportError = ref('');
@@ -804,6 +806,20 @@ function selectStylePngFile(event: Event) {
   selectedStylePngFile.value = input.files?.[0] ?? null;
   input.value = '';
   styleImportError.value = '';
+}
+
+async function chooseStylePngFile() {
+  styleImportError.value = '';
+  try {
+    const file = await pickNativePngFile();
+    if (file === undefined) {
+      stylePngInput.value?.click();
+      return;
+    }
+    if (file) selectedStylePngFile.value = file;
+  } catch (error) {
+    styleImportError.value = error instanceof Error ? error.message : '无法打开系统 PNG 文件选择器。';
+  }
 }
 
 async function selectStyleExportCoverFile(event: Event) {
@@ -1210,7 +1226,8 @@ function exportSelectedThemeStyles() {
         scope: activeStyleScopeId.value,
         coverImageDataUrl: styleExportCoverPreview.value || undefined
       });
-      await downloadDataUrl(dataUrl, getDownloadFileName(presets));
+      const fileName = getDownloadFileName(presets);
+      if (!await shareNativeDataUrl(dataUrl, fileName)) await downloadDataUrl(dataUrl, fileName);
       styleExportError.value = '';
       showStyleExporter.value = false;
       feedbackMessage.value = `已导出 ${presets.length} 个${activeStyleLabel.value}样式 PNG。`;
@@ -1253,6 +1270,7 @@ function formatFontMeta(entry: ThemeFontEntry) {
 </script>
 
 <style scoped>
+.native-fallback-file-input { display: none; }
 .themes-page {
   display: flex;
   flex-direction: column;

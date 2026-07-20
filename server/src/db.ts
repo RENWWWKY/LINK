@@ -107,6 +107,14 @@ export async function migrateDatabase() {
       UNIQUE (platform, version_code)
     );
 
+    CREATE TABLE IF NOT EXISTS release_source_tokens (
+      token_hash TEXT PRIMARY KEY,
+      qq TEXT NOT NULL REFERENCES users(qq) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      revoked_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS audit_logs (
       id BIGSERIAL PRIMARY KEY,
       qq TEXT,
@@ -121,6 +129,7 @@ export async function migrateDatabase() {
     CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (qq, expires_at DESC);
     CREATE INDEX IF NOT EXISTS challenges_expiry_idx ON login_challenges (expires_at);
     CREATE INDEX IF NOT EXISTS releases_latest_idx ON releases (platform, published, version_code DESC);
+    CREATE INDEX IF NOT EXISTS release_source_tokens_user_idx ON release_source_tokens (qq, expires_at DESC) WHERE revoked_at IS NULL;
   `);
 
   for (const groupId of config.allowedGroupIds) {

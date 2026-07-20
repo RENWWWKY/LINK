@@ -23,6 +23,9 @@ self.addEventListener('notificationclick', (event) => {
 const linkMediaRouteSegment = '/__link-media/';
 const linkMediaCacheName = 'link-large-media-v1';
 const linkMediaOpfsDirectoryName = 'link-large-media-v1';
+const linkMediaIndexedDbName = 'link-large-media-v1';
+const linkMediaIndexedDbStoreName = 'media';
+let linkMediaIndexedDbPromise;
 
 function getLinkMediaLocator(url) {
   const markerIndex = url.pathname.indexOf(linkMediaRouteSegment);
@@ -30,7 +33,7 @@ function getLinkMediaLocator(url) {
   const parts = url.pathname.slice(markerIndex + linkMediaRouteSegment.length).split('/');
   const backend = parts.shift();
   const id = decodeURIComponent(parts.join('/')).trim();
-  if (!id || !['opfs', 'cache'].includes(backend)) return null;
+  if (!id || !['opfs', 'idb', 'cache'].includes(backend)) return null;
   return { backend, id };
 }
 
@@ -124,6 +127,42 @@ async function readLinkMediaFromOpfs(id, request) {
   }
 }
 
+function getLinkMediaIndexedDb() {
+  if (!self.indexedDB) return Promise.resolve(null);
+  if (linkMediaIndexedDbPromise) return linkMediaIndexedDbPromise;
+
+  linkMediaIndexedDbPromise = new Promise((resolve) => {
+    const openRequest = self.indexedDB.open(linkMediaIndexedDbName, 1);
+    openRequest.addEventListener('upgradeneeded', () => {
+      if (!openRequest.result.objectStoreNames.contains(linkMediaIndexedDbStoreName)) {
+        openRequest.result.createObjectStore(linkMediaIndexedDbStoreName);
+      }
+    });
+    openRequest.addEventListener('success', () => resolve(openRequest.result));
+    openRequest.addEventListener('error', () => resolve(null));
+    openRequest.addEventListener('blocked', () => resolve(null));
+  });
+  return linkMediaIndexedDbPromise;
+}
+
+async function readLinkMediaFromIndexedDb(id, request) {
+  try {
+    const db = await getLinkMediaIndexedDb();
+    if (!db) return null;
+    const transaction = db.transaction(linkMediaIndexedDbStoreName, 'readonly');
+    const readRequest = transaction.objectStore(linkMediaIndexedDbStoreName).get(id);
+    const value = await new Promise((resolve, reject) => {
+      readRequest.addEventListener('success', () => resolve(readRequest.result));
+      readRequest.addEventListener('error', () => reject(readRequest.error));
+    });
+    if (!(value instanceof Blob)) return null;
+    const blob = value.type ? value : new Blob([value], { type: getLinkMediaMimeType(id) });
+    return createLinkMediaResponse(blob, id, 'idb', request);
+  } catch {
+    return null;
+  }
+}
+
 async function readLinkMediaFromCache(request, id) {
   try {
     const response = await (await caches.open(linkMediaCacheName)).match(request);
@@ -144,8 +183,16 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith((async () => {
     const response = locator.backend === 'opfs'
-      ? await readLinkMediaFromOpfs(locator.id, event.request) || await readLinkMediaFromCache(event.request, locator.id)
-      : await readLinkMediaFromCache(event.request, locator.id) || await readLinkMediaFromOpfs(locator.id, event.request);
+      ? await readLinkMediaFromOpfs(locator.id, event.request)
+        || await readLinkMediaFromIndexedDb(locator.id, event.request)
+        || await readLinkMediaFromCache(event.request, locator.id)
+      : locator.backend === 'idb'
+        ? await readLinkMediaFromIndexedDb(locator.id, event.request)
+          || await readLinkMediaFromOpfs(locator.id, event.request)
+          || await readLinkMediaFromCache(event.request, locator.id)
+        : await readLinkMediaFromCache(event.request, locator.id)
+          || await readLinkMediaFromIndexedDb(locator.id, event.request)
+          || await readLinkMediaFromOpfs(locator.id, event.request);
 
     return response || new Response('LINK media not found', {
       status: 404,

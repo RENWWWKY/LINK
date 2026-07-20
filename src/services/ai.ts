@@ -11,7 +11,7 @@ import { assertRenderableSmallTheaterHtml, getSmallTheaterVisibleText, withSmall
 import { renderTimeAwarenessPrompt } from '@/utils/timeAwareness';
 import { formatContentWithChineseTranslation, needsChineseTranslation, normalizeTranslationText } from '@/utils/translation';
 import { getVoomFrequencyChance, stripVoomCommentReplyPrefix } from '@/utils/voom';
-import { normalizeCoupleSpaceSnapshot } from '@/utils/coupleSpace';
+import { normalizeCoupleSpaceIdentityReferences, normalizeCoupleSpaceSnapshot } from '@/utils/coupleSpace';
 import { buildMomentPrompt, buildPrompt } from './prompt';
 
 const modelSelectionSeparator = '::';
@@ -503,12 +503,15 @@ const httpStatusText: Record<number, string> = {
   503: 'Service Unavailable',
   504: 'Gateway Timeout',
   520: 'Unknown Error',
+  521: 'Web Server Is Down',
   522: 'Connection Timed Out',
+  523: 'Origin Is Unreachable',
   524: 'A Timeout Occurred'
 };
 
-const transientOpenAiImageStatuses = new Set([408, 429, 500, 502, 503, 504, 520, 522, 524]);
+const transientOpenAiImageStatuses = new Set([408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
 const openAiImageRetryDelays = [1200];
+const textApiRetryDelays = [800, 1600];
 
 function wait(milliseconds: number) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -571,12 +574,33 @@ function extractCloudflareErrorPayload(payload: string) {
     host ? `异常主机：${host}` : '',
     rayId ? `Cloudflare Ray ID：${rayId}` : '',
     happened ? `说明：${happened}` : '',
-    '这通常表示图片供应商网关或其上游模型服务暂时不可用，不是本地请求格式错误。'
+    '这通常表示供应商网关或其上游模型服务暂时不可用，不是 BabyLink 本地代理、API Key 或请求格式错误。'
+  ].filter(Boolean).join('\n');
+}
+
+function extractCloudflareJsonPayload(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+  const payload = value as Record<string, unknown>;
+  const type = String(payload.type ?? '');
+  const rayId = String(payload.ray_id ?? payload.rayId ?? '').trim();
+  const host = String(payload.zone ?? payload.host ?? '').trim();
+  const errorName = String(payload.error_name ?? '').trim();
+  if (!/cloudflare/i.test(type) && !(rayId && (host || errorName))) return '';
+
+  const status = String(payload.status ?? payload.error_code ?? '').trim();
+  const title = String(payload.title ?? '').trim() || (status ? `Cloudflare ${status} 错误` : 'Cloudflare 网关错误');
+  const detail = String(payload.detail ?? '').trim();
+  return [
+    title,
+    host ? `异常主机：${host}` : '',
+    rayId ? `Cloudflare Ray ID：${rayId}` : '',
+    detail ? `说明：${detail}` : '',
+    '这通常表示供应商网关或其上游模型服务暂时不可用，不是 BabyLink 本地代理、API Key 或请求格式错误。'
   ].filter(Boolean).join('\n');
 }
 
 function formatHttpStatus(response: Response) {
-  const statusText = response.statusText.trim() || httpStatusText[response.status] || '';
+  const statusText = httpStatusText[response.status] || response.statusText.trim();
   return [response.status || '', statusText].filter(Boolean).join(' ');
 }
 
@@ -585,7 +609,8 @@ function formatApiErrorPayload(payload: string) {
   if (!trimmed) return '';
 
   try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2);
+    const parsed = JSON.parse(trimmed) as unknown;
+    return extractCloudflareJsonPayload(parsed) || JSON.stringify(parsed, null, 2);
   } catch {
     const cloudflareError = extractCloudflareErrorPayload(trimmed);
     if (cloudflareError) return cloudflareError;
@@ -698,9 +723,9 @@ function createTextNetworkErrorMessage(error: unknown, endpoint: string, request
   );
 }
 
-function waitForTextApiRetry() {
+function waitForTextApiRetry(milliseconds: number) {
   return new Promise((resolve) => {
-    globalThis.setTimeout(resolve, 800);
+    globalThis.setTimeout(resolve, milliseconds);
   });
 }
 
@@ -709,11 +734,15 @@ function shouldRetryTextApiResponse(response: Response) {
 }
 
 function createTextApiStatusHint(response: Response, endpoint: string) {
-  if (response.status !== 405) return '';
-  return [
-    `请求地址：${endpoint}`,
-    '405 通常表示上游网关不接受当前路径或请求方法。请确认 API Url 只填到 /v1 这一层，API 路径为 /chat/completions；如果配置无误，多半是供应商兼容网关短暂路由异常，可稍后重试或切换供应商。'
-  ].join('\n');
+  if (response.status === 405) {
+    return [
+      `请求地址：${endpoint}`,
+      '405 通常表示上游网关不接受当前路径或请求方法。请确认 API Url 只填到 /v1 这一层，API 路径为 /chat/completions；如果配置无误，多半是供应商兼容网关短暂路由异常，可稍后重试或切换供应商。'
+    ].join('\n');
+  }
+  if (response.status === 429) return '供应商当前触发限流，应用已自动重试；如仍失败，请稍后再试或切换供应商。';
+  if (response.status >= 500) return '供应商网关或其上游模型服务暂时不可用，应用已自动重试；如仍失败，请等待供应商恢复或切换供应商。';
+  return '';
 }
 
 function createNovelAiNetworkErrorMessage(error: unknown, endpoint: string, requestEndpoint: string) {
@@ -749,8 +778,23 @@ async function fetchTextEndpointWithFallback(
   throw new Error(createErrorMessage(lastError, endpoint, lastRequestEndpoint));
 }
 
+async function fetchTextEndpointWithRetry(
+  endpoint: string,
+  init: RequestInit,
+  createErrorMessage: (error: unknown, endpoint: string, requestEndpoint: string) => string
+) {
+  let result = await fetchTextEndpointWithFallback(endpoint, init, createErrorMessage);
+  for (const retryDelay of textApiRetryDelays) {
+    if (!shouldRetryTextApiResponse(result.response)) break;
+    const retryAfter = parseRetryAfter(result.response.headers.get('retry-after'));
+    await waitForTextApiRetry(Math.min(retryAfter || retryDelay, 5000));
+    result = await fetchTextEndpointWithFallback(endpoint, init, createErrorMessage);
+  }
+  return result;
+}
+
 async function fetchTextEndpoint(endpoint: string, init: RequestInit) {
-  return fetchTextEndpointWithFallback(endpoint, init, createTextNetworkErrorMessage);
+  return fetchTextEndpointWithRetry(endpoint, init, createTextNetworkErrorMessage);
 }
 
 async function fetchNovelAiEndpoint(endpoint: string, init: RequestInit) {
@@ -2116,18 +2160,12 @@ async function callTextApi(settings: AppSettings | undefined, prompt: string, mo
     })
   };
 
-  let { response, requestEndpoint } = await fetchTextEndpoint(resolved.endpoint, requestInit);
-  if (!response.ok && shouldRetryTextApiResponse(response)) {
-    await waitForTextApiRetry();
-    const retryResult = await fetchTextEndpoint(resolved.endpoint, requestInit);
-    response = retryResult.response;
-    requestEndpoint = retryResult.requestEndpoint;
-  }
+  const { response, requestEndpoint } = await fetchTextEndpoint(resolved.endpoint, requestInit);
 
   if (!response.ok) {
     const statusHint = createTextApiStatusHint(response, resolved.endpoint);
-    if (requestEndpoint.startsWith(textProxyPath) && response.status === 502) {
-      throw new Error([await createApiErrorMessage(response, '本地文本模型代理请求失败'), statusHint].filter(Boolean).join('\n\n'));
+    if (requestEndpoint.startsWith(textProxyPath) && response.status >= 500) {
+      throw new Error([await createApiErrorMessage(response, '文本模型供应商或其网关暂时不可用'), statusHint].filter(Boolean).join('\n\n'));
     }
     throw new Error([await createApiErrorMessage(response, '文本模型 API 请求失败'), statusHint].filter(Boolean).join('\n\n'));
   }
@@ -2219,7 +2257,7 @@ async function completeRoleplayReplyTranslations(result: RoleplayReplyResult, se
 export async function fetchVendorModels(vendor: Pick<ApiVendor, 'apiUrl' | 'apiKey'>): Promise<string[]> {
   const modelsEndpoint = `${vendor.apiUrl.trim().replace(/\/+$/, '')}/models`;
   if (!vendor.apiUrl.trim()) return [];
-  const { response, requestEndpoint } = await fetchTextEndpointWithFallback(
+  const { response, requestEndpoint } = await fetchTextEndpointWithRetry(
     modelsEndpoint,
     {
       headers: {
@@ -2238,8 +2276,8 @@ export async function fetchVendorModels(vendor: Pick<ApiVendor, 'apiUrl' | 'apiK
   );
 
   if (!response.ok) {
-    if (requestEndpoint.startsWith(textProxyPath) && response.status === 502) {
-      throw new Error(await createApiErrorMessage(response, '本地文本模型代理请求失败'));
+    if (requestEndpoint.startsWith(textProxyPath) && response.status >= 500) {
+      throw new Error(await createApiErrorMessage(response, '模型供应商或其网关暂时不可用'));
     }
     throw new Error(await createApiErrorMessage(response, '模型列表 API 请求失败'));
   }
@@ -2725,17 +2763,19 @@ function buildCoupleSpacePrompt(input: { context: PromptContext; previousSnapsho
   return [
     buildPrompt(input.context, { includeAvailableStickers: false }),
     `现在为 ${userName} 与 ${characterName} 的「情侣守护空间」生成一次角色生活状态快照。`,
-    `这是双方授权查看的角色互动模拟，不是真实 GPS、系统监控或设备取证。请根据角色设定、世界书、记忆、近期聊天、当前时间与角色生活轨迹，创造可信且有连续性的状态；不要声称读取真实手机权限，不要替用户行动。`,
+    `这是双方授权查看的角色互动模拟，不是真实 GPS、系统监控或设备取证。请根据角色设定、世界书、记忆、近期聊天、当前时间与角色生活轨迹，创造可信且有连续性的状态；不要声称读取真实手机权限，不要替 ${userName} 行动。`,
+    `身份硬性规则：${characterName} 是角色真名，${userName} 是用户真名。所有字段只要提到双方中的任何一人，都必须直接写对应真名；禁止用昵称、备注、“你”、“他”、“她”、“TA”、“用户”、“角色”或“对方”代替。NPC 必须有具体姓名或明确身份。`,
     previousSnapshot,
     `内容要求：
-1. location 要像可阅读的陪伴地图：当前地点、通俗地址、正在做什么、彼此距离、交通方式、预计到达/下一站、停留分钟数，以及 3–6 个有时间的路线节点。
-2. device 是角色主动分享的手机报告：0–100 电量、是否充电、using/locked/idle 三选一、最近解锁与锁屏时间、今日使用分钟数、当前应用、当前网络和 2–5 条网络历史。
-3. bond 要强烈贴合角色本人和当前关系，不要通用甜言蜜语；想念值与默契值为 0–100，悄悄话必须像角色会说的话。
-4. moments 给出 3–6 个今天发生的小片段，可以有吃饭、通勤、摸鱼、偶遇、想起对方、悄悄准备惊喜等，兼顾趣味与生活感。
-5. 信息必须内部一致：地点、路线、交通、时间、应用与小片段不能互相冲突；不要每次都生成完美约会或极端戏剧。
-6. 地名可以来自角色设定；设定不足时创造符合世界观的地点，不要把未知信息说成现实事实。`,
+  1. location 必须覆盖生成时刻往前完整 24 小时，按时间顺序给出 8–12 个 route 节点，包含睡眠、起床、吃饭、工作/学习、通勤、社交、办事、休闲等真实生活节奏。每段写开始/结束时间、地点、活动分类、发生了什么、同行者、留下的生活痕迹，以及可选的未说出口想法。不能只给三四个概览点。
+  2. device 是 ${characterName} 自愿分享的“可翻看手机”：0–100 电量、充电、using/locked/idle、解锁/锁屏、总使用分钟、当前应用和网络；另外必须生成 6–10 条应用使用、6–12 条通知、4–8 个聊天之外的联系人会话、6–12 条搜索/浏览/地图/购物足迹、5–9 张相册生活切片、4–8 条备忘录，以及 6–12 条闹钟/日程/订单/音乐/未发送草稿记录。
+  3. device.chats 是 ${characterName} 与家人、朋友、同事、同学、NPC 等人的聊天，必须是当前 BabyLink 对话里从未展示过的新内容。每个会话写关系、摘要和 3–8 条具体往来，内容要有日常琐事、社交关系、工作学习、吐槽、秘密准备或反差感，不能全都围绕 ${userName}，也不能复制近期聊天原句。
+  4. notifications、footprints、gallery、notes、lifeRecords 要彼此呼应并能拼出 ${characterName} 的真实一天，例如搜索过的店与订单、闹钟与赶路、相册与行程、备忘录与下一步计划形成细节闭环；允许有无伤大雅的小秘密、尴尬搜索、没发出的草稿和生活反差，增强“查手机”的趣味，但不要制造恶意背叛或无依据极端冲突。
+  5. bond 要强烈贴合 ${characterName} 与 ${userName} 当前关系，不要通用甜言蜜语；想念值与默契值为 0–100。daySummary 总结聊天之外的 24 小时，hiddenThought 写 ${characterName} 没发给 ${userName} 的真实想法，keywords 给 3–6 个当天关键词。
+  6. moments 给出 6–10 个未在当前聊天出现的生活片段，覆盖不同时段和情绪，每条写分类、完整细节和可选的“没发给 ${userName}”内容。
+  7. 所有时间、地点、路线、应用、联系人、通知、搜索、相册、订单和片段必须内部一致；不要每次都生成完美约会、全员只聊恋爱或极端戏剧。地名可以来自设定，设定不足时创造符合世界观的地点，不要把未知信息说成现实事实。`,
     `只输出以下结构的 JSON，不要输出 Markdown、代码块或解释：
-{"location":{"place":"当前地点","address":"地址或场景描述","status":"正在做什么","distance":"与对方的距离描述","transport":"交通方式","eta":"预计到达或下一站","stayMinutes":35,"route":[{"name":"节点","time":"18:20","kind":"start|pass|stay|arrival","detail":"发生的小事"}]},"device":{"battery":76,"charging":false,"screenStatus":"using|locked|idle","lastUnlockedAt":"18:42","lastLockedAt":"18:39","usageMinutes":186,"activeApp":"应用或用途","network":"当前网络","networkHistory":[{"name":"网络名称","time":"17:10","kind":"wifi|cellular|offline"}]},"bond":{"mood":"心情短语","moodEmoji":"emoji","missLevel":82,"syncScore":91,"nextPlan":"下一件想一起做的事","whisper":"角色口吻悄悄话"},"moments":[{"time":"17:45","title":"片段标题","detail":"生活细节","emoji":"emoji"}]}`
+  {"location":{"place":"当前地点","address":"地址或场景描述","status":"正在做什么","distance":"${characterName}与${userName}的距离描述","transport":"交通方式","eta":"预计到达或下一站","stayMinutes":35,"route":[{"name":"地点","time":"07:10","endTime":"08:00","kind":"start|pass|stay|arrival","category":"sleep|home|travel|work|meal|social|errand|leisure","detail":"这一段完整发生了什么","companion":"具体姓名或独自一人","trace":"票据/物品/照片/气味等生活痕迹","privateThought":"可留空的私下想法"}]},"device":{"battery":76,"charging":false,"screenStatus":"using|locked|idle","lastUnlockedAt":"18:42","lastLockedAt":"18:39","usageMinutes":286,"activeApp":"应用或用途","network":"当前网络","networkHistory":[{"name":"网络名称","time":"17:10","kind":"wifi|cellular|offline"}],"appUsage":[{"app":"应用名","minutes":52,"lastUsedAt":"18:40","detail":"具体用来做什么"}],"notifications":[{"app":"应用名","time":"18:31","title":"通知标题","preview":"通知预览","unread":true}],"chats":[{"contact":"联系人姓名","relation":"与${characterName}的关系","avatarEmoji":"emoji","updatedAt":"18:25","unread":2,"summary":"这段聊天的来龙去脉","messages":[{"sender":"character|contact","time":"18:20","text":"具体消息"}]}],"footprints":[{"kind":"search|browser|map|shopping","time":"16:20","title":"搜索词或页面标题","detail":"看到了什么","reason":"为什么点开"}],"gallery":[{"time":"15:30","title":"照片标题","detail":"画面和拍摄原因","emoji":"emoji","palette":["#fbd3e1","#d8cff8"]}],"notes":[{"folder":"文件夹","title":"标题","content":"完整内容","updatedAt":"14:10","pinned":false}],"lifeRecords":[{"kind":"alarm|calendar|order|music|draft","time":"13:00","title":"记录标题","detail":"具体内容","status":"状态"}]},"bond":{"mood":"心情短语","moodEmoji":"emoji","missLevel":82,"syncScore":91,"nextPlan":"下一件想与${userName}一起做的事","whisper":"${characterName}对${userName}的悄悄话","daySummary":"聊天之外完整一天的总结","hiddenThought":"${characterName}没发给${userName}的话","keywords":["关键词1","关键词2","关键词3"]},"moments":[{"time":"17:45","category":"生活分类","title":"片段标题","detail":"没有出现在聊天里的完整生活细节","emoji":"emoji","unspoken":"可留空的没发给${userName}的话"}]}`
   ].filter(Boolean).join('\n\n');
 }
 
@@ -2749,7 +2789,11 @@ export async function generateCoupleSpaceSnapshot(input: {
   const apiReply = await callTextApi(input.settings, buildCoupleSpacePrompt(input), input.modelOverride, [], 0.82);
   if (!apiReply.trim()) throw new Error('情侣空间模型没有返回状态内容。');
   const parsed = JSON.parse(extractJsonContent(apiReply)) as unknown;
-  return normalizeCoupleSpaceSnapshot(parsed, Date.now());
+  return normalizeCoupleSpaceIdentityReferences(
+    normalizeCoupleSpaceSnapshot(parsed, Date.now()),
+    getCharacterAiName(input.context.character),
+    getUserAiName(input.context.boundUser ?? input.context.user)
+  );
 }
 
 function buildSmallTheaterPrompt(input: { context: PromptContext; topic: SmallTheaterTopic; recentTheaters?: SmallTheater[] }) {

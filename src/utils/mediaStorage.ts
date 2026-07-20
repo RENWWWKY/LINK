@@ -1,7 +1,7 @@
 export const linkMediaRouteSegment = '__link-media';
 export const linkMediaCacheName = 'link-large-media-v1';
 
-type LinkMediaBackend = 'opfs' | 'cache';
+type LinkMediaBackend = 'opfs' | 'idb' | 'cache';
 
 interface LinkMediaLocator {
   backend: LinkMediaBackend;
@@ -27,11 +27,20 @@ interface LinkStorageManager {
   getDirectory?: () => Promise<LinkDirectoryHandle>;
 }
 
+interface MaterializeStoredMediaOptions {
+  missing?: 'throw' | 'empty' | 'preserve';
+  onMissing?: (source: string) => void;
+}
+
 const opfsDirectoryName = 'link-large-media-v1';
+const indexedDbName = 'link-large-media-v1';
+const indexedDbStoreName = 'media';
 const externalizeMinBytes = 128 * 1024;
 const recentlyStoredMediaRetainMs = 5 * 60 * 1000;
 const objectUrlSourceMap = new Map<string, string>();
+const storedMediaObjectUrlMap = new Map<string, string>();
 const recentlyStoredMediaLocators = new Map<string, number>();
+let indexedDbPromise: Promise<IDBDatabase | null> | null = null;
 
 function getBasePath() {
   const base = String(import.meta.env.BASE_URL || '/').trim() || '/';
@@ -75,7 +84,7 @@ function parseStoredMediaLocator(value: string): LinkMediaLocator | null {
     const markerIndex = url.pathname.indexOf(marker);
     if (markerIndex < 0) return null;
     const [backendValue = '', ...idParts] = url.pathname.slice(markerIndex + marker.length).split('/');
-    const backend = backendValue === 'opfs' ? 'opfs' : backendValue === 'cache' ? 'cache' : '';
+    const backend = backendValue === 'opfs' ? 'opfs' : backendValue === 'idb' ? 'idb' : backendValue === 'cache' ? 'cache' : '';
     const id = decodeURIComponent(idParts.join('/')).trim();
     return backend && id ? { backend, id } : null;
   } catch {
@@ -122,7 +131,7 @@ function dataUrlByteLength(dataUrl: string) {
   }
 }
 
-function dataUrlToBlob(dataUrl: string) {
+export function dataUrlToBlob(dataUrl: string) {
   const [meta = '', payload = ''] = dataUrl.split(',', 2);
   const mimeType = meta.match(/^data:([^;]+)/i)?.[1] || 'application/octet-stream';
   if (/;base64/i.test(meta)) {
@@ -201,6 +210,64 @@ async function writeMediaToCache(url: string, blob: Blob) {
   return true;
 }
 
+function getIndexedDb() {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  if (indexedDbPromise) return indexedDbPromise;
+
+  indexedDbPromise = new Promise<IDBDatabase | null>((resolve) => {
+    const request = indexedDB.open(indexedDbName, 1);
+    request.addEventListener('upgradeneeded', () => {
+      if (!request.result.objectStoreNames.contains(indexedDbStoreName)) request.result.createObjectStore(indexedDbStoreName);
+    });
+    request.addEventListener('success', () => {
+      request.result.addEventListener('versionchange', () => request.result.close());
+      resolve(request.result);
+    });
+    request.addEventListener('error', () => resolve(null));
+    request.addEventListener('blocked', () => resolve(null));
+  });
+  return indexedDbPromise;
+}
+
+function waitForIndexedDbTransaction(transaction: IDBTransaction) {
+  return new Promise<void>((resolve, reject) => {
+    transaction.addEventListener('complete', () => resolve());
+    transaction.addEventListener('abort', () => reject(transaction.error ?? new Error('本地媒体数据库写入已取消。')));
+    transaction.addEventListener('error', () => reject(transaction.error ?? new Error('本地媒体数据库写入失败。')));
+  });
+}
+
+async function writeMediaToIndexedDb(id: string, blob: Blob) {
+  try {
+    const db = await getIndexedDb();
+    if (!db) return false;
+    const transaction = db.transaction(indexedDbStoreName, 'readwrite');
+    transaction.objectStore(indexedDbStoreName).put(blob, id);
+    await waitForIndexedDbTransaction(transaction);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readMediaFromIndexedDb(id: string) {
+  try {
+    const db = await getIndexedDb();
+    if (!db) return null;
+    const transaction = db.transaction(indexedDbStoreName, 'readonly');
+    const request = transaction.objectStore(indexedDbStoreName).get(id);
+    const result = await new Promise<unknown>((resolve, reject) => {
+      request.addEventListener('success', () => resolve(request.result));
+      request.addEventListener('error', () => reject(request.error));
+    });
+    return result instanceof Blob
+      ? result.type ? result : new Blob([result], { type: mimeTypeFromMediaId(id) })
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function readMediaFromOpfs(id: string) {
   try {
     const directory = await getOpfsMediaDirectory(false);
@@ -212,32 +279,73 @@ async function readMediaFromOpfs(id: string) {
   }
 }
 
-async function readMediaFromCache(url: string) {
+async function readMediaFromCache(url: string, id = '') {
   if (typeof caches === 'undefined') return null;
   try {
-    const response = await (await caches.open(linkMediaCacheName)).match(toAbsoluteMediaUrl(url));
+    const cache = await caches.open(linkMediaCacheName);
+    let response = await cache.match(toAbsoluteMediaUrl(url));
+    if (!response && id) {
+      const matchingRequest = (await cache.keys()).find((request) => parseStoredMediaLocator(request.url)?.id === id);
+      if (matchingRequest) response = await cache.match(matchingRequest);
+    }
     return response ? await response.blob() : null;
   } catch {
     return null;
   }
 }
 
+async function readStoredMediaBlob(locator: LinkMediaLocator, source: string) {
+  const readers = locator.backend === 'opfs'
+    ? [() => readMediaFromOpfs(locator.id), () => readMediaFromIndexedDb(locator.id), () => readMediaFromCache(source, locator.id)]
+    : locator.backend === 'idb'
+      ? [() => readMediaFromIndexedDb(locator.id), () => readMediaFromOpfs(locator.id), () => readMediaFromCache(source, locator.id)]
+      : [() => readMediaFromCache(source, locator.id), () => readMediaFromIndexedDb(locator.id), () => readMediaFromOpfs(locator.id)];
+
+  for (const read of readers) {
+    const blob = await read();
+    if (!blob) continue;
+    if (locator.backend !== 'idb') void writeMediaToIndexedDb(locator.id, blob);
+    return blob;
+  }
+
+  const objectUrl = storedMediaObjectUrlMap.get(source.trim());
+  if (objectUrl) {
+    try {
+      const response = await fetch(objectUrl);
+      if (response.ok) {
+        const blob = await response.blob();
+        void writeMediaToIndexedDb(locator.id, blob);
+        return blob;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 async function storeMediaBlob(blob: Blob) {
   const id = `${await blobHash(blob)}.${extensionFromMimeType(blob.type)}`;
   const opfsUrl = createStoredMediaUrl('opfs', id);
+  rememberStoredMediaUrl(opfsUrl);
   try {
     if (await writeMediaToOpfs(id, blob)) {
-      await writeMediaToCache(opfsUrl, blob).catch(() => undefined);
-      rememberStoredMediaUrl(opfsUrl);
+      if (!await writeMediaToIndexedDb(id, blob)) await writeMediaToCache(opfsUrl, blob).catch(() => undefined);
       return opfsUrl;
     }
   } catch {
-    // Fall back to Cache Storage below.
+    // Fall back to IndexedDB or Cache Storage below.
+  }
+
+  const indexedDbUrl = createStoredMediaUrl('idb', id);
+  rememberStoredMediaUrl(indexedDbUrl);
+  if (await writeMediaToIndexedDb(id, blob)) {
+    return indexedDbUrl;
   }
 
   const cacheUrl = createStoredMediaUrl('cache', id);
+  rememberStoredMediaUrl(cacheUrl);
   if (await writeMediaToCache(cacheUrl, blob)) {
-    rememberStoredMediaUrl(cacheUrl);
     return cacheUrl;
   }
   return '';
@@ -260,13 +368,12 @@ async function hydrateMediaString(value: string) {
   const locator = parseStoredMediaLocator(value);
   if (!locator) return value;
 
-  const blob = locator.backend === 'opfs'
-    ? await readMediaFromOpfs(locator.id) ?? await readMediaFromCache(value)
-    : await readMediaFromCache(value) ?? await readMediaFromOpfs(locator.id);
+  const blob = await readStoredMediaBlob(locator, value);
   if (!blob) return value;
 
   const objectUrl = URL.createObjectURL(blob);
   objectUrlSourceMap.set(objectUrl, value.trim());
+  storedMediaObjectUrlMap.set(value.trim(), objectUrl);
   return objectUrl;
 }
 
@@ -279,15 +386,18 @@ function blobToDataUrl(blob: Blob) {
   });
 }
 
-async function materializeMediaString(value: string) {
+async function materializeMediaString(value: string, options: MaterializeStoredMediaOptions) {
   const source = objectUrlSourceMap.get(value) ?? value;
   const locator = parseStoredMediaLocator(source);
   if (!locator) return value;
 
-  const blob = locator.backend === 'opfs'
-    ? await readMediaFromOpfs(locator.id) ?? await readMediaFromCache(source)
-    : await readMediaFromCache(source) ?? await readMediaFromOpfs(locator.id);
-  if (!blob) throw new Error('备份所需的本地媒体文件已丢失，请刷新页面后重试。');
+  const blob = await readStoredMediaBlob(locator, source);
+  if (!blob) {
+    options.onMissing?.(source);
+    if (options.missing === 'empty') return '';
+    if (options.missing === 'preserve') return value;
+    throw new Error('备份所需的本地媒体文件已丢失，请刷新页面后重试。');
+  }
   return await blobToDataUrl(blob);
 }
 
@@ -358,6 +468,24 @@ async function pruneOpfsMedia(liveLocators: Set<string>) {
   }
 }
 
+async function pruneIndexedDbMedia(liveLocators: Set<string>) {
+  const db = await getIndexedDb();
+  if (!db) return;
+  const liveIds = new Set([...liveLocators].map((key) => key.slice(key.indexOf('/') + 1)));
+  const transaction = db.transaction(indexedDbStoreName, 'readwrite');
+  const store = transaction.objectStore(indexedDbStoreName);
+  const keysRequest = store.getAllKeys();
+  const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+    keysRequest.addEventListener('success', () => resolve(keysRequest.result));
+    keysRequest.addEventListener('error', () => reject(keysRequest.error));
+  }).catch(() => []);
+  keys.forEach((key) => {
+    const id = String(key);
+    if (!liveIds.has(id)) store.delete(key);
+  });
+  await waitForIndexedDbTransaction(transaction).catch(() => undefined);
+}
+
 export function isStoredLinkMediaUrl(value: string | undefined) {
   return Boolean(parseStoredMediaLocator(String(value ?? '')));
 }
@@ -386,8 +514,28 @@ export async function hydrateStoredMediaRefs<T>(value: T, force = false): Promis
   return await transformMediaStrings(value, hydrateMediaString);
 }
 
-export async function materializeStoredMediaRefs<T>(value: T): Promise<T> {
-  return await transformMediaStrings(value, materializeMediaString);
+export async function materializeStoredMediaRefs<T>(value: T, options: MaterializeStoredMediaOptions = {}): Promise<T> {
+  return await transformMediaStrings(value, (entry) => materializeMediaString(entry, options));
+}
+
+export async function resolveLocalMediaBlob(value: string) {
+  const normalizedValue = value.trim();
+  if (isInlineMediaDataUrl(normalizedValue)) return dataUrlToBlob(normalizedValue);
+
+  const source = objectUrlSourceMap.get(normalizedValue) ?? normalizedValue;
+  const locator = parseStoredMediaLocator(source);
+  if (locator) {
+    const storedBlob = await readStoredMediaBlob(locator, source);
+    if (storedBlob) return storedBlob;
+  }
+  if (!/^blob:/i.test(normalizedValue)) return null;
+
+  try {
+    const response = await fetch(normalizedValue);
+    return response.ok ? await response.blob() : null;
+  } catch {
+    return null;
+  }
 }
 
 export function collectStoredMediaLocators(value: unknown) {
@@ -400,6 +548,7 @@ export async function pruneStoredMediaCache(liveLocators: Set<string>) {
   const protectedLocators = collectProtectedMediaLocators(liveLocators);
   await Promise.all([
     pruneCacheMedia(protectedLocators),
-    pruneOpfsMedia(protectedLocators)
+    pruneOpfsMedia(protectedLocators),
+    pruneIndexedDbMedia(protectedLocators)
   ]);
 }

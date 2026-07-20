@@ -222,15 +222,16 @@
                 <RefreshCw :size="15" :class="{ spin: nativeReleaseStatus.phase === 'checking' }" />
                 <span>检查安装包</span>
               </button>
-              <button class="primary" type="button" :disabled="nativeReleaseBusy || !nativeReleaseStatus.release" @click="downloadNativeRelease">
+              <button class="primary" type="button" :disabled="nativeReleaseBusy || (nativeReleaseStatus.platform === 'android' && !nativeReleaseStatus.release)" @click="runNativeReleaseAction">
                 <Download :size="15" />
-                <span>{{ nativeReleaseStatus.platform === 'ios' ? '下载 IPA' : '下载 APK' }}</span>
+                <span>{{ nativeReleaseStatus.platform === 'ios' ? '复制更新源' : '应用内更新' }}</span>
               </button>
             </div>
 
             <p class="native-release-tip">
-              {{ nativeReleaseStatus.platform === 'ios' ? 'IPA 下载后需要使用自己的 Apple ID、AltStore、SideStore 或其他方式签名。' : 'APK 会转到系统浏览器下载，安装时由 Android 再次确认签名与权限。' }}
+              {{ nativeReleaseStatus.platform === 'ios' ? '将更新源添加到 AltStore 或 SideStore 后，可在外部签名工具中看到新版本并覆盖安装。' : 'BabyLink 会先校验 APK 的 SHA-256、包名、版本号与签名证书，再交给 Android 系统确认覆盖安装。' }}
             </p>
+            <button v-if="nativeReleaseStatus.platform === 'ios' && nativeReleaseStatus.release" class="native-release-manual" type="button" :disabled="nativeReleaseBusy" @click="downloadIosRelease">仍需手动安装？下载 IPA</button>
           </article>
         </section>
 
@@ -338,7 +339,7 @@ import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref, type Pro
 import { useRoute, useRouter } from 'vue-router';
 import { AlertCircle, BatteryCharging, BellRing, CheckCircle2, Clapperboard, Cloud, Download, Globe2, LoaderCircle, MessageCircle, Music2, Phone, Power, RadioTower, RefreshCw, RotateCcw, ShieldCheck, Smartphone, Undo2, Upload, UsersRound, Volume2, VolumeX } from 'lucide-vue-next';
 import { checkForAppUpdate, getAppUpdateStatus, installDownloadedAppUpdate, refreshAppUpdateStatus, subscribeAppUpdateStatus, type AppUpdateStatus } from '@/services/appUpdate';
-import { checkNativeRelease, createInitialNativeReleaseStatus, openNativeReleaseDownload, type NativeReleaseStatus } from '@/services/nativeRelease';
+import { checkNativeRelease, createInitialNativeReleaseStatus, fetchIosUpdateSourceLink, installNativeRelease, openNativeReleaseDownload, type NativeReleaseStatus } from '@/services/nativeRelease';
 import { getKeepAliveStatus, requestKeepAliveNotificationPermission, requestNativeKeepAliveBatteryAccess, startKeepAlive, stopKeepAlive, subscribeKeepAliveStatus, type KeepAliveRuntimeStatus } from '@/services/keepAlive';
 import { useAppStore } from '@/stores/appStore';
 import type { AppKeepAliveSettings, AppRingtoneSettings, RingtoneAsset, RingtoneEventType } from '@/types/domain';
@@ -515,7 +516,7 @@ const nativeReleasePhaseLabel = computed(() => ({
   checking: '检查中',
   latest: '已最新',
   available: '可下载',
-  opening: '正在打开',
+  opening: '处理中',
   unsupported: '不适用',
   error: '检查失败'
 })[nativeReleaseStatus.value.phase]);
@@ -589,15 +590,65 @@ async function runNativeReleaseCheck() {
   }
 }
 
-async function downloadNativeRelease() {
+async function copyText(value: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('无法复制更新源，请检查系统剪贴板权限。');
+}
+
+async function runNativeReleaseAction() {
+  if (nativeReleaseBusy.value) return;
+  nativeReleaseBusy.value = true;
+  nativeReleaseStatus.value = {
+    ...nativeReleaseStatus.value,
+    phase: 'opening',
+    message: nativeReleaseStatus.value.platform === 'ios' ? '正在生成受保护的更新源…' : '正在下载并校验 APK…'
+  };
+  try {
+    if (nativeReleaseStatus.value.platform === 'ios') {
+      const source = await fetchIosUpdateSourceLink();
+      await copyText(source.url);
+      const expiry = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric' }).format(source.expiresAt);
+      nativeReleaseStatus.value = { ...nativeReleaseStatus.value, phase: 'available', message: `更新源已复制，有效期至 ${expiry}。` };
+      return;
+    }
+    const release = nativeReleaseStatus.value.release;
+    if (!release) throw new Error('请先检查并获取最新 Android 安装包。');
+    const result = await installNativeRelease(release);
+    nativeReleaseStatus.value = {
+      ...nativeReleaseStatus.value,
+      phase: result === 'permission-required' ? 'available' : 'opening',
+      message: result === 'permission-required'
+        ? '已打开“安装未知应用”授权页；授权后返回 BabyLink，再次点击应用内更新。'
+        : result === 'browser-download'
+          ? '当前旧版原生壳尚不支持应用内安装，已打开浏览器完成本次升级；升级后即可使用应用内更新。'
+          : 'APK 校验通过，正在等待 Android 系统确认覆盖安装。'
+    };
+  } catch (error) {
+    nativeReleaseStatus.value = { ...nativeReleaseStatus.value, phase: 'error', message: error instanceof Error ? error.message : '原生更新操作失败。' };
+  } finally {
+    nativeReleaseBusy.value = false;
+  }
+}
+
+async function downloadIosRelease() {
   const release = nativeReleaseStatus.value.release;
   if (!release || nativeReleaseBusy.value) return;
   nativeReleaseBusy.value = true;
-  nativeReleaseStatus.value = { ...nativeReleaseStatus.value, phase: 'opening', message: '正在打开系统下载…' };
   try {
     await openNativeReleaseDownload(release);
   } catch (error) {
-    nativeReleaseStatus.value = { ...nativeReleaseStatus.value, phase: 'error', message: error instanceof Error ? error.message : '无法打开安装包下载。' };
+    nativeReleaseStatus.value = { ...nativeReleaseStatus.value, phase: 'error', message: error instanceof Error ? error.message : '无法下载 IPA。' };
   } finally {
     nativeReleaseBusy.value = false;
   }
@@ -1555,6 +1606,16 @@ async function resetCharacter(characterId: string, eventType: RingtoneEventType)
 .native-release-tip {
   color: var(--muted);
   font-size: 11px;
+}
+
+.native-release-manual {
+  justify-self: start;
+  padding: 3px 0;
+  color: #315a45;
+  font-size: 11px;
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .native-release-card > header strong {

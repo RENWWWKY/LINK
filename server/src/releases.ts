@@ -2,11 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { getSessionIdentity, requireSession } from './auth.js';
 import { config } from './config.js';
 import { query } from './db.js';
-import { createSignedTicket, safeFileName, verifySignedTicket } from './security.js';
+import { createOpaqueToken, createSignedTicket, hashSecret, safeFileName, verifySignedTicket } from './security.js';
 
 interface ReleaseRow {
   id: string;
@@ -20,6 +20,12 @@ interface ReleaseRow {
   notes: string;
   created_at: Date;
 }
+
+interface ReleaseSourceTokenRow {
+  qq: string;
+}
+
+const iosSourceTokenLifetimeMs = 180 * 24 * 60 * 60 * 1000;
 
 export function normalizeReleaseNotes(value: unknown) {
   const source = String(value ?? '').trim();
@@ -66,8 +72,137 @@ function releasePayload(row: ReleaseRow, qq: string, currentVersionCode = 0) {
   };
 }
 
+async function createIosSourceToken(qq: string) {
+  const token = createOpaqueToken(36);
+  const expiresAt = new Date(Date.now() + iosSourceTokenLifetimeMs);
+  await query(`
+    INSERT INTO release_source_tokens (token_hash, qq, expires_at)
+    VALUES ($1, $2, $3)
+  `, [hashSecret(token), qq, expiresAt]);
+  return { token, expiresAt: expiresAt.getTime() };
+}
+
+async function authorizeIosSourceToken(token: string) {
+  if (!token || token.length > 256) return null;
+  const result = await query<ReleaseSourceTokenRow>(`
+    SELECT rst.qq
+    FROM release_source_tokens rst
+    JOIN users u ON u.qq = rst.qq AND u.status = 'active'
+    WHERE rst.token_hash = $1
+      AND rst.revoked_at IS NULL
+      AND rst.expires_at > NOW()
+      AND EXISTS (
+        SELECT 1
+        FROM memberships m
+        JOIN allowed_groups g ON g.group_id = m.group_id AND g.enabled = TRUE
+        WHERE m.qq = rst.qq
+          AND m.active = TRUE
+          AND m.last_seen_at > NOW() - ($2::int * INTERVAL '1 hour')
+      )
+    LIMIT 1
+  `, [hashSecret(token), config.membershipMaxAgeHours]);
+  return result.rows[0]?.qq ?? null;
+}
+
+async function sendReleaseFile(reply: FastifyReply, release: ReleaseRow) {
+  const fileName = safeFileName(release.file_name);
+  const filePath = join(config.releaseDir, fileName);
+  try {
+    await stat(filePath);
+  } catch {
+    return await reply.code(404).send({ error: 'release_file_missing' });
+  }
+  reply.header('Content-Type', release.platform === 'android' ? 'application/vnd.android.package-archive' : 'application/octet-stream');
+  reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
+  reply.header('Content-Length', release.file_size);
+  reply.header('X-Content-SHA256', release.sha256);
+  reply.header('Cache-Control', 'private, no-store');
+  return reply.send(createReadStream(filePath));
+}
+
 export async function registerReleaseRoutes(app: FastifyInstance) {
   await mkdir(config.releaseDir, { recursive: true });
+
+  app.get('/api/releases/altstore/source-link', async (request, reply) => {
+    const session = await requireSession(request, reply);
+    if (!session) return;
+    const grant = await createIosSourceToken(session.qq);
+    const sourceUrl = `${config.appOrigin}/api/releases/altstore/source.json?${new URLSearchParams({ token: grant.token }).toString()}`;
+    return {
+      url: sourceUrl,
+      altstoreUrl: `altstore://source?url=${encodeURIComponent(sourceUrl)}`,
+      sidestoreUrl: `sidestore://source?url=${encodeURIComponent(sourceUrl)}`,
+      expiresAt: grant.expiresAt
+    };
+  });
+
+  app.get('/api/releases/altstore/source.json', async (request, reply) => {
+    const token = String((request.query as { token?: unknown } | null)?.token ?? '');
+    const qq = await authorizeIosSourceToken(token);
+    if (!qq) return await reply.code(401).send({ error: 'source_authorization_required', message: '更新源授权已失效，请返回 BabyLink 重新复制。' });
+    const result = await query<ReleaseRow>(`
+      SELECT id, platform, version_code, version_name, minimum_version_code, file_name, sha256, file_size::text, notes, created_at
+      FROM releases
+      WHERE platform = 'ios' AND published = TRUE
+      ORDER BY version_code DESC
+      LIMIT 20
+    `);
+    const versions = result.rows.map((release) => ({
+      version: release.version_name,
+      buildVersion: String(release.version_code),
+      date: release.created_at.toISOString(),
+      downloadURL: `${config.appOrigin}/api/releases/${release.id}/altstore-download?${new URLSearchParams({ token }).toString()}`,
+      size: Number(release.file_size),
+      localizedDescription: normalizeReleaseNotes(release.notes) || `BabyLink ${release.version_name}`,
+      minOSVersion: '15.0'
+    }));
+    reply.header('Content-Type', 'application/json; charset=utf-8');
+    reply.header('Cache-Control', 'private, no-store');
+    return {
+      name: 'BabyLink',
+      subtitle: 'BabyLink iOS 自签更新源',
+      description: '供 AltStore 与 SideStore 获取 BabyLink 未签名 IPA 更新。安装与签名仍由外部签名工具完成。',
+      iconURL: `${config.appOrigin}/link-icon-192.png`,
+      website: config.appOrigin,
+      tintColor: '#ff668b',
+      featuredApps: versions.length ? ['top.babylink.app'] : [],
+      news: [],
+      apps: versions.length ? [{
+        name: 'BabyLink',
+        bundleIdentifier: 'top.babylink.app',
+        developerName: 'BabyLink',
+        subtitle: '沉浸式角色互动与陪伴',
+        localizedDescription: 'BabyLink 官方自签 IPA。通过 AltStore 或 SideStore 签名后覆盖安装，可保留相同应用身份下的数据。',
+        iconURL: `${config.appOrigin}/link-icon-192.png`,
+        tintColor: '#ff668b',
+        versions,
+        appPermissions: {
+          entitlements: [],
+          privacy: {
+            NSCameraUsageDescription: 'BabyLink 需要使用摄像头，以便在视频通话中显示你的实时画面。',
+            NSMicrophoneUsageDescription: 'BabyLink 需要使用麦克风，以便在语音和视频通话中识别你的语音。',
+            NSSpeechRecognitionUsageDescription: 'BabyLink 需要使用语音识别，以便将通话语音转换为文字字幕。'
+          }
+        }
+      }] : []
+    };
+  });
+
+  app.get('/api/releases/:id/altstore-download', async (request, reply) => {
+    const id = String((request.params as { id?: string }).id ?? '');
+    const token = String((request.query as { token?: unknown } | null)?.token ?? '');
+    const qq = await authorizeIosSourceToken(token);
+    if (!qq) return await reply.code(401).send({ error: 'source_authorization_required', message: '更新源授权已失效，请返回 BabyLink 重新复制。' });
+    const result = await query<ReleaseRow>(`
+      SELECT id, platform, version_code, version_name, minimum_version_code, file_name, sha256, file_size::text, notes, created_at
+      FROM releases
+      WHERE id = $1 AND platform = 'ios' AND published = TRUE
+      LIMIT 1
+    `, [id]);
+    const release = result.rows[0];
+    if (!release) return await reply.code(404).send({ error: 'release_not_found' });
+    return await sendReleaseFile(reply, release);
+  });
 
   app.get('/api/releases/latest', async (request, reply) => {
     const session = await requireSession(request, reply);
@@ -102,19 +237,7 @@ export async function registerReleaseRoutes(app: FastifyInstance) {
     `, [id]);
     const release = result.rows[0];
     if (!release) return await reply.code(404).send({ error: 'release_not_found' });
-    const fileName = safeFileName(release.file_name);
-    const filePath = join(config.releaseDir, fileName);
-    try {
-      await stat(filePath);
-    } catch {
-      return await reply.code(404).send({ error: 'release_file_missing' });
-    }
-    reply.header('Content-Type', release.platform === 'android' ? 'application/vnd.android.package-archive' : 'application/octet-stream');
-    reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
-    reply.header('Content-Length', release.file_size);
-    reply.header('X-Content-SHA256', release.sha256);
-    reply.header('Cache-Control', 'private, no-store');
-    return reply.send(createReadStream(filePath));
+    return await sendReleaseFile(reply, release);
   });
 
   app.put('/api/admin/releases/upload', { bodyLimit: config.webdavBodyLimitBytes }, async (request, reply) => {

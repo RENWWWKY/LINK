@@ -6,6 +6,7 @@ export interface LinkBackupFile {
   app: 'LINK';
   backupVersion: 1;
   exportedAt: number;
+  omittedLocalMedia?: number;
   snapshot: AppSnapshot;
 }
 
@@ -261,6 +262,7 @@ function toLinkBackupFile(value: unknown): LinkBackupFile {
       app: value.app === 'LINK' ? 'LINK' : 'LINK',
       backupVersion: value.backupVersion === 1 ? 1 : 1,
       exportedAt: Math.max(0, Number(value.exportedAt ?? 0) || 0),
+      omittedLocalMedia: Math.max(0, Math.floor(Number(value.omittedLocalMedia ?? 0) || 0)) || undefined,
       snapshot: normalizeBackupSnapshot(value.snapshot)
     };
   }
@@ -284,11 +286,12 @@ export function isLinkBackupChunkManifest(value: unknown): value is LinkBackupCh
   );
 }
 
-export function createLinkBackupFile(snapshot: AppSnapshot): LinkBackupFile {
+export function createLinkBackupFile(snapshot: AppSnapshot, omittedLocalMedia = 0): LinkBackupFile {
   return {
     app: 'LINK',
     backupVersion: 1,
     exportedAt: Date.now(),
+    ...(omittedLocalMedia > 0 ? { omittedLocalMedia } : {}),
     snapshot: sanitizeSnapshotForBackup(snapshot)
   };
 }
