@@ -42,7 +42,7 @@
         </ul>
         <label class="consent-check">
           <input v-model="consentChecked" type="checkbox" />
-          <span>{{ currentUserName }} 理解这是 {{ currentUserName }} 与 {{ characterName }} 的互动模拟，并确认 {{ currentUserName }} 与 {{ characterName }} 自愿共享</span>
+          <span>我理解这是 {{ currentUserName }} 与 {{ characterName }} 的互动模拟，并确认 {{ currentUserName }} 与 {{ characterName }} 自愿共享</span>
         </label>
         <button class="primary-button" type="button" :disabled="!consentChecked" @click="enableCoupleSpace">一起开启</button>
       </section>
@@ -396,7 +396,7 @@ import { AppWindow, ArrowLeft, BatteryCharging, BatteryMedium, Bell, BellRing, B
 import AppModal from '@/components/common/AppModal.vue';
 import { useAppStore } from '@/stores/appStore';
 import type { CoupleSpaceSnapshot } from '@/types/domain';
-import { createCoupleSpaceState, normalizeCoupleSpaceIdentityReferences } from '@/utils/coupleSpace';
+import { createCoupleSpaceIdentityAliases, createCoupleSpaceState, normalizeCoupleSpaceIdentityReferences } from '@/utils/coupleSpace';
 import { createId } from '@/utils/id';
 import { getCharacterAiName } from '@/utils/character';
 import { getUserAiName, normalizeVisualProfile } from '@/utils/profile';
@@ -431,7 +431,12 @@ const displaySnapshot = computed<CoupleSpaceSnapshot | undefined>(() => {
     ? snapshotHistory.value.find((item) => item.id === selectedSnapshotId.value) ?? snapshot.value
     : snapshot.value;
   return selectedSnapshot
-    ? normalizeCoupleSpaceIdentityReferences(selectedSnapshot, characterName.value, currentUserName.value)
+    ? normalizeCoupleSpaceIdentityReferences(
+      selectedSnapshot,
+      characterName.value,
+      currentUserName.value,
+      createCoupleSpaceIdentityAliases(character.value, currentUser.value)
+    )
     : undefined;
 });
 const characterName = computed(() => character.value ? getCharacterAiName(character.value) : '角色');

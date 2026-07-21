@@ -26,7 +26,7 @@ import { markRestoredGlobalNoticesSeen } from '@/utils/globalNotices';
 import { getVoomFrequencyChance, stripVoomCommentReplyPrefix } from '@/utils/voom';
 import { compressInlineImageDataUrl } from '@/utils/imageFile';
 import { hydrateStoredMediaRefs, isLocalMediaCacheUrl, materializeStoredMediaRefs } from '@/utils/mediaStorage';
-import { normalizeCoupleSpaceIdentityReferences, normalizeCoupleSpaceState } from '@/utils/coupleSpace';
+import { createCoupleSpaceIdentityAliases, normalizeCoupleSpaceIdentityReferences, normalizeCoupleSpaceState } from '@/utils/coupleSpace';
 
 interface CreateUserVoomPostPayload {
   userId: string;
@@ -8067,10 +8067,11 @@ export const useAppStore = defineStore('app', () => {
     if (boundUser) {
       const characterName = getCharacterAiName(character);
       const userName = getUserAiName(boundUser);
+      const identityAliases = createCoupleSpaceIdentityAliases(character, boundUser);
       coupleSpace = {
         ...coupleSpace,
-        snapshot: coupleSpace.snapshot ? normalizeCoupleSpaceIdentityReferences(coupleSpace.snapshot, characterName, userName) : undefined,
-        history: coupleSpace.history.map((snapshot) => normalizeCoupleSpaceIdentityReferences(snapshot, characterName, userName))
+        snapshot: coupleSpace.snapshot ? normalizeCoupleSpaceIdentityReferences(coupleSpace.snapshot, characterName, userName, identityAliases) : undefined,
+        history: coupleSpace.history.map((snapshot) => normalizeCoupleSpaceIdentityReferences(snapshot, characterName, userName, identityAliases))
       };
     }
     await saveCharacterSnapshot({ ...character, coupleSpace });

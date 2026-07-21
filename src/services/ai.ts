@@ -1,7 +1,6 @@
 import { unzipSync } from 'fflate';
 import type { ApiVendor, AppSettings, CharacterProfile, ChatMessage, ConversationTimeAwarenessSettings, CoupleSpaceSnapshot, GenerateReplyInput, GroupDiscoveryCandidate, GroupMember, ImageProviderType, MusicComment, MusicTrack, NovelAiModelOption, PollinationsModelOption, PromptContext, SmallTheater, SmallTheaterTopic, UserProfile, VoomComment, VoomFrequency, VoomPost, WorldBookEntry } from '@/types/domain';
 import { createId } from '@/utils/id';
-import { extractJsonContent, normalizeLooseModelReply } from '@/utils/aiResponse';
 import { getCharacterAiName } from '@/utils/character';
 import { getUserAiName } from '@/utils/profile';
 import { defaultNovelAiModels, defaultPollinationsModels, getResolvedApiConfig, getResolvedOpenAiImageConfig, isNovelAiV4FamilyModel, normalizeNovelAiUcPreset, novelAiOfficialApiUrl, novelAiProxyApiUrl } from '@/utils/settings';
@@ -9,7 +8,7 @@ import { estimateTokenCount } from '@/utils/memory';
 import { getStickerDisplayImageUrl } from '@/utils/stickers';
 import { assertRenderableSmallTheaterHtml, getSmallTheaterVisibleText, withSmallTheaterRuntimeGuard } from '@/utils/smallTheaterHtml';
 import { renderTimeAwarenessPrompt } from '@/utils/timeAwareness';
-import { formatContentWithChineseTranslation, needsChineseTranslation, normalizeTranslationText } from '@/utils/translation';
+import { formatContentWithChineseTranslation, normalizeTranslationText } from '@/utils/translation';
 import { getVoomFrequencyChance, stripVoomCommentReplyPrefix } from '@/utils/voom';
 import { normalizeCoupleSpaceIdentityReferences, normalizeCoupleSpaceSnapshot } from '@/utils/coupleSpace';
 import { buildMomentPrompt, buildPrompt } from './prompt';
@@ -503,15 +502,12 @@ const httpStatusText: Record<number, string> = {
   503: 'Service Unavailable',
   504: 'Gateway Timeout',
   520: 'Unknown Error',
-  521: 'Web Server Is Down',
   522: 'Connection Timed Out',
-  523: 'Origin Is Unreachable',
   524: 'A Timeout Occurred'
 };
 
-const transientOpenAiImageStatuses = new Set([408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
+const transientOpenAiImageStatuses = new Set([408, 429, 500, 502, 503, 504, 520, 522, 524]);
 const openAiImageRetryDelays = [1200];
-const textApiRetryDelays = [800, 1600];
 
 function wait(milliseconds: number) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -574,33 +570,12 @@ function extractCloudflareErrorPayload(payload: string) {
     host ? `异常主机：${host}` : '',
     rayId ? `Cloudflare Ray ID：${rayId}` : '',
     happened ? `说明：${happened}` : '',
-    '这通常表示供应商网关或其上游模型服务暂时不可用，不是 BabyLink 本地代理、API Key 或请求格式错误。'
-  ].filter(Boolean).join('\n');
-}
-
-function extractCloudflareJsonPayload(value: unknown) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
-  const payload = value as Record<string, unknown>;
-  const type = String(payload.type ?? '');
-  const rayId = String(payload.ray_id ?? payload.rayId ?? '').trim();
-  const host = String(payload.zone ?? payload.host ?? '').trim();
-  const errorName = String(payload.error_name ?? '').trim();
-  if (!/cloudflare/i.test(type) && !(rayId && (host || errorName))) return '';
-
-  const status = String(payload.status ?? payload.error_code ?? '').trim();
-  const title = String(payload.title ?? '').trim() || (status ? `Cloudflare ${status} 错误` : 'Cloudflare 网关错误');
-  const detail = String(payload.detail ?? '').trim();
-  return [
-    title,
-    host ? `异常主机：${host}` : '',
-    rayId ? `Cloudflare Ray ID：${rayId}` : '',
-    detail ? `说明：${detail}` : '',
-    '这通常表示供应商网关或其上游模型服务暂时不可用，不是 BabyLink 本地代理、API Key 或请求格式错误。'
+    '这通常表示图片供应商网关或其上游模型服务暂时不可用，不是本地请求格式错误。'
   ].filter(Boolean).join('\n');
 }
 
 function formatHttpStatus(response: Response) {
-  const statusText = httpStatusText[response.status] || response.statusText.trim();
+  const statusText = response.statusText.trim() || httpStatusText[response.status] || '';
   return [response.status || '', statusText].filter(Boolean).join(' ');
 }
 
@@ -609,8 +584,7 @@ function formatApiErrorPayload(payload: string) {
   if (!trimmed) return '';
 
   try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    return extractCloudflareJsonPayload(parsed) || JSON.stringify(parsed, null, 2);
+    return JSON.stringify(JSON.parse(trimmed), null, 2);
   } catch {
     const cloudflareError = extractCloudflareErrorPayload(trimmed);
     if (cloudflareError) return cloudflareError;
@@ -723,9 +697,9 @@ function createTextNetworkErrorMessage(error: unknown, endpoint: string, request
   );
 }
 
-function waitForTextApiRetry(milliseconds: number) {
+function waitForTextApiRetry() {
   return new Promise((resolve) => {
-    globalThis.setTimeout(resolve, milliseconds);
+    globalThis.setTimeout(resolve, 800);
   });
 }
 
@@ -734,15 +708,11 @@ function shouldRetryTextApiResponse(response: Response) {
 }
 
 function createTextApiStatusHint(response: Response, endpoint: string) {
-  if (response.status === 405) {
-    return [
-      `请求地址：${endpoint}`,
-      '405 通常表示上游网关不接受当前路径或请求方法。请确认 API Url 只填到 /v1 这一层，API 路径为 /chat/completions；如果配置无误，多半是供应商兼容网关短暂路由异常，可稍后重试或切换供应商。'
-    ].join('\n');
-  }
-  if (response.status === 429) return '供应商当前触发限流，应用已自动重试；如仍失败，请稍后再试或切换供应商。';
-  if (response.status >= 500) return '供应商网关或其上游模型服务暂时不可用，应用已自动重试；如仍失败，请等待供应商恢复或切换供应商。';
-  return '';
+  if (response.status !== 405) return '';
+  return [
+    `请求地址：${endpoint}`,
+    '405 通常表示上游网关不接受当前路径或请求方法。请确认 API Url 只填到 /v1 这一层，API 路径为 /chat/completions；如果配置无误，多半是供应商兼容网关短暂路由异常，可稍后重试或切换供应商。'
+  ].join('\n');
 }
 
 function createNovelAiNetworkErrorMessage(error: unknown, endpoint: string, requestEndpoint: string) {
@@ -778,23 +748,8 @@ async function fetchTextEndpointWithFallback(
   throw new Error(createErrorMessage(lastError, endpoint, lastRequestEndpoint));
 }
 
-async function fetchTextEndpointWithRetry(
-  endpoint: string,
-  init: RequestInit,
-  createErrorMessage: (error: unknown, endpoint: string, requestEndpoint: string) => string
-) {
-  let result = await fetchTextEndpointWithFallback(endpoint, init, createErrorMessage);
-  for (const retryDelay of textApiRetryDelays) {
-    if (!shouldRetryTextApiResponse(result.response)) break;
-    const retryAfter = parseRetryAfter(result.response.headers.get('retry-after'));
-    await waitForTextApiRetry(Math.min(retryAfter || retryDelay, 5000));
-    result = await fetchTextEndpointWithFallback(endpoint, init, createErrorMessage);
-  }
-  return result;
-}
-
 async function fetchTextEndpoint(endpoint: string, init: RequestInit) {
-  return fetchTextEndpointWithRetry(endpoint, init, createTextNetworkErrorMessage);
+  return fetchTextEndpointWithFallback(endpoint, init, createTextNetworkErrorMessage);
 }
 
 async function fetchNovelAiEndpoint(endpoint: string, init: RequestInit) {
@@ -986,6 +941,22 @@ function splitModelSelection(selection = '') {
     vendorId: vendorId.trim(),
     model: modelParts.join(modelSelectionSeparator).trim()
   };
+}
+
+function extractJsonContent(content: string) {
+  const trimmed = content.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if (fenced) return fenced[1].trim();
+
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed;
+
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1).trim();
+  }
+
+  return trimmed;
 }
 
 function normalizeTextFragments(value: unknown): string[] {
@@ -1765,7 +1736,7 @@ function normalizeOfflineInvitationAction(record: Record<string, unknown>, actio
 }
 
 function normalizeRawOnlineReply(content: string) {
-  const trimmed = normalizeLooseModelReply(content);
+  const trimmed = content.trim();
   if (!trimmed) return [];
 
   const lines = trimmed.split(/\r?\n+/).map((line) => line.trim()).filter(Boolean);
@@ -2046,19 +2017,7 @@ function parseVoomMomentPayload(rawContent: string): VoomMomentPayload {
 
 async function generateVoomPayload(context: PromptContext, settings?: AppSettings, modelOverride = '') {
   const apiReply = await callTextApi(settings, buildMomentPrompt(context), modelOverride);
-  const payload = parseVoomMomentPayload(apiReply);
-  const translationByContent = await completeMissingChineseTranslations([
-    { content: payload.content, translation: payload.contentTranslation },
-    ...payload.comments.map((comment) => ({ content: comment.content, translation: comment.contentTranslation }))
-  ], settings, modelOverride);
-  return {
-    ...payload,
-    contentTranslation: normalizeTranslationText(payload.contentTranslation) || translationByContent.get(payload.content.trim()) || undefined,
-    comments: payload.comments.map((comment) => ({
-      ...comment,
-      contentTranslation: normalizeTranslationText(comment.contentTranslation) || translationByContent.get(comment.content.trim()) || undefined
-    }))
-  };
+  return parseVoomMomentPayload(apiReply);
 }
 
 function normalizeVoomCommentReplies(input: unknown, fallbackAuthorName: string, post: VoomPost, blockedAuthorNames: string[] = []): VoomCommentReplyResult[] {
@@ -2139,7 +2098,7 @@ function requireTextGenerationConfig(settings: AppSettings | undefined, modelOve
   throw new Error(`请先配置可用的 API 模型后再使用${target}。`);
 }
 
-async function callTextApi(settings: AppSettings | undefined, prompt: string, modelOverride = '', imageParts: TextApiContentPart[] = [], temperature = 0.9) {
+async function callTextApi(settings: AppSettings | undefined, prompt: string, modelOverride = '', imageParts: TextApiContentPart[] = []) {
   const resolved = getResolvedTextApiConfig(settings, modelOverride);
   if (!resolved.endpoint.trim()) return '';
 
@@ -2156,16 +2115,22 @@ async function callTextApi(settings: AppSettings | undefined, prompt: string, mo
     body: JSON.stringify({
       model: resolved.model,
       messages: [{ role: 'user', content }],
-      temperature
+      temperature: 0.9
     })
   };
 
-  const { response, requestEndpoint } = await fetchTextEndpoint(resolved.endpoint, requestInit);
+  let { response, requestEndpoint } = await fetchTextEndpoint(resolved.endpoint, requestInit);
+  if (!response.ok && shouldRetryTextApiResponse(response)) {
+    await waitForTextApiRetry();
+    const retryResult = await fetchTextEndpoint(resolved.endpoint, requestInit);
+    response = retryResult.response;
+    requestEndpoint = retryResult.requestEndpoint;
+  }
 
   if (!response.ok) {
     const statusHint = createTextApiStatusHint(response, resolved.endpoint);
-    if (requestEndpoint.startsWith(textProxyPath) && response.status >= 500) {
-      throw new Error([await createApiErrorMessage(response, '文本模型供应商或其网关暂时不可用'), statusHint].filter(Boolean).join('\n\n'));
+    if (requestEndpoint.startsWith(textProxyPath) && response.status === 502) {
+      throw new Error([await createApiErrorMessage(response, '本地文本模型代理请求失败'), statusHint].filter(Boolean).join('\n\n'));
     }
     throw new Error([await createApiErrorMessage(response, '文本模型 API 请求失败'), statusHint].filter(Boolean).join('\n\n'));
   }
@@ -2174,90 +2139,10 @@ async function callTextApi(settings: AppSettings | undefined, prompt: string, mo
   return String(data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? data.content ?? '').trim();
 }
 
-interface ChineseTranslationEntry {
-  content: string;
-  translation?: string;
-}
-
-async function completeMissingChineseTranslations(entries: ChineseTranslationEntry[], settings: AppSettings | undefined, modelOverride = '') {
-  const translationByContent = new Map<string, string>();
-  for (const entry of entries) {
-    const content = entry.content.trim();
-    const translation = normalizeTranslationText(entry.translation);
-    if (content && translation && !translationByContent.has(content)) translationByContent.set(content, translation);
-  }
-
-  const pendingContents = [...new Set(entries
-    .map((entry) => entry.content.trim())
-    .filter((content) => content && needsChineseTranslation(content, translationByContent.get(content))))];
-  if (!pendingContents.length) return translationByContent;
-
-  const items = pendingContents.map((content, index) => ({ id: `translation_${index}`, content }));
-  const contentById = new Map(items.map((item) => [item.id, item.content]));
-  const prompt = `你是严格的翻译补全器。只处理输入 JSON 中的 content，不续写、不改写角色内容。
-
-翻译规则：
-1. 把每条 content 中的非中文外语或粤语翻译成自然现代简体普通话。
-2. 如果 content 是外语或粤语整句，translation 给出整句普通话译文。
-3. 如果 content 是普通话与外语或粤语混用，translation 只给出外语或粤语部分的普通话译文，不重复原有普通话部分。
-4. 不添加“翻译：”“译文：”等前缀，不加括号，不解释。
-5. 每个输入 id 必须原样返回且只能返回一次。
-
-只输出以下 JSON，不要输出 Markdown 或其他文字：
-{"translations":[{"id":"translation_0","translation":"普通话译文"}]}
-
-输入：
-${JSON.stringify({ items })}`;
-
-  try {
-    const apiReply = await callTextApi(settings, prompt, modelOverride, [], 0.2);
-    const parsed = JSON.parse(extractJsonContent(apiReply)) as unknown;
-    const source = Array.isArray(parsed)
-      ? parsed
-      : parsed && typeof parsed === 'object' && Array.isArray((parsed as { translations?: unknown[] }).translations)
-        ? (parsed as { translations: unknown[] }).translations
-        : [];
-    for (const item of source) {
-      if (!item || typeof item !== 'object') continue;
-      const record = item as Record<string, unknown>;
-      const content = contentById.get(String(record.id ?? '').trim());
-      const translation = normalizeTranslationText(record.translation ?? record.contentTranslation ?? record.translationZh ?? record.chineseTranslation);
-      if (content && translation && translation !== content) translationByContent.set(content, translation);
-    }
-  } catch {
-    return translationByContent;
-  }
-
-  return translationByContent;
-}
-
-async function completeRoleplayReplyTranslations(result: RoleplayReplyResult, settings: AppSettings | undefined, modelOverride = ''): Promise<RoleplayReplyResult> {
-  const replies = result.replies ?? (result.reply ? [result.reply] : []);
-  const replyTranslations = result.replyTranslations ?? [];
-  const segments = result.segments ?? [];
-  const entries: ChineseTranslationEntry[] = [
-    ...replies.map((content, index) => ({ content, translation: replyTranslations[index] })),
-    ...segments.flatMap((segment) => segment.type === 'reply' || segment.type === 'voice'
-      ? [{ content: segment.content, translation: segment.translation }]
-      : [])
-  ];
-  const translationByContent = await completeMissingChineseTranslations(entries, settings, modelOverride);
-
-  return {
-    ...result,
-    replyTranslations: replies.map((content, index) => normalizeTranslationText(replyTranslations[index]) || translationByContent.get(content.trim()) || ''),
-    segments: segments.map((segment) => {
-      if (segment.type !== 'reply' && segment.type !== 'voice') return segment;
-      const translation = normalizeTranslationText(segment.translation) || translationByContent.get(segment.content.trim()) || '';
-      return translation ? { ...segment, translation } : segment;
-    })
-  };
-}
-
 export async function fetchVendorModels(vendor: Pick<ApiVendor, 'apiUrl' | 'apiKey'>): Promise<string[]> {
   const modelsEndpoint = `${vendor.apiUrl.trim().replace(/\/+$/, '')}/models`;
   if (!vendor.apiUrl.trim()) return [];
-  const { response, requestEndpoint } = await fetchTextEndpointWithRetry(
+  const { response, requestEndpoint } = await fetchTextEndpointWithFallback(
     modelsEndpoint,
     {
       headers: {
@@ -2276,8 +2161,8 @@ export async function fetchVendorModels(vendor: Pick<ApiVendor, 'apiUrl' | 'apiK
   );
 
   if (!response.ok) {
-    if (requestEndpoint.startsWith(textProxyPath) && response.status >= 500) {
-      throw new Error(await createApiErrorMessage(response, '模型供应商或其网关暂时不可用'));
+    if (requestEndpoint.startsWith(textProxyPath) && response.status === 502) {
+      throw new Error(await createApiErrorMessage(response, '本地文本模型代理请求失败'));
     }
     throw new Error(await createApiErrorMessage(response, '模型列表 API 请求失败'));
   }
@@ -2614,7 +2499,7 @@ export async function generateRoleplayReply(input: GenerateReplyInput): Promise<
         ...normalizeStickerPlacements(parsedRecordAny.stickerMessages),
         ...normalizeReplyStickerPlacements(parsedRecordAny.replies ?? parsedRecordAny.messages)
       ];
-      const result = {
+      return JSON.stringify({
         reply: replies[0] ?? '',
         replies,
         plotChoices,
@@ -2645,23 +2530,17 @@ export async function generateRoleplayReply(input: GenerateReplyInput): Promise<
               ).trim()
             }
           : null
-      } satisfies RoleplayReplyResult;
-      return JSON.stringify(input.mode === 'online'
-        ? await completeRoleplayReplyTranslations(result, input.settings, input.modelOverride)
-        : result);
+      } satisfies RoleplayReplyResult);
     } catch {
       const hiddenPlotChoices: string[] = [];
-      const replies = (input.mode === 'online' ? normalizeRawOnlineReply(apiReply) : [normalizeLooseModelReply(apiReply)])
+      const replies = (input.mode === 'online' ? normalizeRawOnlineReply(apiReply) : [apiReply])
         .map((reply) => {
           const parsedReply = parsePlotChoicesFromText(reply);
           hiddenPlotChoices.push(...parsedReply.choices);
           return parsedReply.content || reply;
         });
       const plotChoices = input.mode === 'offline' ? [...new Set(hiddenPlotChoices)].slice(0, 6) : [];
-      const result = { reply: replies[0] ?? '', replies, plotChoices, narrations: [], images: [], stickers: [], stickerPlacements: [], segments: [], messageActions: { recallMessageIds: [], quotes: [] }, profileUpdate: null } satisfies RoleplayReplyResult;
-      return JSON.stringify(input.mode === 'online'
-        ? await completeRoleplayReplyTranslations(result, input.settings, input.modelOverride)
-        : result);
+      return JSON.stringify({ reply: replies[0] ?? '', replies, plotChoices, narrations: [], images: [], stickers: [], stickerPlacements: [], segments: [], messageActions: { recallMessageIds: [], quotes: [] }, profileUpdate: null } satisfies RoleplayReplyResult);
     }
   }
   throw new Error('角色回复模型没有返回内容。');
@@ -2786,7 +2665,7 @@ export async function generateCoupleSpaceSnapshot(input: {
   modelOverride?: string;
 }): Promise<CoupleSpaceSnapshot> {
   requireTextGenerationConfig(input.settings, input.modelOverride, '情侣空间同步');
-  const apiReply = await callTextApi(input.settings, buildCoupleSpacePrompt(input), input.modelOverride, [], 0.82);
+  const apiReply = await callTextApi(input.settings, buildCoupleSpacePrompt(input), input.modelOverride);
   if (!apiReply.trim()) throw new Error('情侣空间模型没有返回状态内容。');
   const parsed = JSON.parse(extractJsonContent(apiReply)) as unknown;
   return normalizeCoupleSpaceIdentityReferences(
@@ -2832,7 +2711,10 @@ function buildSmallTheaterPrompt(input: { context: PromptContext; topic: SmallTh
 18. CSS 不能依赖尚未定义的变量；不要使用会导致空白页的实验特性作为唯一布局手段，复杂效果必须有普通 CSS 兜底。
 19. <script> 中不要使用 import、export、TypeScript、顶层 await、fetch、localStorage、IndexedDB、跨域资源或框架语法；只使用可在沙盒 iframe 里直接运行的原生 JavaScript。
 20. 视觉要完整：有明确层级、背景、卡片/列表/控件状态、空状态或完成状态，避免文字溢出、重叠、按钮过小、点击无响应、内容被裁切或页面横向滚动。
-21. 输出前自检：在 320px、390px、480px 宽的手机竖屏里，首屏不空白，主要内容完整可滚动，所有交互可点，底部内容可到达，页面不会因为一段脚本错误整体不可用。`
+21. 所有可读文字禁止使用固定 height/max-height、overflow:hidden/clip、text-overflow:ellipsis、white-space:nowrap、line-clamp 或遮罩渐隐来截断；文字必须完整换行显示。只有用户主动关闭的弹层或切换后隐藏的面板才允许隐藏。
+22. 所有按钮、选项、折叠、标签页、翻页和关闭控件都必须在页面自己的 JavaScript 中逐一完成 click 事件绑定；选择器必须与 HTML 元素一致，绑定前检查元素存在，不能只监听 touchstart、pointerdown、mouseenter 或 hover，也不能依赖宿主页面提供事件。
+23. 每次点击都必须立刻改变可见文字、选中态、数值、进度或面板等等；弹层和隐藏面板打开后必须有明确关闭方式，禁止只有装饰动画却没有结果反馈。
+24. 输出前自检：在 320px、390px、480px 宽的手机竖屏里，逐段确认没有文字被省略或裁切，首屏不空白，主要内容完整可滚动；逐一核对每个按钮的选择器和 click 回调，确保点击后有可见反馈，底部内容可到达，页面不会因为一段脚本错误整体不可用。`
   ].join('\n\n');
 }
 
@@ -2873,7 +2755,10 @@ function buildSmallTheaterContinuationPrompt(input: { context: PromptContext; to
 7. 不要在 document/window/body 上拦截 touchstart、touchmove、pointermove、wheel 或调用 preventDefault；横向滑动/拖动只绑定在具体局部控件上，不能破坏手机浏览器边缘左右滑动返回。
 8. 有互动性：至少包含 3 个可点击/可切换/可展开/可选择/可拖动/可输入的交互点，交互由原生 JavaScript 实现，并且不依赖网络。
 9. 不允许加载外部 JS/CSS/字体/图片/接口；图片只能用 CSS、emoji、渐变、内嵌 SVG data URL 或纯 HTML/CSS 视觉替代。
-10. <body> 里必须先写出可见的静态 HTML 内容，JavaScript 只能增强交互，不能把全部正文放在脚本里动态生成；即使脚本失败，用户也要能看到标题、正文和主要控件。`
+10. <body> 里必须先写出可见的静态 HTML 内容，JavaScript 只能增强交互，不能把全部正文放在脚本里动态生成；即使脚本失败，用户也要能看到标题、正文和主要控件。
+11. 正文、对话、帖子、选项说明、档案描述等可读文字禁止使用固定 height/max-height、overflow:hidden/clip、text-overflow:ellipsis、white-space:nowrap、line-clamp 或遮罩渐隐来截断；文字必须完整换行显示。只有用户主动关闭的弹层或切换后隐藏的面板才允许隐藏。
+12. 所有按钮、选项、折叠、标签页、翻页和关闭控件都必须在页面自己的原生 JavaScript 中完成 click 事件绑定，选择器与 HTML 一致且绑定前检查元素存在；不能只监听触摸、指针、悬停事件，也不能依赖宿主页面提供事件。
+13. 每次点击必须立刻产生可见反馈；在 320px、390px、480px 竖屏逐段确认文字完整、页面可滚动，并逐一核对每个按钮的选择器与 click 回调，确保底部可到达。`
   ].join('\n\n');
 }
 
@@ -3011,24 +2896,15 @@ export async function generateUserVoomComments(input: {
   const apiReply = await callTextApi(input.settings, prompt, input.modelOverride);
   if (!apiReply) return [];
 
-  let comments: UserVoomCommentResult[];
   try {
-    comments = normalizeUserVoomComments(JSON.parse(extractJsonContent(apiReply)), input.targetCharacters);
+    return normalizeUserVoomComments(JSON.parse(extractJsonContent(apiReply)), input.targetCharacters);
   } catch {
     const content = apiReply.trim();
     const character = input.targetCharacters[0];
-    comments = content && character
+    return content && character
       ? [{ authorName: getCharacterAiName(character), authorId: character.id, content }]
       : [];
   }
-  const translationByContent = await completeMissingChineseTranslations(comments.map((comment) => ({
-    content: comment.content,
-    translation: comment.contentTranslation
-  })), input.settings, input.modelOverride);
-  return comments.map((comment) => ({
-    ...comment,
-    contentTranslation: normalizeTranslationText(comment.contentTranslation) || translationByContent.get(comment.content.trim()) || undefined
-  }));
 }
 
 export async function generateVoomCommentReplies(input: {
@@ -3071,29 +2947,19 @@ export async function generateVoomCommentReplies(input: {
 
   const apiReply = await callTextApi(input.settings, prompt, input.modelOverride);
   if (apiReply) {
-    let replies: VoomCommentReplyResult[] = [];
     try {
       const parsed = JSON.parse(extractJsonContent(apiReply));
-      replies = normalizeVoomCommentReplies(parsed, fallbackAuthorName, input.post, blockedAuthorNames);
+      const replies = normalizeVoomCommentReplies(parsed, fallbackAuthorName, input.post, blockedAuthorNames);
+      if (replies.length) return replies;
     } catch {
       const content = apiReply.trim();
       if (content) {
-        replies = [{
+        return [{
           authorName: fallbackAuthorName,
           content,
           parentId: targetComments[0]?.id
         }];
       }
-    }
-    if (replies.length) {
-      const translationByContent = await completeMissingChineseTranslations(replies.map((reply) => ({
-        content: reply.content,
-        translation: reply.contentTranslation
-      })), input.settings, input.modelOverride);
-      return replies.map((reply) => ({
-        ...reply,
-        contentTranslation: normalizeTranslationText(reply.contentTranslation) || translationByContent.get(reply.content.trim()) || undefined
-      }));
     }
   }
   throw new Error('评论区回复模型没有返回内容。');
@@ -3220,15 +3086,7 @@ export async function generateMusicCommentThread(input: {
   const apiReply = await callTextApi(input.settings, prompt, input.modelOverride);
   if (!apiReply) return [];
   try {
-    const comments = normalizeMusicComments(JSON.parse(extractJsonContent(apiReply)), { user: input.user, characters: boundCharacters, existingComments });
-    const translationByContent = await completeMissingChineseTranslations(comments.map((comment) => ({
-      content: comment.content,
-      translation: comment.contentTranslation
-    })), input.settings, input.modelOverride);
-    return comments.map((comment) => ({
-      ...comment,
-      contentTranslation: normalizeTranslationText(comment.contentTranslation) || translationByContent.get(comment.content.trim()) || undefined
-    }));
+    return normalizeMusicComments(JSON.parse(extractJsonContent(apiReply)), { user: input.user, characters: boundCharacters, existingComments });
   } catch {
     return [];
   }
